@@ -12,7 +12,7 @@ from ..agents.jurisdictions import (
     RegulatorPrivateState,
     StateAgent,
 )
-from ..systems.initialization import CountryProfile
+from ..consumers.population import CountryProfile
 from ..types import ProvenanceStatus
 
 

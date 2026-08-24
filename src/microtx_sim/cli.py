@@ -7,25 +7,25 @@ import sys
 from typing import Sequence
 
 from .config import ConfigurationError, load_config
-from .core.engine import SimulationEngine
 from .core.world import World
 from .data.profiles import ProfileValidationError, load_profile_bundle
+from .simulation import SimulationOrchestrator
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="microtx-sim",
-        description="Scheletro causale agent-based per il mercato mobile.",
+        description="Causal agent-based model of the mobile-game market.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
     validate = commands.add_parser(
-        "validate", help="valida configurazione e contratti delle fonti"
+        "validate", help="validate configuration and evidence contracts"
     )
     validate.add_argument("config", type=Path)
 
     smoke = commands.add_parser(
-        "smoke", help="esegue soltanto il controllo strutturale breve"
+        "smoke", help="run only the short structural smoke check"
     )
     smoke.add_argument("config", type=Path)
     return parser
@@ -49,7 +49,7 @@ def _validate(config_path: Path) -> dict[str, object]:
 def _smoke(config_path: Path) -> dict[str, object]:
     config = load_config(config_path, campaign=False)
     world = World.create(config, campaign=False)
-    result = SimulationEngine.run(world, campaign=False)
+    result = SimulationOrchestrator.run(world, campaign=False)
     return {
         "status": "ok",
         "mode": "smoke_only",
@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else _smoke(args.config)
         )
     except (ConfigurationError, ProfileValidationError, OSError, ValueError) as exc:
-        print(f"errore: {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0

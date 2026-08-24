@@ -7,8 +7,8 @@ import numpy.typing as npt
 
 from ..metrics.outcomes import HarmWeights, OutcomeSnapshot
 from ..config import SimulationConfig
-from ..core.engine import RunResult, SimulationEngine
 from ..core.world import World
+from ..simulation import RunResult, SimulationOrchestrator
 from ..data.profiles import ProfileBundle
 from .interventions import Intervention, NullIntervention
 
@@ -139,10 +139,10 @@ def run_paired_worlds(
 
     treated.apply(treated_world)
     control_intervention.apply(control_world)
-    treated_run = SimulationEngine.run(
+    treated_run = SimulationOrchestrator.run(
         treated_world, cycles=cycles, campaign=campaign
     )
-    control_run = SimulationEngine.run(
+    control_run = SimulationOrchestrator.run(
         control_world, cycles=cycles, campaign=campaign
     )
     paired, effect = compare_outcomes(

@@ -1,49 +1,15 @@
-from __future__ import annotations
+"""Compatibility layer for the canonical simulation orchestrator.
 
-from dataclasses import dataclass
-from time import perf_counter
+New code should import :class:`SimulationOrchestrator` from
+``microtx_sim.simulation``. ``SimulationEngine`` remains available so existing
+experiments do not break during the module migration.
+"""
 
-from ..config import ConfigurationError, SimulationConfig
-from ..metrics.outcomes import OutcomeSnapshot
-from .world import World
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    cycles: int
-    elapsed_seconds: float
-    final_outcome: OutcomeSnapshot
-    summary: dict[str, float | int]
+from ..simulation.orchestrator import RunResult, SimulationOrchestrator
 
 
-class SimulationEngine:
-    """Thin runner that keeps campaign validation separate from smoke checks."""
+class SimulationEngine(SimulationOrchestrator):
+    """Backward-compatible name for :class:`SimulationOrchestrator`."""
 
-    __slots__ = ()
 
-    @staticmethod
-    def run(
-        world: World,
-        *,
-        cycles: int | None = None,
-        campaign: bool = False,
-    ) -> RunResult:
-        world.config.validate(campaign=campaign)
-        if campaign:
-            world.profiles.validate_for_campaign()
-        count = world.config.run.cycles if cycles is None else cycles
-        if count <= 0:
-            raise ValueError("cycles must be positive")
-        if not campaign and (count > 32 or len(world.players) > 5_000):
-            raise ConfigurationError(
-                "Non-campaign execution is guarded to <=32 cycles and <=5,000 players"
-            )
-        started = perf_counter()
-        outcome = world.run(count)
-        elapsed = perf_counter() - started
-        return RunResult(
-            cycles=count,
-            elapsed_seconds=elapsed,
-            final_outcome=outcome,
-            summary=outcome.summary(),
-        )
+__all__ = ["RunResult", "SimulationEngine", "SimulationOrchestrator"]

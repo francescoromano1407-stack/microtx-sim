@@ -1,0 +1,159 @@
+"""Money-flow aggregation and outcome accounting for the simulation kernel.
+
+This module contains no agent policy. It mutates only kernel-owned balances and
+records the corresponding double-entry transfers, keeping behavioural choices
+separate from accounting consequences.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+import numpy.typing as npt
+
+from ..consumers.logic import StepResult
+from ..metrics.outcomes import OutcomeSnapshot
+
+if TYPE_CHECKING:
+    from ..core.world import World
+
+
+IntArray = npt.NDArray[np.int64]
+INT64_MAX = int(np.iinfo(np.int64).max)
+
+
+def checked_accumulate(
+    target: IntArray,
+    increment: IntArray,
+    *,
+    label: str,
+) -> None:
+    """Add aligned non-negative cent arrays after an explicit overflow check."""
+
+    values = np.asarray(increment, dtype=np.int64)
+    if values.shape != target.shape or np.any(values < 0) or np.any(target < 0):
+        raise ValueError(f"{label} needs aligned non-negative int64 arrays")
+    if np.any(target > INT64_MAX - values):
+        raise OverflowError(f"{label} would overflow int64")
+    target += values
+
+
+def renew_income(world: "World", *, tick: int) -> None:
+    """Credit one income/allowance renewal without exposing it to policies."""
+
+    essential_share = world.player_system.config.essential_spend_share
+    adult_inflow = np.rint(
+        world.players.monthly_disposable_income_cents * (1.0 - essential_share)
+    ).astype(np.int64)
+    inflow = np.where(
+        world.players.is_minor,
+        world.players.allowance_cents,
+        adult_inflow,
+    ).astype(np.int64)
+    if np.any(world.players.liquidity_cents > INT64_MAX - inflow):
+        raise OverflowError("player liquidity would overflow")
+    world.players.liquidity_cents[:] += inflow
+    for row in np.flatnonzero(inflow > 0):
+        player_id = int(world.players.player_id[row])
+        jurisdiction = int(world.players.jurisdiction[row])
+        world.ledger.transfer(
+            tick=tick,
+            debit_account=f"external:income:{jurisdiction}",
+            credit_account=f"player:{player_id}:liquid",
+            amount_cents=int(inflow[row]),
+            kind="disposable_income",
+            reference=f"income:{tick}:{player_id}",
+        )
+
+
+def credit_firm_revenue(world: "World", result: StepResult) -> None:
+    """Aggregate exact game revenue into company balances and kernel totals."""
+
+    by_firm = np.zeros(len(world.firms), dtype=np.int64)
+    unsafe = np.zeros(len(world.firms), dtype=np.int64)
+    # Integer scatter-add preserves every cent and never samples games/firms.
+    np.add.at(by_firm, world.games.company_id, result.game_revenue_cents)
+    np.add.at(unsafe, world.games.company_id, result.game_unsafe_revenue_cents)
+    for firm in world.firms:
+        revenue = int(by_firm[firm.firm_id])
+        if revenue > INT64_MAX - firm.state.cash_cents:
+            raise OverflowError("firm cash would overflow int64")
+        firm.state.cash_cents += revenue
+    checked_accumulate(
+        world.firm_revenue_cents,
+        by_firm,
+        label="cumulative firm revenue",
+    )
+    checked_accumulate(
+        world.firm_unsafe_revenue_cents,
+        unsafe,
+        label="cumulative unsafe firm revenue",
+    )
+
+
+def accrue_interest(world: "World") -> None:
+    """Accrue player credit interest for the current tick in exact cents."""
+
+    principal = world._initial_credit_limit_cents - world.players.credit_limit_cents
+    raw_interest = (
+        principal.astype(np.float64)
+        * world.config.behavior.daily_credit_interest_rate
+        * world.config.run.tick_days
+    )
+    if (
+        not np.all(np.isfinite(raw_interest))
+        or np.any(raw_interest > 2**53)
+        or np.any(raw_interest < 0.0)
+    ):
+        raise OverflowError("interest calculation exceeded exact-cent range")
+    interest = np.rint(raw_interest).astype(np.int64)
+    checked_accumulate(
+        world.player_interest_cents,
+        interest,
+        label="cumulative player interest",
+    )
+
+
+def outcome_snapshot(world: "World", *, tick: int | None = None) -> OutcomeSnapshot:
+    """Build an immutable research outcome from latent kernel state."""
+
+    cash_values = [firm.state.cash_cents for firm in world.firms]
+    if any(value < 0 or value > INT64_MAX for value in cash_values):
+        raise OverflowError("firm cash is outside the reportable int64 range")
+    firm_cash = np.asarray(cash_values, dtype=np.int64)
+    outstanding_fines = world.firm_fine_assessed_cents - world.firm_fine_paid_cents
+    margin_values = [
+        int(firm_cash[index])
+        - int(world._initial_firm_cash_cents[index])
+        - int(world.firm_subsidy_cents[index])
+        - int(outstanding_fines[index])
+        for index in range(len(world.firms))
+    ]
+    int64_min = int(np.iinfo(np.int64).min)
+    if any(value < int64_min or value > INT64_MAX for value in margin_values):
+        raise OverflowError("firm margin is outside the reportable int64 range")
+    margin = np.asarray(margin_values, dtype=np.int64)
+    safe_share = np.divide(
+        world.firm_revenue_cents - world.firm_unsafe_revenue_cents,
+        world.firm_revenue_cents,
+        out=np.ones(len(world.firms), dtype=np.float64),
+        where=world.firm_revenue_cents > 0,
+    )
+    debt = world._initial_credit_limit_cents - world.players.credit_limit_cents
+    checked_accumulate(
+        debt,
+        world.player_interest_cents,
+        label="reported player debt",
+    )
+    return OutcomeSnapshot(
+        tick=world.tick if tick is None else tick,
+        player_harm=world.players.harm_state.astype(np.float64, copy=True),
+        player_spend_cents=world.player_total_spend_cents.copy(),
+        player_income_cents=world.players.monthly_disposable_income_cents.copy(),
+        player_debt_cents=debt.astype(np.int64, copy=False),
+        firm_cash_cents=firm_cash,
+        firm_operating_margin_cents=margin,
+        firm_safe_revenue_share=safe_share,
+        state_subsidy_outlay_cents=world.state_subsidy_outlay_cents.copy(),
+    )
