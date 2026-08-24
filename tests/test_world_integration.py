@@ -14,6 +14,31 @@ from microtx_sim.types import MonetisationMechanism
 
 
 class WorldIntegrationTests(unittest.TestCase):
+    def test_run_configuration_sets_the_firm_research_cost_scale(self) -> None:
+        config = load_config("configs/smoke.toml")
+        lower = replace(
+            config,
+            information=replace(
+                config.information,
+                research_report_cost_cents=100_000,
+            ),
+        )
+        higher = replace(
+            config,
+            information=replace(
+                config.information,
+                research_report_cost_cents=900_000,
+            ),
+        )
+        low_world = World.create(lower, campaign=False)
+        high_world = World.create(higher, campaign=False)
+        self.assertTrue(
+            all(
+                high.research_cost_cents > low.research_cost_cents
+                for low, high in zip(low_world.firms, high_world.firms, strict=True)
+            )
+        )
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.config = load_config("configs/smoke.toml")

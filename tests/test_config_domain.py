@@ -27,6 +27,21 @@ class ConfigAndDomainTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationError, "divisible by tick_days"):
             misaligned.validate()
 
+    def test_research_report_cost_must_be_positive(self) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        invalid = replace(
+            config,
+            information=replace(
+                config.information,
+                research_report_cost_cents=0,
+            ),
+        )
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "research_report_cost_cents",
+        ):
+            invalid.validate()
+
     def test_ledger_balances_and_rejects_duplicate_reference(self) -> None:
         ledger = Ledger()
         ledger.transfer(

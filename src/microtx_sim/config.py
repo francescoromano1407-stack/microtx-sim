@@ -98,6 +98,9 @@ class SimulationConfig:
             "audit_interval": self.regulation.audit_interval,
             "subsidy_interval": self.regulation.subsidy_interval,
             "maximum_fine_cents": self.regulation.maximum_fine_cents,
+            "research_report_cost_cents": (
+                self.information.research_report_cost_cents
+            ),
         }
         invalid = [name for name, value in positive.items() if value <= 0]
         if invalid:

@@ -206,6 +206,9 @@ class World:
             company_count=config.market.company_count,
             games=games,
             rng=rng,
+            base_research_cost_cents=(
+                config.information.research_report_cost_cents
+            ),
         )
         # Profile bundles are immutable except for their agent state; paired
         # worlds must never share those mutable budgets or beliefs.

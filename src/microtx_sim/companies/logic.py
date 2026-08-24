@@ -215,6 +215,7 @@ def create_firms(
     rng: CounterRNG,
     tick: int = 0,
     base_cash_cents: int = 8_000_000,
+    base_research_cost_cents: int = 250_000,
 ) -> tuple[FirmAgent, ...]:
     """Create a correlated, continuously heterogeneous firm population.
 
@@ -227,8 +228,10 @@ def create_firms(
         raise TypeError("company_count must be an integer")
     if company_count <= 0:
         raise ValueError("company_count must be positive")
-    if tick < 0 or base_cash_cents <= 0:
-        raise ValueError("tick must be non-negative and base cash positive")
+    if tick < 0 or base_cash_cents <= 0 or base_research_cost_cents <= 0:
+        raise ValueError(
+            "tick must be non-negative and base cash/research cost positive"
+        )
     if len(games.game_id) == 0:
         raise ValueError("at least one game is required")
     company_ids = np.asarray(games.company_id, dtype=np.int64)
@@ -272,7 +275,10 @@ def create_firms(
         content_cost = max(25_000, int(round(900_000 * operating_scale**0.72)))
         acquisition_cost = max(10_000, int(round(360_000 * operating_scale**0.68)))
         compliance_cost = max(10_000, int(round(300_000 * operating_scale**0.62)))
-        research_cost = max(10_000, int(round(250_000 * operating_scale**0.66)))
+        research_cost = max(
+            10_000,
+            int(round(base_research_cost_cents * operating_scale**0.66)),
+        )
 
         trust = {
             other: float(
