@@ -1,0 +1,154 @@
+# Configuration reference
+
+## Files and loading
+
+Run scenarios are TOML files loaded by `microtx_sim.config.load_config()` into
+immutable dataclasses. The loader requires all declared sections and rejects
+unknown or missing constructor fields through typed construction.
+
+Two scenarios are supplied:
+
+| File | Purpose | Scale | Status |
+| --- | --- | --- | --- |
+| `configs/smoke.toml` | Short connectivity check | 384 players, 3 companies, 4 games, 3 one-day cycles | `SYNTHETIC` and executable only as a non-campaign run |
+| `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
+
+Jurisdiction profiles and evidence contracts are stored separately in
+`configs/jurisdictions.toml`. Source records are in
+`data/provenance/sources.toml`.
+
+## `[meta]`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | Scenario identifier reported by the CLI and run metadata. |
+| `provenance_status` | enum | One of `CALIBRATED`, `ANCHORED`, `ILLUSTRATIVE`, or `SYNTHETIC`. |
+| `notes` | string | Human-readable scope and interpretation warning. |
+
+Campaign mode requires `provenance_status = "CALIBRATED"`. A synthetic scenario
+also requires `run.allow_synthetic = true`.
+
+## `[run]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `seed` | integer | Root coordinate for deterministic counter-based randomness. |
+| `cycles` | positive integer | Number of ticks requested by the scenario. |
+| `tick_days` | positive integer days | Calendar days advanced by one tick. |
+| `player_count` | positive integer | Number of consumer rows. |
+| `chunk_size` | positive integer | Consumer rows processed per dense choice block; changes memory, not alternatives. |
+| `allow_synthetic` | boolean | Allows synthetic dependencies in structural, non-campaign runs. |
+
+The non-campaign orchestrator additionally rejects more than 32 cycles or more
+than 5,000 players. This prevents an accidental large run. Campaign mode is a
+separate explicit API choice and has stricter evidence gates.
+
+## `[market]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `company_count` | positive integer | Number of strategic company agents. |
+| `game_count` | positive integer | Number of represented games; must be at least the company count. |
+| `stat_dimensions` | integer 2–12 | Dimensions in the competitive content frontier. |
+| `ranking_interval` | positive integer days | Time between public ranking events. |
+| `firm_decision_interval` | positive integer days | Time between company decision events. |
+
+Content search enumerates subsets of `stat_dimensions`, so its declared finite
+candidate set grows exponentially. The upper bound of 12 is a structural guard.
+
+## `[information]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `public_signal_noise` | float in [0, 1] | Noise scale applied to published game scores. |
+| `public_signal_delay` | non-negative integer days | Minimum age of truth data eligible for publication. |
+| `research_report_cost_cents` | positive integer simulation cents | Reference cost of a paid research action; the firm factory scales it by operating size. |
+| `research_noise` | float in [0, 1] | Residual uncertainty of purchased research; lower means more precise. |
+
+The public board is a released signal, not latent popularity. Research cost is
+charged through company accounting; it does not grant access to `World`.
+
+## `[behavior]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `game_choice_temperature` | float in (0, 1] | Scale of consumer choice sensitivity. |
+| `switching_cost` | float in [0, 1] | Utility penalty for leaving the current game. |
+| `base_purchase_logit` | finite float | Baseline purchase propensity before heterogeneous covariates. |
+| `unauthorised_card_hazard_per_exposed_minor_day` | probability in [0, 1] | Daily hazard conditional on all minor exposure conditions, not population prevalence. |
+| `essential_spend_share` | fraction in [0, 1] | Share removed when converting adult monthly disposable income to periodic liquid inflow. |
+| `harm_decay` | float in [0, 1] | Persistence/decay factor for dynamic harm state. |
+| `daily_credit_interest_rate` | fraction in [0, 1] | Daily interest applied to used player credit. |
+
+The unauthorised-card hazard and essential-spend share also have shared evidence
+contracts. `World.create()` requires exact equality between the profile contract
+and run-level value, then uses the run-level value. This makes divergence
+explicit.
+
+## `[regulation]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `audit_interval` | positive integer days | Recurrence of government audit review. |
+| `subsidy_interval` | positive integer days | Recurrence of subsidy review. |
+| `maximum_fine_cents` | positive integer simulation cents | Maximum fine passed into compliance truth. |
+| `audit_sensitivity` | probability in [0, 1] | Baseline probability that audit evidence detects a real breach before evasion effects. |
+| `audit_specificity` | probability in [0, 1] | Probability of correctly returning no breach when none exists. |
+| `random_audit_fraction` | fraction in [0, 1] | Audit capacity reserved for non-risk-ranked/random targets. |
+
+Run-level sensitivity, specificity, and random fraction overwrite the loaded
+StateAgent values for the scenario. Audit capacity, inspection cost, treasuries,
+and initial subsidy budgets come from the jurisdiction profile and are currently
+synthetic.
+
+## `[causal]`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `common_random_numbers` | boolean | Must be true for `run_paired_worlds()`. |
+| `estimand` | string | Name attached to the reported `RegimeEffect`. |
+| `record_individual_outcomes` | boolean | Retains the latest individual snapshot in addition to aggregate summaries. |
+
+This section declares execution behaviour; it does not create an intervention.
+Treated and control interventions are explicit Python objects.
+
+## Calendar validation
+
+The following intervals must be exactly divisible by `tick_days`:
+
+- public ranking;
+- company decision;
+- audit review;
+- subsidy review;
+- public-signal delay;
+- the fixed 30-day income renewal.
+
+The model rejects misalignment rather than approximating event times. Intervention
+changes to audit or subsidy intervals are subject to the same rule.
+
+## Input precedence
+
+Effective inputs enter through several layers:
+
+1. source records describe publishers and narrow support scopes;
+2. jurisdiction contracts describe country/profile values and status;
+3. `load_profile_bundle()` constructs country and StateAgent profiles;
+4. the selected run scenario supplies behaviour, information, market, and
+   regulation parameters;
+5. `World.create()` applies validated scenario overrides to state audit accuracy;
+6. explicit causal interventions modify mechanism caps, audit regimes, or
+   subsidy regimes after world construction.
+
+No layer silently promotes provenance. An intervention changes a simulated
+regime; it does not make the underlying parameter calibrated.
+
+## Validation commands
+
+```text
+python -m microtx_sim validate configs/smoke.toml
+python -m microtx_sim smoke configs/smoke.toml
+```
+
+`validate` loads the scenario and profile contracts without running a world.
+`smoke` creates a world and executes only the scenario's short guarded run.
+Errors are returned on standard error with exit status 2.

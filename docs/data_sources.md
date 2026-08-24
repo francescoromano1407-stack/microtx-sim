@@ -1,0 +1,277 @@
+# Data sources, units, and input lineage
+
+## Purpose and current evidence status
+
+This document describes what the current code actually reads and uses. It is not
+a claim that the model has been empirically calibrated. The machine-readable
+source register is `data/provenance/sources.toml`; jurisdiction inputs are in
+`configs/jurisdictions.toml`; run-level assumptions are in `configs/base.toml`
+and `configs/smoke.toml`.
+
+At this stage:
+
+- every record in the source register is `ANCHORED`, not `CALIBRATED`;
+- the jurisdiction bundle is globally `ILLUSTRATIVE`;
+- the common money scale is `ILLUSTRATIVE`;
+- population allocation, audit capacity, regulator operating budgets, and many
+  agent defaults are `SYNTHETIC` or otherwise uncalibrated;
+- a scientific campaign is therefore rejected by construction.
+
+The four provenance statuses have deliberately different meanings:
+
+| Status | Meaning in this repository |
+|---|---|
+| `CALIBRATED` | Extracted, transformed, and validated for a declared estimand. Comparability still depends on compatible units, periods, populations, and conditioning. |
+| `ANCHORED` | Connected to a named source, but not yet supported by a complete reproducible extraction and calibration pipeline. |
+| `ILLUSTRATIVE` | A transparent scenario or modelling assumption. It may be useful for structural tests but is not an empirical estimate. |
+| `SYNTHETIC` | Generated for an artificial scenario, operating scaffold, or structural check. It is never automatically admissible as scientific evidence. |
+
+The loader validates status names, source identifiers, source-support scopes for
+regulatory rules, conditions, denominators, periods, and declared currencies.
+It does not independently verify that a publication is correct or that a value
+was transcribed from the cited table without error.
+
+## Three distinct classes of input
+
+The presence of a value in `jurisdictions.toml` does not imply that it affects a
+simulation outcome. The current implementation separates inputs as follows.
+
+| Class | Meaning | Examples |
+|---|---|---|
+| Runtime-consumed | Read into an object or equation that affects the current world | age weights, income dispersion, generic regulation booleans, audit capacity, run-level purchase and audit parameters |
+| Contract-only | Parsed, validated, and retained with provenance metadata, but not yet connected to an outcome-changing behavioural or policy equation | nominal national income anchors, national gaming reach and spending statistics, Belgian deprivation rates, official subsidy rates/caps/instruments |
+| Context-only | Listed in the source register or cited in narrative documentation, but not referenced by a current profile contract | WHO definition, UK causal review, FTC case, Eurostat/OECD context sources |
+
+This distinction is essential: a dormant contract is useful for future work, but
+it cannot make the current simulated consumption distribution realistic by
+itself.
+
+## Monetary units and transformations
+
+### Layer 1: nominal local-currency minor units
+
+Values whose names end in `_minor_units` are stored as integer minor units of
+their declared local currency. They remain jurisdiction-specific and must not be
+added, ranked, or compared across countries.
+
+| Jurisdiction | Currency | Reported income input | Monthly nominal anchor used by the loader | Status |
+|---|---:|---:|---:|---|
+| UK | GBP, pence | 3,666,300 pence annually (£36,663) | 305,525 pence | `ANCHORED` |
+| KR | KRW, exponent zero | quintiles 1,037,000; 2,467,000; 3,515,000; 5,104,000; 8,912,000 monthly | 3,515,000 KRW, the central reported quintile anchor | `ANCHORED` |
+| JP | JPY, exponent zero | 300,000 JPY monthly | 300,000 JPY | `ILLUSTRATIVE` |
+| BE | EUR, cents | 3,129,900 cents annually (€31,299) | 260,825 cents | `ANCHORED` |
+
+UK and Belgian annual values are divided by 12 using integer arithmetic and
+rounded to the nearest declared minor unit. With the current values both results
+are exact. The Korean central quintile is an anchor from a household table; it
+is not asserted to be an individual-income median. The Japanese value has no
+income source and is explicitly illustrative.
+
+### Layer 2: internal simulation cents
+
+The player, game, firm, regulator, and ledger systems require one internally
+consistent integer money unit. The loader therefore maps every jurisdiction's
+monthly nominal anchor to exactly `180000` internal *simulation cents*. The
+conversion ratio is represented as an exact rational number, and conversions of
+other same-currency integer amounts round to the nearest simulation cent.
+
+This operation is a normalization to a common reference-income index. It is:
+
+- not a foreign-exchange conversion;
+- not an official purchasing-power-parity estimate;
+- not evidence that national disposable incomes are equal;
+- not suitable for cross-country welfare or price-level comparisons.
+
+The internal field names retain the `_cents` suffix because the ledger operates
+on integers. They do not denote GBP pence, euro cents, won, or yen. National
+currency amounts survive only in `MoneyScaleContract` provenance records.
+The fixed `180000` destination, rather than the level of the national anchor,
+enters `CountryProfile`; changing a nominal anchor currently changes its recorded
+scale ratio but not the initialized reference-income median.
+
+### Layer 3: run-level monetary assumptions
+
+Game prices, firm cash, fines, research costs, audit costs, subsidy budgets,
+allowances, liquidity, debt, and outcomes are all denominated in simulation
+cents. Current regulator treasury, inspection cost, subsidy budget, preference
+weights, and initial audit accuracy are synthetic scaffold values. Audit
+accuracy and random-audit share are then overwritten by the selected scenario
+configuration. Official subsidy rates, caps, payment shares, and tax instruments
+are not used to convert the synthetic operating budget.
+
+## Inputs currently consumed by the runtime
+
+### Population and player initialization
+
+The loader passes the following jurisdiction fields into `CountryProfile`:
+
+- jurisdiction code;
+- equal allocation weight of `0.25` per country;
+- configured age-band edges and weights;
+- the common internal monthly income anchor of `180000` simulation cents;
+- `income_log_sigma`, or Korea's `income_within_quintile_log_sigma`;
+- source identifiers for traceability.
+
+The equal country weights are a synthetic experimental allocation, not national
+population shares. The configured age range is 8–69 in the UK and Belgium and
+10–69 in Korea and Japan. Age weights and income-shape parameters are
+illustrative.
+
+The following `CountryProfile` inputs are inherited from scaffold defaults and
+are not country estimates: adult age, the age-income curve, minor allowance,
+personal and household liquidity, credit access and limits, stored-payment
+access, household size, guardian consent and supervision, awareness, trait
+means/scales/correlation, and motive logits. They affect simulated players, but
+they require explicit provenance and calibration before scientific use.
+
+### Behavioural and information configuration
+
+The selected `base.toml` or `smoke.toml` supplies the effective values for game
+choice temperature, switching cost, base purchase logit, unauthorized-card
+hazard, essential-spend share, harm decay, credit interest, public-signal delay
+and noise, and research cost/noise.
+
+The unauthorized-card hazard and essential-spend share also appear as shared
+profile contracts. `World.create` requires exact equality between each shared
+contract and its run-level value, then uses the run-level value. This prevents
+the documented prior from silently diverging from the effective equation.
+
+The unauthorized-card value is a daily hazard conditional on an exposed minor,
+not a prevalence estimate. Exposure itself requires the model's payment-access,
+opportunity, and household conditions.
+
+### Regulation
+
+Five generic booleans are represented by `RegulationRules` and affect the
+kernel's compliance truth: paid-random-reward restriction, odds disclosure,
+real-money price display, parental authorization, and direct exhortation to
+minors. They are operational abstractions, not complete statements of national
+law.
+
+Each rule has its own status and, when `ANCHORED`, its own compatible source.
+Illustrative rules can be consumed without a source in structural runs. The
+current anchored rule links are:
+
+- UK: parental authorization/express consent, real-money price transparency,
+  and direct exhortation to minors, linked to [`CMA_GAME_PRINCIPLES`](https://www.gov.uk/government/publications/buying-features-in-online-games-advice-for-parents-and-carers);
+- Korea: odds disclosure, linked to [`MCST_ODDS_DISCLOSURE_2024`](https://www.mcst.go.kr/english/policy/pressView.jsp?pSeq=407);
+- Japan: complete-gacha scope, linked to [`JP_COMPLETE_GACHA_FAQ`](https://www.caa.go.jp/policies/policy/representation/fair_labeling/faq/card), but this
+  product subtype is contract-only because the generic runtime rule type does
+  not encode it;
+- Belgium: real-money price and minor-exhortation principles, linked to
+  [`EU_CPC_VIRTUAL_CURRENCY_2025`](https://commission.europa.eu/document/download/8af13e88-6540-436c-b137-9853e7fe866a_en?filename=Key+principles+on+in-game+virtual+currencies.pdf).
+
+The Belgian paid-random-reward switch is active in the runtime but remains
+`ILLUSTRATIVE`; the Gaming Commission source is attached as a classification and
+product-specific scope anchor, not as evidence for an unconditional universal
+ban.
+
+Audit interval, sensitivity, specificity, random-audit share, and maximum fine
+come from the selected run configuration. Audit capacity comes from the shared
+jurisdiction profile and is synthetic. Audit budgets and inspection cost are
+also synthetic. The audit kernel uses finite sensitivity and specificity and
+can be affected by firm evasion.
+
+### Public funding
+
+The runtime supports subsidy applications, domestic-jurisdiction assignment,
+conditional scoring, a treasury, budget depletion, and double-entry cash flows.
+Every firm is assigned a synthetic home jurisdiction from its identifier. The
+operating budget and scoring weights are synthetic simulation-cent values and
+can be changed by an explicit `SubsidyRegime` intervention.
+
+Official programme labels, rates, caps, payment shares, eligibility language,
+and tax-shelter structures are contract-only. The current award equation does
+not reproduce the legal or accounting mechanics of VGEC, KOCCA production
+support, JLOX+, or the Belgian gaming tax shelter.
+
+## Contract-only national metrics
+
+The following values are parsed and validated but do not currently initialize
+players or enter purchasing, harm, audit, or subsidy equations:
+
+| Jurisdiction | Dormant contracts |
+|---|---|
+| UK | minor gaming reach; payer probability conditional on recent gaming; regret and overspending conditional on recent purchase; parental monitoring; VGEC instrument and rate |
+| KR | consumption propensity by income quintile; gaming reach at ages 10–69; mobile share conditional on being a gamer; monthly mobile and IAP spending; KOCCA instrument, cap, and payment shares |
+| JP | smartphone-game reach; nonpayer mass; payer spending body; ever-per-title extreme-spend tail; complete-gacha subtype; JLOX+ instrument, rate, and cap |
+| BE | material/social deprivation by age; gaming tax-shelter instrument |
+
+Conditioning must be preserved. In particular, a payer-only statistic cannot be
+applied to all players, Korean mobile spending has unresolved zero-spender
+inclusion, and the Japanese extreme-spend observation is an ever-per-title tail,
+not a monthly event probability.
+
+## Source-register inventory
+
+The register contains 26 official or institutional records. A runtime rule link
+below affects the current world; a contract-only anchor is parsed into
+provenance but does not change outcomes at the current fixed reference median.
+
+| Source ID | Geography/topic | Current role |
+|---|---|---|
+| [`EUROSTAT_ILC_DI03`](https://ec.europa.eu/eurostat/databrowser/view/ilc_di03/default/table?lang=en) | European income by age/sex | Context-only; no current numeric extraction |
+| [`EUROSTAT_DEMO_PJANIND`](https://ec.europa.eu/eurostat/databrowser/view/demo_pjanind/default/table?lang=en) | European population structure | Context-only; current age weights are illustrative |
+| [`OECD_HOUSEHOLD_DISPOSABLE_INCOME`](https://www.oecd.org/en/data/indicators/household-disposable-income.html) | OECD disposable income | Context-only; no PPP or FX conversion is implemented |
+| [`ONS_HDI_FYE2024`](https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/bulletins/householddisposableincomeandinequality/latest) | UK disposable income | Contract-only nominal anchor and scale metadata; the runtime median is fixed |
+| [`OFCOM_CHILD_SPENDING_2025`](https://www.ofcom.org.uk/media-use-and-attitudes/media-habits-children/top-trends-from-our-latest-look-at-uk-childrens-online-lives) | UK children's online lives | Context-only; the profile uses the detailed PDF record instead |
+| [`UK_LOOT_BOX_RESPONSE_2022`](https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence/outcome/government-response-to-the-call-for-evidence-on-loot-boxes-in-video-games) | UK loot-box evidence review | Context-only causal and harm background |
+| [`WHO_GAMING_DISORDER`](https://www.who.int/standards/classifications/frequently-asked-questions/gaming-disorder) | Functional-impairment definition | Context-only; the model does not diagnose gaming disorder |
+| [`FTC_EPIC_ORDER_2023`](https://www.ftc.gov/news-events/news/press-releases/2023/03/ftc-finalizes-order-requiring-fortnite-maker-epic-games-pay-245-million-tricking-users-making) | Dark patterns and unwanted charges | Context-only case evidence, not a prevalence estimate |
+| [`AGCM_MOBILE_GAMES_2026`](https://www.agcm.it/media/comunicati-stampa/2026/1/PS13020-PS13039) | Italian investigations | Context-only; an investigation is not a final finding |
+| [`USK_CRITERIA_2023`](https://usk.de/usk-pressemitteilung-umsetzung-neues-jugendschutzgesetz/) | German age-rating criteria | Context-only |
+| [`CMA_GAME_PRINCIPLES`](https://www.gov.uk/government/publications/buying-features-in-online-games-advice-for-parents-and-carers) | UK price/consent/minor principles | Consumed by selected UK generic rule switches |
+| [`EU_SILC_USER_GUIDE`](https://ec.europa.eu/eurostat/documents/203647/16195750/2021_Doc65_EUSILC_User_Guide.pdf) | Income equivalisation and microdata | Context-only methodology |
+| [`OFCOM_CHILD_SPENDING_PDF_2025`](https://www.ofcom.org.uk/siteassets/resources/documents/online-safety/research-statistics-and-data/online-services-research/childrens-online-spending-and-potential-financial-harm-quantitative-research.pdf?v=399305) | UK child spending and harm | Contract-only national metrics |
+| [`HMRC_VGEC`](https://www.gov.uk/hmrc-internal-manuals/creative-industries-expenditure-credit-manual/crec061300) | UK public funding | Contract-only programme instrument and rate |
+| [`KOCCA_GAME_USER_2024`](https://welcon.kocca.kr/mobile/en/support/resources/377) | Korean game use and conditional spend | Contract-only national metrics |
+| [`KOSTAT_HOUSEHOLD_Q4_2024`](https://www.kostat.go.kr/boardDownload.es?bid=11736&list_no=436048&seq=2) | Korean household income/expenditure | Contract-only central-quintile anchor and propensity values |
+| [`MCST_ODDS_DISCLOSURE_2024`](https://www.mcst.go.kr/english/policy/pressView.jsp?pSeq=407) | Korean probability disclosure | Consumed by the odds-disclosure rule |
+| [`KOCCA_PRODUCTION_SUPPORT_2024`](https://welcon.kocca.kr/ko/info/business/1953703) | Korean production support | Contract-only programme mechanics |
+| [`JP_SMARTPHONE_GAMES_2016`](https://www.cao.go.jp/consumer/iinkaikouhyou/2016/0920_iken.html) | Japanese smartphone-game survey | Contract-only; underlying observations date to 2015 |
+| [`JP_COMPLETE_GACHA_FAQ`](https://www.caa.go.jp/policies/policy/representation/fair_labeling/faq/card) | Japanese complete-gacha scope | Contract-only subtype; not represented by the generic runtime restriction |
+| [`METI_JLOX_PLUS_2024`](https://www.hkd.meti.go.jp/hokch/20240403/index.htm) | Japanese content support | Contract-only programme mechanics |
+| [`STATBEL_SILC_2025`](https://statbel.fgov.be/en/themes/households/poverty-and-living-conditions/faq) | Belgian disposable income | Contract-only nominal anchor and scale metadata; the runtime median is fixed |
+| [`STATBEL_DEPRIVATION_2025`](https://statbel.fgov.be/en/themes/households/poverty-and-living-conditions/material-and-social-deprivation) | Belgian material/social deprivation | Contract-only age anchors; not a direct liquidity equation |
+| [`BE_GAMING_COMMISSION_LOOT_BOX_2018`](https://www.gamingcommission.be/sites/default/files/2021-08/onderzoeksrapport-loot-boxen-Engels-publicatie.pdf) | Belgian loot-box classification | Scope anchor for an illustrative runtime switch |
+| [`EU_CPC_VIRTUAL_CURRENCY_2025`](https://commission.europa.eu/document/download/8af13e88-6540-436c-b137-9853e7fe866a_en?filename=Key+principles+on+in-game+virtual+currencies.pdf) | EU virtual-currency principles | Consumed by selected Belgian generic rule switches |
+| [`BE_GAMING_TAX_SHELTER`](https://finance.belgium.be/en/node/16499) | Belgian public funding | Contract-only programme instrument |
+
+## Validation and precedence
+
+Validation occurs at several boundaries:
+
+1. `load_config` parses one run scenario and validates types, ranges, positive
+   intervals, and calendar alignment with `tick_days`.
+2. `load_profile_bundle` parses both TOML data files, validates source integrity,
+   builds metric and money contracts, and creates country and state agents.
+3. `World.create` applies `allow_synthetic`, checks the duplicated shared
+   behavioural values for exact equality, and applies the run-level audit
+   parameters to each state.
+4. Campaign mode separately requires the scenario, every used profile contract,
+   every used source, every nominal anchor, and the money scale to be
+   `CALIBRATED`.
+
+`smoke.toml` permits synthetic dependencies and is the intended executable
+structural check. `base.toml` sets `allow_synthetic=false`; with the current
+synthetic profile dependencies it is intentionally rejected at world creation.
+It is a future-scale configuration, not an authorized campaign.
+
+## Reproducibility gaps
+
+The source register records publisher, title, URL, period, geography, declared
+support scope, status, and a global retrieval date. It does not yet contain:
+
+- immutable snapshots or archived URLs;
+- raw downloaded tables or extracts;
+- table, cell, row, page, or variable identifiers;
+- transcription and transformation scripts;
+- file hashes or checksums;
+- sampling weights, uncertainty estimates, or revision identifiers;
+- licenses and redistribution constraints.
+
+Some URLs point to “latest” or current guidance and may change after retrieval.
+The loader performs no network request and verifies no page content. Reproducing
+a future calibrated estimate will require immutable raw artifacts, scripted
+extraction, exact environment capture, and transformation-level tests in
+addition to the current register.

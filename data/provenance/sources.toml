@@ -83,8 +83,8 @@ calibration_status = "ANCHORED"
 
 [[source]]
 id = "AGCM_MOBILE_GAMES_2026"
-publisher = "Autorita Garante della Concorrenza e del Mercato"
-title = "Istruttorie su acquisti in-game e tutela dei minori"
+publisher = "Italian Competition Authority (AGCM)"
+title = "Investigations into in-game purchases and protection of minors"
 url = "https://www.agcm.it/media/comunicati-stampa/2026/1/PS13020-PS13039"
 period = "2026; investigation opened, no final finding"
 geography = "Italy"
@@ -260,4 +260,3 @@ period = "current guidance retrieved 2026-08-24"
 geography = "Belgium"
 supports = ["public_funding", "qualified_expenditure", "final_certification"]
 calibration_status = "ANCHORED"
-
