@@ -239,6 +239,87 @@ class PolicyBatchResult:
             )
         return rows
 
+    def opportunity_rows(self) -> list[dict[str, object]]:
+        """Return scenario-level displaced-activity decomposition rows."""
+
+        output: list[dict[str, object]] = []
+        components = (
+            ("sleep", "displaced_sleep_minutes", HarmComponent.S),
+            ("work_study", "displaced_work_study_minutes", HarmComponent.E),
+            ("family_social", "displaced_social_minutes", HarmComponent.F),
+            ("physical_activity", "displaced_physical_activity_minutes", None),
+        )
+        for scenario in self.spec.scenarios:
+            records = [
+                item
+                for item in self.records
+                if item.result.scenario.scenario_id is scenario.scenario_id
+            ]
+            for label, minute_name, burden_component in components:
+                minute_arrays = [
+                    getattr(item.result.harm, minute_name) for item in records
+                ]
+                minute_values = (
+                    np.concatenate(minute_arrays)
+                    if minute_arrays
+                    else np.empty(0, dtype=np.float64)
+                )
+                if burden_component is None:
+                    burden_values = np.empty(0, dtype=np.float64)
+                else:
+                    burden_values = np.concatenate(
+                        [
+                            item.result.harm.component_scores[:, burden_component]
+                            for item in records
+                        ]
+                    )
+                output.append(
+                    {
+                        "scenario_id": scenario.scenario_id.value,
+                        "component": label,
+                        "mean_minutes": _mean(minute_values),
+                        "mean_burden": _mean(burden_values),
+                        "monetary_proxy_cents": "",
+                    }
+                )
+            output.append(
+                {
+                    "scenario_id": scenario.scenario_id.value,
+                    "component": "all_displaced_activities",
+                    "mean_minutes": sum(
+                        float(row["mean_minutes"])
+                        for row in output[-len(components) :]
+                    ),
+                    "mean_burden": float(
+                        np.mean(
+                            [
+                                _mean(
+                                    item.result.harm.component_scores[
+                                        :, HarmComponent.OC
+                                    ]
+                                )
+                                for item in records
+                            ]
+                        )
+                    )
+                    if records
+                    else 0.0,
+                    "monetary_proxy_cents": float(
+                        np.mean(
+                            [
+                                _python_sum(
+                                    item.result.harm.opportunity_cost_proxy_cents
+                                )
+                                for item in records
+                            ]
+                        )
+                    )
+                    if records
+                    else 0.0,
+                }
+            )
+        return output
+
 
 def run_policy_batch(
     spec: PolicyBatchSpec,
