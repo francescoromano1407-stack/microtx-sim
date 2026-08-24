@@ -35,6 +35,8 @@ class PolicyState:
     last_purchase_tick: npt.NDArray[np.int64]
     player_spend_cents: npt.NDArray[np.int64]
     player_spend_by_source_cents: npt.NDArray[np.int64]
+    access_fixed_cents: npt.NDArray[np.int64]
+    access_subscription_cents: npt.NDArray[np.int64]
     action_minutes: npt.NDArray[np.int64]
     cumulative_enjoyment: npt.NDArray[np.float64]
     initial_wellbeing: npt.NDArray[np.float32]
@@ -47,6 +49,8 @@ class PolicyState:
             "cap_period_spend_cents",
             "last_purchase_tick",
             "player_spend_cents",
+            "access_fixed_cents",
+            "access_subscription_cents",
             "cumulative_enjoyment",
             "initial_wellbeing",
         )
@@ -66,6 +70,8 @@ class PolicyState:
             "last_purchase_tick",
             "player_spend_cents",
             "player_spend_by_source_cents",
+            "access_fixed_cents",
+            "access_subscription_cents",
             "action_minutes",
         ):
             if getattr(self, name).dtype != np.dtype(np.int64):
@@ -79,6 +85,8 @@ class PolicyState:
             "cap_period_spend_cents",
             "player_spend_cents",
             "player_spend_by_source_cents",
+            "access_fixed_cents",
+            "access_subscription_cents",
             "action_minutes",
             "cumulative_enjoyment",
         ):
@@ -121,6 +129,8 @@ def create_policy_state(players: PlayerTable, life: PlayerLifeTable) -> PolicySt
         player_spend_by_source_cents=np.zeros(
             (size, len(PURCHASE_REVENUE_SOURCES)), dtype=np.int64
         ),
+        access_fixed_cents=np.zeros(size, dtype=np.int64),
+        access_subscription_cents=np.zeros(size, dtype=np.int64),
         action_minutes=np.zeros((size, len(LifeAction)), dtype=np.int64),
         cumulative_enjoyment=np.zeros(size, dtype=np.float64),
         initial_wellbeing=life.wellbeing.copy(),

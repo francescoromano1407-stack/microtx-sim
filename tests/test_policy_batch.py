@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import unittest
+
+import numpy as np
+
+from microtx_sim.causal.batch import PolicyBatchSpec, run_policy_batch
+from microtx_sim.causal.scenarios import ScenarioId, required_scenarios
+from microtx_sim.consumers.decision import DecisionParameters
+from microtx_sim.consumers.population import CountryProfile
+
+
+PROFILE = (CountryProfile(code="XX"),)
+
+
+class PolicyBatchTests(unittest.TestCase):
+    def test_catalogue_contains_exactly_seven_explicit_scenarios(self) -> None:
+        scenarios = required_scenarios()
+        self.assertEqual(tuple(item.scenario_id for item in scenarios), tuple(ScenarioId))
+        self.assertTrue(all(not item.mechanics.personalized_offers for item in scenarios))
+        baseline = scenarios[0].mechanics
+        no_random = scenarios[2].mechanics
+        no_time = scenarios[3].mechanics
+        self.assertEqual(no_random.paid_random_rewards, 0.0)
+        self.assertEqual(no_time.time_limited_offers, 0.0)
+        self.assertEqual(no_random.time_limited_offers, baseline.time_limited_offers)
+        self.assertEqual(no_time.paid_random_rewards, baseline.paid_random_rewards)
+
+    def test_complete_two_seed_batch_reports_all_required_outcomes(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(
+                seeds=(11, 22),
+                days=1,
+                player_count=32,
+                decision_parameters=DecisionParameters(step_minutes=120),
+            ),
+            country_profiles=PROFILE,
+        )
+        self.assertEqual(len(batch.records), 14)
+        self.assertEqual(len(batch.seed_rows()), 14)
+        self.assertEqual(len(batch.scenario_rows()), 7)
+        self.assertEqual(len(batch.epgc_rows()), 2)
+        for seed in (11, 22):
+            seed_records = [item for item in batch.records if item.result.seed == seed]
+            self.assertEqual(len({item.cohort_digest for item in seed_records}), 1)
+        for record in batch.records:
+            result = record.result
+            self.assertTrue(
+                np.all(result.spending_cents <= result.disposable_budget_cents)
+            )
+            self.assertEqual(
+                result.total_revenue_cents,
+                sum(result.revenue_composition_cents.values()),
+            )
+            if result.scenario.scenario_id is ScenarioId.SAFE_FIXED_PRICE_SUBSCRIPTION:
+                self.assertEqual(record.mean_harm_effect_vs_safe, 0.0)
+        epgc = [
+            item.result
+            for item in batch.records
+            if item.result.scenario.scenario_id is ScenarioId.EPGC
+        ]
+        self.assertTrue(all(item.epgc is not None for item in epgc))
+        self.assertTrue(
+            all(item.revenue_composition_cents["public_contract"] > 0 for item in epgc)
+        )
+        summary = batch.scenario_rows()[0]
+        self.assertIn("mean_harm_variance", summary)
+        self.assertIn("mean_harm_ci95_low", summary)
+        self.assertIn("mean_harm_ci95_high", summary)
+
+    def test_scenario_iteration_order_cannot_change_results(self) -> None:
+        params = dict(
+            seeds=(909,),
+            days=1,
+            player_count=24,
+            decision_parameters=DecisionParameters(step_minutes=120),
+        )
+        forward = run_policy_batch(
+            PolicyBatchSpec(**params), country_profiles=PROFILE
+        )
+        reverse = run_policy_batch(
+            PolicyBatchSpec(scenarios=tuple(reversed(required_scenarios())), **params),
+            country_profiles=PROFILE,
+        )
+        forward_rows = {
+            row["scenario_id"]: row for row in forward.seed_rows()
+        }
+        reverse_rows = {
+            row["scenario_id"]: row for row in reverse.seed_rows()
+        }
+        self.assertEqual(forward_rows, reverse_rows)
+
+    def test_zero_player_batch_is_valid_and_finite(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(
+                seeds=(3,),
+                days=0,
+                player_count=0,
+                decision_parameters=DecisionParameters(step_minutes=240),
+            ),
+            country_profiles=PROFILE,
+        )
+        self.assertEqual(len(batch.records), 7)
+        for row in batch.seed_rows():
+            self.assertEqual(row["player_count"], 0)
+            self.assertEqual(row["mean_harm"], 0.0)
+            self.assertEqual(row["total_spending_cents"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
