@@ -157,9 +157,15 @@ class PolicyBatchResult:
                 result[f"{metric}_ci95_high"] = high
             for key in sorted(rows[0]):
                 if key.startswith("revenue_") and key.endswith("_cents"):
-                    result[f"{key}_mean"] = float(
-                        np.mean([float(row[key]) for row in rows])
+                    values = np.asarray([float(row[key]) for row in rows])
+                    mean, variance, standard_deviation, low, high = _uncertainty(
+                        values
                     )
+                    result[f"{key}_mean"] = mean
+                    result[f"{key}_variance"] = variance
+                    result[f"{key}_sd"] = standard_deviation
+                    result[f"{key}_ci95_low"] = low
+                    result[f"{key}_ci95_high"] = high
             output.append(result)
         return output
 

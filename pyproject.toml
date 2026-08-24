@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "microtx-sim"
-version = "0.1.0"
-description = "Agent-based causal simulation of mobile-game monetisation, regulation, and public funding"
+version = "0.2.0"
+description = "Synthetic causal simulation of mobile-game monetisation harm, regulation, and public-value funding"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["numpy>=2.0"]
@@ -22,4 +22,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
-

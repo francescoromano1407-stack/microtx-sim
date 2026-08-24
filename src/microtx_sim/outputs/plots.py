@@ -69,7 +69,12 @@ def render_harm_revenue_frontier_svg(
     harm_key: str = "mean_harm",
     title: str = "Harm versus revenue frontier",
 ) -> str:
-    """Render scenario points ordered by producer revenue."""
+    """Render scenario points and the non-dominated harm/revenue frontier.
+
+    Revenue is treated as desirable and harm as undesirable. A point is on the
+    frontier when no other scenario has at least as much revenue and no more
+    harm, with one strict improvement.
+    """
 
     points: list[tuple[float, float, str]] = []
     for index, row in enumerate(_mapping_rows(rows)):
@@ -95,19 +100,36 @@ def render_harm_revenue_frontier_svg(
             )
             for revenue, harm, scenario in points
         ]
-        if len(coordinates) > 1:
+        efficient = []
+        for candidate in coordinates:
+            _, _, _, candidate_revenue, candidate_harm = candidate
+            dominated = any(
+                other_revenue >= candidate_revenue
+                and other_harm <= candidate_harm
+                and (
+                    other_revenue > candidate_revenue
+                    or other_harm < candidate_harm
+                )
+                for _, _, _, other_revenue, other_harm in coordinates
+            )
+            if not dominated:
+                efficient.append(candidate)
+        efficient.sort(key=lambda item: (item[3], item[4], item[2]))
+        if len(efficient) > 1:
             path = " ".join(
-                f"{_coordinate(x)},{_coordinate(y)}" for x, y, *_ in coordinates
+                f"{_coordinate(x)},{_coordinate(y)}" for x, y, *_ in efficient
             )
             body.append(
-                f'<polyline points="{path}" fill="none" stroke="#8A8A8A" '
-                'stroke-width="1.5" stroke-dasharray="5 4"/>'
+                f'<polyline points="{path}" fill="none" stroke="#2F6B2F" '
+                'stroke-width="2"><title>Pareto-efficient frontier</title></polyline>'
             )
         for x, y, scenario, revenue, harm in coordinates:
             safe_label = escape(scenario, quote=True)
+            on_frontier = any(item[2] == scenario for item in efficient)
+            fill = "#54A24B" if on_frontier else "#BAB0AC"
             body.append(
                 f'<circle cx="{_coordinate(x)}" cy="{_coordinate(y)}" r="5" '
-                'fill="#54A24B" stroke="#244A20" stroke-width="1">'
+                f'fill="{fill}" stroke="#244A20" stroke-width="1">'
                 f'<title>{safe_label}: revenue {_number(revenue)}, harm {_number(harm)}</title>'
                 "</circle>"
             )

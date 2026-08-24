@@ -67,6 +67,35 @@ class PolicyBatchTests(unittest.TestCase):
         self.assertIn("mean_harm_variance", summary)
         self.assertIn("mean_harm_ci95_low", summary)
         self.assertIn("mean_harm_ci95_high", summary)
+        revenue_variances = [
+            key
+            for key in summary
+            if key.startswith("revenue_") and key.endswith("_variance")
+        ]
+        self.assertTrue(revenue_variances)
+        for variance_key in revenue_variances:
+            stem = variance_key.removesuffix("_variance")
+            self.assertIn(f"{stem}_mean", summary)
+            self.assertIn(f"{stem}_sd", summary)
+            self.assertIn(f"{stem}_ci95_low", summary)
+            self.assertIn(f"{stem}_ci95_high", summary)
+
+        opportunity_rows = batch.opportunity_rows()
+        self.assertEqual(len(opportunity_rows), 7 * 5)
+        self.assertEqual(
+            {
+                row["component"]
+                for row in opportunity_rows
+                if row["scenario_id"] == ScenarioId.BASELINE_F2P.value
+            },
+            {
+                "sleep",
+                "work_study",
+                "family_social",
+                "physical_activity",
+                "all_displaced_activities",
+            },
+        )
 
     def test_scenario_iteration_order_cannot_change_results(self) -> None:
         params = dict(
@@ -105,6 +134,9 @@ class PolicyBatchTests(unittest.TestCase):
             self.assertEqual(row["player_count"], 0)
             self.assertEqual(row["mean_harm"], 0.0)
             self.assertEqual(row["total_spending_cents"], 0)
+        for row in batch.opportunity_rows():
+            self.assertEqual(row["mean_minutes"], 0.0)
+            self.assertEqual(row["mean_burden"], 0.0)
 
 
 if __name__ == "__main__":

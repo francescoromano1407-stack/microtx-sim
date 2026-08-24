@@ -194,6 +194,27 @@ class SvgPlotTests(unittest.TestCase):
         self.assertIn("A &amp; &lt;B&gt;", first)
         self.assertNotIn("A & <B>", first)
 
+    def test_harm_revenue_plot_marks_only_non_dominated_points(self) -> None:
+        document = render_harm_revenue_frontier_svg(
+            (
+                {"scenario": "dominated", "producer_revenue_cents": 100, "mean_harm": 0.5},
+                {"scenario": "efficient-high", "producer_revenue_cents": 100, "mean_harm": 0.3},
+                {"scenario": "efficient-low", "producer_revenue_cents": 50, "mean_harm": 0.1},
+            )
+        )
+        root = ET.fromstring(document)
+        circles = [node for node in root.iter() if node.tag.endswith("circle")]
+        self.assertEqual(len(circles), 3)
+        fills_by_label = {
+            next(child for child in circle if child.tag.endswith("title"))
+            .text.split(":", 1)[0]: circle.attrib["fill"]
+            for circle in circles
+        }
+        self.assertEqual(fills_by_label["dominated"], "#BAB0AC")
+        self.assertEqual(fills_by_label["efficient-high"], "#54A24B")
+        self.assertEqual(fills_by_label["efficient-low"], "#54A24B")
+        self.assertIn("Pareto-efficient frontier", document)
+
     def test_atomic_svg_writer_is_byte_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             first = Path(directory) / "one.svg"
