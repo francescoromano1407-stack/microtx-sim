@@ -44,6 +44,43 @@ class MonetisationVectorTests(unittest.TestCase):
         self.assertGreater(risky.risk_exposure, safe.risk_exposure)
         self.assertLess(protected.risk_exposure, risky.risk_exposure)
 
+    def test_each_mechanic_has_an_isolated_interpretable_effect(self) -> None:
+        safe = MonetisationVector(direct_price_cents=499)
+        self.assertEqual(safe.constrain_purchase(safe.direct_price_cents), 499)
+
+        pressure_coordinates = (
+            "opaque_virtual_currency",
+            "paid_random_rewards",
+            "progression_gates",
+            "time_limited_offers",
+            "daily_streak_pressure",
+            "pay_to_progress",
+            "pay_to_win",
+            "social_guild_pressure",
+        )
+        for coordinate in pressure_coordinates:
+            with self.subTest(mechanic=coordinate):
+                exposed = replace(safe, **{coordinate: 1.0})
+                self.assertGreater(exposed.purchase_pressure, safe.purchase_pressure)
+                self.assertGreater(exposed.risk_exposure, safe.risk_exposure)
+
+        low_friction = replace(safe, purchase_friction=0.0)
+        self.assertGreater(low_friction.purchase_pressure, safe.purchase_pressure)
+        self.assertGreater(low_friction.risk_exposure, safe.risk_exposure)
+
+        hidden_real_price = replace(safe, real_currency_price_display=False)
+        self.assertLess(hidden_real_price.price_transparency, safe.price_transparency)
+        self.assertGreater(hidden_real_price.risk_exposure, safe.risk_exposure)
+
+        personalized = replace(safe, personalized_offers=True)
+        self.assertGreater(personalized.risk_exposure, safe.risk_exposure)
+
+        exposed = MonetisationVector(paid_random_rewards=1.0)
+        capped = replace(exposed, spending_cap_cents=1_000)
+        cooled = replace(exposed, cooling_off_hours=24)
+        self.assertLess(capped.risk_exposure, exposed.risk_exposure)
+        self.assertLess(cooled.risk_exposure, exposed.risk_exposure)
+
     def test_cap_and_cooling_off_constrain_actual_amounts(self) -> None:
         vector = MonetisationVector(
             spending_cap_cents=1_000,
