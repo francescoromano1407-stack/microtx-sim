@@ -33,7 +33,7 @@ un segmento di spesa che emerge a posteriori, non un comportamento assegnato.
 ## Stato attuale
 
 Questa fase costruisce lo scheletro e una breve esecuzione di controllo, non una
-campagna. I profili iniziali IT/DE/UK sono illustrativi e ancorati a fonti
+campagna. I profili iniziali UK/KR/JP/BE sono illustrativi e ancorati a fonti
 ufficiali, ma non costituiscono ancora una calibrazione comparabile tra Paesi.
 Questa distinzione è verificata dal codice.
 
@@ -47,4 +47,3 @@ python -m microtx_sim smoke configs/smoke.toml
 
 Lo smoke test esegue pochi cicli e produce soltanto un riepilogo in memoria. Per
 architettura, assunzioni e disegno causale si vedano `docs/`.
-

@@ -111,3 +111,153 @@ geography = "United Kingdom"
 supports = ["price_transparency", "express_consent", "direct_exhortation_to_minors"]
 calibration_status = "ANCHORED"
 
+[[source]]
+id = "EU_SILC_USER_GUIDE"
+publisher = "Eurostat"
+title = "EU-SILC User Guide"
+url = "https://ec.europa.eu/eurostat/documents/203647/16195750/2021_Doc65_EUSILC_User_Guide.pdf"
+period = "2021"
+geography = "European Union"
+supports = ["income_equivalisation", "household_composition", "microdata_contract"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "OFCOM_CHILD_SPENDING_PDF_2025"
+publisher = "Ofcom"
+title = "Children's online spending and potential financial harm"
+url = "https://www.ofcom.org.uk/siteassets/resources/documents/online-safety/research-statistics-and-data/online-services-research/childrens-online-spending-and-potential-financial-harm-quantitative-research.pdf?v=399305"
+period = "2025"
+geography = "United Kingdom; ages 8-17"
+supports = ["gaming_reach", "conditional_payer_rate", "regret", "overspending", "parental_controls"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "HMRC_VGEC"
+publisher = "HM Revenue & Customs"
+title = "Video Games Expenditure Credit"
+url = "https://www.gov.uk/hmrc-internal-manuals/creative-industries-expenditure-credit-manual/crec061300"
+period = "current guidance retrieved 2026-08-24"
+geography = "United Kingdom"
+supports = ["public_funding", "qualified_expenditure", "tax_credit_rate"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "KOCCA_GAME_USER_2024"
+publisher = "Korea Creative Content Agency"
+title = "2024 Korean Game User Insights"
+url = "https://welcon.kocca.kr/mobile/en/support/resources/377"
+period = "2024"
+geography = "South Korea; ages 10-69"
+supports = ["gaming_reach", "mobile_share", "playtime", "conditional_mobile_spend"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "KOSTAT_HOUSEHOLD_Q4_2024"
+publisher = "Statistics Korea"
+title = "Household Income and Expenditure Trends in the Fourth Quarter of 2024"
+url = "https://www.kostat.go.kr/boardDownload.es?bid=11736&list_no=436048&seq=2"
+period = "Q4 2024"
+geography = "South Korea"
+supports = ["disposable_income_quintiles", "consumption_propensity", "householder_age"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "MCST_ODDS_DISCLOSURE_2024"
+publisher = "Korean Ministry of Culture, Sports and Tourism"
+title = "Monitoring of probability information disclosure"
+url = "https://www.mcst.go.kr/english/policy/pressView.jsp?pSeq=407"
+period = "law effective 2024"
+geography = "South Korea"
+supports = ["odds_disclosure", "enforcement_signals"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "KOCCA_PRODUCTION_SUPPORT_2024"
+publisher = "Korea Creative Content Agency"
+title = "Game production support programme"
+url = "https://welcon.kocca.kr/ko/info/business/1953703"
+period = "2024"
+geography = "South Korea"
+supports = ["public_funding", "selection", "milestone_payment", "performance_audit"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "JP_SMARTPHONE_GAMES_2016"
+publisher = "Cabinet Office Consumer Commission / Consumer Affairs Agency"
+title = "Opinion on consumer issues surrounding smartphone games"
+url = "https://www.cao.go.jp/consumer/iinkaikouhyou/2016/0920_iken.html"
+period = "2015 data; published 2016"
+geography = "Japan"
+supports = ["payer_mass_at_zero", "conditional_spend_body", "extreme_spend_tail", "minor_card_cases"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "JP_COMPLETE_GACHA_FAQ"
+publisher = "Consumer Affairs Agency"
+title = "FAQ on card matching (complete gacha)"
+url = "https://www.caa.go.jp/policies/policy/representation/fair_labeling/faq/card"
+period = "current guidance retrieved 2026-08-24"
+geography = "Japan"
+supports = ["complete_gacha_restriction", "legal_scope"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "METI_JLOX_PLUS_2024"
+publisher = "Japanese Ministry of Economy, Trade and Industry"
+title = "JLOX+ support for next-generation digital content"
+url = "https://www.hkd.meti.go.jp/hokch/20240403/index.htm"
+period = "2024"
+geography = "Japan"
+supports = ["public_funding", "qualified_cost_share", "maximum_award"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "STATBEL_SILC_2025"
+publisher = "Statbel"
+title = "Poverty and living conditions FAQ"
+url = "https://statbel.fgov.be/en/themes/households/poverty-and-living-conditions/faq"
+period = "2025 survey; 2024 income"
+geography = "Belgium"
+supports = ["median_equivalised_disposable_income", "poverty_threshold"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "STATBEL_DEPRIVATION_2025"
+publisher = "Statbel"
+title = "Material and social deprivation"
+url = "https://statbel.fgov.be/en/themes/households/poverty-and-living-conditions/material-and-social-deprivation"
+period = "2025"
+geography = "Belgium"
+supports = ["liquidity_stress_by_age", "regional_heterogeneity"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "BE_GAMING_COMMISSION_LOOT_BOX_2018"
+publisher = "Belgian Gaming Commission"
+title = "Research report on loot boxes"
+url = "https://www.gamingcommission.be/sites/default/files/2021-08/onderzoeksrapport-loot-boxen-Engels-publicatie.pdf"
+period = "2018"
+geography = "Belgium"
+supports = ["paid_random_reward_classification", "product_specific_assessment"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "EU_CPC_VIRTUAL_CURRENCY_2025"
+publisher = "European Commission / Consumer Protection Cooperation Network"
+title = "Key principles on in-game virtual currencies"
+url = "https://commission.europa.eu/document/download/8af13e88-6540-436c-b137-9853e7fe866a_en?filename=Key+principles+on+in-game+virtual+currencies.pdf"
+period = "2025"
+geography = "European Union"
+supports = ["real_money_price", "cost_transparency", "vulnerable_consumers", "minor_exhortation"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "BE_GAMING_TAX_SHELTER"
+publisher = "Belgian Federal Public Service Finance"
+title = "Tax Shelter for gaming"
+url = "https://finance.belgium.be/en/node/16499"
+period = "current guidance retrieved 2026-08-24"
+geography = "Belgium"
+supports = ["public_funding", "qualified_expenditure", "final_certification"]
+calibration_status = "ANCHORED"
+
