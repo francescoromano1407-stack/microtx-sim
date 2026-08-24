@@ -1,0 +1,31 @@
+[meta]
+name = "smoke"
+provenance_status = "SYNTHETIC"
+notes = "Tiny structural check only. Never use for substantive estimates."
+
+[run]
+seed = 17
+cycles = 3
+tick_days = 1
+player_count = 384
+chunk_size = 128
+allow_synthetic = true
+
+[market]
+company_count = 3
+game_count = 4
+stat_dimensions = 5
+ranking_interval = 2
+firm_decision_interval = 2
+
+[information]
+public_signal_noise = 0.12
+public_signal_delay = 1
+research_report_cost_cents = 250000
+research_noise = 0.04
+
+[causal]
+common_random_numbers = true
+estimand = "market_regime_total_effect"
+record_individual_outcomes = true
+

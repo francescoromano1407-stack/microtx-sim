@@ -1,0 +1,113 @@
+schema_version = 1
+retrieved_on = "2026-08-24"
+
+[[source]]
+id = "EUROSTAT_ILC_DI03"
+publisher = "Eurostat"
+title = "Mean and median income by age and sex"
+url = "https://ec.europa.eu/eurostat/databrowser/view/ilc_di03/default/table?lang=en"
+period = "annual"
+geography = "Europe"
+supports = ["income_distribution", "income_by_age", "purchasing_power"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "EUROSTAT_DEMO_PJANIND"
+publisher = "Eurostat"
+title = "Population structure indicators at national level"
+url = "https://ec.europa.eu/eurostat/databrowser/view/demo_pjanind/default/table?lang=en"
+period = "annual"
+geography = "Europe"
+supports = ["age_structure"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "OECD_HOUSEHOLD_DISPOSABLE_INCOME"
+publisher = "OECD"
+title = "Household disposable income"
+url = "https://www.oecd.org/en/data/indicators/household-disposable-income.html"
+period = "annual"
+geography = "OECD"
+supports = ["income_definition", "cross_country_income"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "ONS_HDI_FYE2024"
+publisher = "Office for National Statistics"
+title = "Average household income, UK: financial year ending 2024"
+url = "https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/bulletins/householddisposableincomeandinequality/latest"
+period = "FYE 2024"
+geography = "United Kingdom"
+supports = ["median_equivalised_disposable_income", "income_inequality"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "OFCOM_CHILD_SPENDING_2025"
+publisher = "Ofcom"
+title = "Top trends from our latest look at UK children's online lives"
+url = "https://www.ofcom.org.uk/media-use-and-attitudes/media-habits-children/top-trends-from-our-latest-look-at-uk-childrens-online-lives"
+period = "2025"
+geography = "United Kingdom"
+supports = ["minor_gaming_reach", "purchase_incidence", "regret", "overspending", "parental_controls"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "UK_LOOT_BOX_RESPONSE_2022"
+publisher = "UK Department for Digital, Culture, Media & Sport"
+title = "Government response to the call for evidence on loot boxes in video games"
+url = "https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence/outcome/government-response-to-the-call-for-evidence-on-loot-boxes-in-video-games"
+period = "2022"
+geography = "United Kingdom"
+supports = ["causal_uncertainty", "harm_taxonomy", "minor_vulnerability", "loot_boxes"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "WHO_GAMING_DISORDER"
+publisher = "World Health Organization"
+title = "Gaming disorder"
+url = "https://www.who.int/standards/classifications/frequently-asked-questions/gaming-disorder"
+period = "ICD-11"
+geography = "Global"
+supports = ["functional_impairment_definition", "persistence_requirement"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "FTC_EPIC_ORDER_2023"
+publisher = "US Federal Trade Commission"
+title = "FTC final order concerning unwanted charges in Fortnite"
+url = "https://www.ftc.gov/news-events/news/press-releases/2023/03/ftc-finalizes-order-requiring-fortnite-maker-epic-games-pay-245-million-tricking-users-making"
+period = "2023"
+geography = "United States"
+supports = ["dark_patterns", "unwanted_charges", "minor_unauthorised_spend", "refunds"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "AGCM_MOBILE_GAMES_2026"
+publisher = "Autorita Garante della Concorrenza e del Mercato"
+title = "Istruttorie su acquisti in-game e tutela dei minori"
+url = "https://www.agcm.it/media/comunicati-stampa/2026/1/PS13020-PS13039"
+period = "2026; investigation opened, no final finding"
+geography = "Italy"
+supports = ["audit_signals", "parental_defaults", "consumer_protection", "addictive_design_concern"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "USK_CRITERIA_2023"
+publisher = "Unterhaltungssoftware Selbstkontrolle"
+title = "In-game purchases, chats and loot boxes: expanded review criteria"
+url = "https://usk.de/usk-pressemitteilung-umsetzung-neues-jugendschutzgesetz/"
+period = "effective 2023"
+geography = "Germany"
+supports = ["age_rating", "purchase_risk", "minor_protection"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "CMA_GAME_PRINCIPLES"
+publisher = "UK Competition and Markets Authority"
+title = "Principles for online and app-based games"
+url = "https://www.gov.uk/government/publications/buying-features-in-online-games-advice-for-parents-and-carers"
+period = "2014-2015"
+geography = "United Kingdom"
+supports = ["price_transparency", "express_consent", "direct_exhortation_to_minors"]
+calibration_status = "ANCHORED"
+

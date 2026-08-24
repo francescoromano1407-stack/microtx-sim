@@ -1,0 +1,31 @@
+[meta]
+name = "research-skeleton"
+provenance_status = "ILLUSTRATIVE"
+notes = "Architecture baseline only; not authorised for scientific estimates."
+
+[run]
+seed = 20260824
+cycles = 365
+tick_days = 1
+player_count = 50000
+chunk_size = 4096
+allow_synthetic = false
+
+[market]
+company_count = 5
+game_count = 8
+stat_dimensions = 6
+ranking_interval = 7
+firm_decision_interval = 28
+
+[information]
+public_signal_noise = 0.12
+public_signal_delay = 7
+research_report_cost_cents = 2500000
+research_noise = 0.035
+
+[causal]
+common_random_numbers = true
+estimand = "market_regime_total_effect"
+record_individual_outcomes = true
+
