@@ -6,6 +6,11 @@ import numpy as np
 import numpy.typing as npt
 
 from ..metrics.outcomes import HarmWeights, OutcomeSnapshot
+from ..config import SimulationConfig
+from ..core.engine import RunResult, SimulationEngine
+from ..core.world import World
+from ..data.profiles import ProfileBundle
+from .interventions import Intervention, NullIntervention
 
 
 FloatArray = npt.NDArray[np.float64]
@@ -31,6 +36,16 @@ class RegimeEffect:
     total_operating_margin_effect_cents: int
     total_subsidy_effect_cents: int
     affected_player_share: float
+
+
+@dataclass(frozen=True, slots=True)
+class PairedWorldRun:
+    """Outputs from two structurally identical counterfactual markets."""
+
+    treated_run: RunResult
+    control_run: RunResult
+    paired_outcome: PairedOutcome
+    effect: RegimeEffect
 
 
 def compare_outcomes(
@@ -98,3 +113,94 @@ def compare_outcomes(
     )
     return paired, effect
 
+
+def run_paired_worlds(
+    config: SimulationConfig,
+    *,
+    treated: Intervention,
+    control: Intervention | None = None,
+    cycles: int | None = None,
+    campaign: bool = False,
+    profiles: ProfileBundle | None = None,
+) -> PairedWorldRun:
+    """Run an explicit treated/control pair with common random numbers.
+
+    Each branch owns separate mutable state. Counter-based random streams share
+    coordinates, so an action occurring only in one branch cannot shift later
+    exogenous draws in the other branch.
+    """
+
+    if not config.causal.common_random_numbers:
+        raise ValueError("paired worlds require common_random_numbers=true")
+    control_intervention = control or NullIntervention()
+    treated_world = World.create(config, profiles=profiles, campaign=campaign)
+    control_world = World.create(config, profiles=profiles, campaign=campaign)
+    _assert_structural_pair(treated_world, control_world)
+
+    treated.apply(treated_world)
+    control_intervention.apply(control_world)
+    treated_run = SimulationEngine.run(
+        treated_world, cycles=cycles, campaign=campaign
+    )
+    control_run = SimulationEngine.run(
+        control_world, cycles=cycles, campaign=campaign
+    )
+    paired, effect = compare_outcomes(
+        treated_run.final_outcome,
+        control_run.final_outcome,
+        estimand=config.causal.estimand,
+    )
+    return PairedWorldRun(
+        treated_run=treated_run,
+        control_run=control_run,
+        paired_outcome=paired,
+        effect=effect,
+    )
+
+
+def _assert_structural_pair(treated: World, control: World) -> None:
+    """Fail before treatment if latent populations are not exactly paired."""
+
+    player_columns = (
+        "player_id",
+        "age_years",
+        "jurisdiction",
+        "household_id",
+        "is_minor",
+        "monthly_disposable_income_cents",
+        "allowance_cents",
+        "has_stored_payment_access",
+        "guardian_supervision",
+        "guardian_consent",
+        "traits",
+        "motive_weights",
+        "baseline_vulnerability",
+    )
+    game_columns = (
+        "game_id",
+        "company_id",
+        "quality",
+        "competitive_integrity",
+        "novelty",
+        "monetisation",
+        "stat_frontier",
+        "price_cents",
+    )
+    for name in player_columns:
+        if not np.array_equal(
+            getattr(treated.players, name), getattr(control.players, name)
+        ):
+            raise ValueError(f"paired player column differs before treatment: {name}")
+    for name in game_columns:
+        if not np.array_equal(
+            getattr(treated.games, name), getattr(control.games, name)
+        ):
+            raise ValueError(f"paired game column differs before treatment: {name}")
+    if tuple(firm.firm_id for firm in treated.firms) != tuple(
+        firm.firm_id for firm in control.firms
+    ):
+        raise ValueError("paired firm identities differ before treatment")
+    if tuple(state.code for state in treated.states) != tuple(
+        state.code for state in control.states
+    ):
+        raise ValueError("paired jurisdiction identities differ before treatment")

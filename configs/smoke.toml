@@ -24,8 +24,23 @@ public_signal_delay = 1
 research_report_cost_cents = 250000
 research_noise = 0.04
 
+[behavior]
+game_choice_temperature = 0.24
+switching_cost = 0.12
+base_purchase_logit = -4.2
+unauthorised_card_hazard_per_exposed_minor_day = 0.0000005
+harm_decay = 0.985
+daily_credit_interest_rate = 0.00045
+
+[regulation]
+audit_interval = 2
+subsidy_interval = 3
+maximum_fine_cents = 5000000
+audit_sensitivity = 0.78
+audit_specificity = 0.97
+random_audit_fraction = 0.34
+
 [causal]
 common_random_numbers = true
 estimand = "market_regime_total_effect"
 record_individual_outcomes = true
-

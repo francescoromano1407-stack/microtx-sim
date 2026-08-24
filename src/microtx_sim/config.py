@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 import tomllib
 
@@ -39,6 +40,26 @@ class InformationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BehaviorConfig:
+    game_choice_temperature: float
+    switching_cost: float
+    base_purchase_logit: float
+    unauthorised_card_hazard_per_exposed_minor_day: float
+    harm_decay: float
+    daily_credit_interest_rate: float
+
+
+@dataclass(frozen=True, slots=True)
+class RegulationConfig:
+    audit_interval: int
+    subsidy_interval: int
+    maximum_fine_cents: int
+    audit_sensitivity: float
+    audit_specificity: float
+    random_audit_fraction: float
+
+
+@dataclass(frozen=True, slots=True)
 class CausalConfig:
     common_random_numbers: bool
     estimand: str
@@ -58,6 +79,8 @@ class SimulationConfig:
     run: RunConfig
     market: MarketConfig
     information: InformationConfig
+    behavior: BehaviorConfig
+    regulation: RegulationConfig
     causal: CausalConfig
 
     def validate(self, *, campaign: bool = False) -> None:
@@ -71,6 +94,9 @@ class SimulationConfig:
             "stat_dimensions": self.market.stat_dimensions,
             "ranking_interval": self.market.ranking_interval,
             "firm_decision_interval": self.market.firm_decision_interval,
+            "audit_interval": self.regulation.audit_interval,
+            "subsidy_interval": self.regulation.subsidy_interval,
+            "maximum_fine_cents": self.regulation.maximum_fine_cents,
         }
         invalid = [name for name, value in positive.items() if value <= 0]
         if invalid:
@@ -82,6 +108,23 @@ class SimulationConfig:
         for name, value in {
             "public_signal_noise": self.information.public_signal_noise,
             "research_noise": self.information.research_noise,
+        }.items():
+            if not 0.0 <= value <= 1.0:
+                raise ConfigurationError(f"{name} must be in [0, 1]")
+        if not 0.0 < self.behavior.game_choice_temperature <= 1.0:
+            raise ConfigurationError("game_choice_temperature must be in (0, 1]")
+        if not isfinite(self.behavior.base_purchase_logit):
+            raise ConfigurationError("base_purchase_logit must be finite")
+        for name, value in {
+            "switching_cost": self.behavior.switching_cost,
+            "unauthorised_card_hazard_per_exposed_minor_day": (
+                self.behavior.unauthorised_card_hazard_per_exposed_minor_day
+            ),
+            "harm_decay": self.behavior.harm_decay,
+            "daily_credit_interest_rate": self.behavior.daily_credit_interest_rate,
+            "audit_sensitivity": self.regulation.audit_sensitivity,
+            "audit_specificity": self.regulation.audit_specificity,
+            "random_audit_fraction": self.regulation.random_audit_fraction,
         }.items():
             if not 0.0 <= value <= 1.0:
                 raise ConfigurationError(f"{name} must be in [0, 1]")
@@ -112,10 +155,11 @@ def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig
             run=RunConfig(**raw["run"]),
             market=MarketConfig(**raw["market"]),
             information=InformationConfig(**raw["information"]),
+            behavior=BehaviorConfig(**raw["behavior"]),
+            regulation=RegulationConfig(**raw["regulation"]),
             causal=CausalConfig(**raw["causal"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"Invalid configuration {config_path}: {exc}") from exc
     config.validate(campaign=campaign)
     return config
-
