@@ -2,22 +2,168 @@
 
 ## Files and loading
 
-Run scenarios are TOML files loaded by `microtx_sim.config.load_config()` into
-immutable dataclasses. The loader requires all declared sections and rejects
-unknown or missing constructor fields through typed construction.
+The repository has two explicit TOML schemas:
 
-Two scenarios are supplied:
+- market-world scenarios are loaded by `microtx_sim.config.load_config()`;
+- the seven-scenario synthetic policy prototype is loaded by
+  `microtx_sim.policy_config.load_policy_config()`.
+
+Both loaders construct immutable dataclasses and reject missing or unknown
+fields. The policy loader additionally performs strict runtime type/range checks
+and accepts only `provenance_status = "synthetic"`.
+
+Three run configurations are supplied:
 
 | File | Purpose | Scale | Status |
 | --- | --- | --- | --- |
 | `configs/smoke.toml` | Short connectivity check | 384 players, 3 companies, 4 games, 3 one-day cycles | `SYNTHETIC` and executable only as a non-campaign run |
+| `configs/policy_prototype.toml` | Reproducible seven-scenario policy prototype | 1,000 players, 14 days, 3 seeds, 7 scenarios | Strictly `synthetic`; tested but not empirically calibrated |
 | `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
 
 Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
 `data/provenance/sources.toml`.
 
-## `[meta]`
+## Synthetic policy prototype schema
+
+`configs/policy_prototype.toml` is self-contained for the policy batch. It does
+not silently inherit the legacy `base.toml` or `smoke.toml` behavioural values.
+The seven intervention vectors are named, versioned source-code definitions in
+`microtx_sim.causal.scenarios`; the TOML selects cohort, decision, harm,
+financing, and export assumptions shared by those scenarios.
+
+The required scenarios are:
+
+1. `baseline_f2p`;
+2. `transparent_direct_price`;
+3. `no_random_rewards`;
+4. `no_time_limited_pressure`;
+5. `spending_cap_cooling_off`;
+6. `safe_fixed_price_subscription`;
+7. `epgc`.
+
+Within each seed, all seven scenarios start from the same synthetic cohort and
+semantic random coordinates. The default reference for reported contrasts is
+`safe_fixed_price_subscription`. Scenario names do not assert that the
+underlying parameters describe any observed game or jurisdiction.
+
+### Policy `[meta]`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `name` | non-empty string | Run name stored in CLI output and `manifest.json`. |
+| `provenance_status` | string | Must be exactly `synthetic`. |
+| `notes` | string | Interpretation warning retained in the manifest. |
+
+### `[policy_run]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `seeds` | non-empty list of unique integers | Independent replications. A cohort is reused across scenarios within each seed. |
+| `days` | non-negative integer days | Evaluation horizon; zero is available for structural edge tests. |
+| `player_count` | non-negative integer | Synthetic cohort size; zero-player structural runs are supported. |
+
+The supplied file uses seeds `101`, `202`, and `303`, 14 days, and 1,000
+players. Changing these values changes the synthetic experiment and therefore
+the configuration hash recorded in the manifest.
+
+### `[decision]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `step_minutes` | positive divisor of 1,440 | Duration of one within-day action slot. |
+| `temperature` | finite float in `(0, 5]` | Scale of stochastic utility shocks. |
+| `habit_persistence` | float in `(0, 1]` | Retention of the previous habit state. |
+| `habit_learning_rate` | float in `(0, 1]` | Update rate for habit formation. |
+| `reinforcement_learning_rate` | float in `(0, 1]` | Update rate for reward-prediction state. |
+
+The action set contains play, purchase, stop, sleep, study/work, socialise,
+exercise, and another outside activity. These parameters are research variables,
+not settings recommended for commercial optimisation.
+
+### `[harm]` and `[harm_weights]`
+
+`[harm]` controls the synthetic mapping from spending/exposure and displaced
+activities to harm components:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `affordable_spending_share` | fraction in `[0, 1]` | Spending share treated as affordable before other harm modifiers. |
+| `opaque_spending_weight` | fraction in `[0, 1]` | Contribution of price opacity to spending harm. |
+| `random_reward_spending_weight` | fraction in `[0, 1]` | Contribution of paid random-reward exposure. |
+| `time_pressure_spending_weight` | fraction in `[0, 1]` | Contribution of limited-time pressure. |
+| `sleep_debt_weight` | fraction in `[0, 1]` | Contribution of accumulated sleep debt. |
+
+`[harm_weights]` contains non-negative weights for `monetary`,
+`opportunity_cost`, `sleep`, `education_work`, `family_social`, and `wellbeing`.
+At least one weight must be positive. Component results remain available even
+when a weighted composite is reported.
+
+### `[opportunity_valuation]`
+
+This section contains non-negative integer simulation-cent proxies per displaced
+hour. Adult fields cover sleep, work/study, social activity, and physical
+activity. Youth fields cover sleep, education, family/social activity, and
+physical activity. Youth valuation does not use wages as its primary measure.
+
+These values are transparent synthetic assumptions. Simulation cents are not a
+currency, market wage, willingness-to-pay estimate, or empirical welfare value.
+
+### `[producer]`
+
+| Field | Type/unit | Meaning |
+| --- | --- | --- |
+| `development_cost_cents` | non-negative simulation cents | Fixed development cost. |
+| `maintenance_cost_cents_per_day` | non-negative simulation cents/day | Maintenance cost multiplied by the horizon. |
+| `institutional_license_count` | non-negative integer | Assumed external licence demand. |
+| `institutional_license_price_cents` | non-negative simulation cents | Non-EPGC price per institutional licence. |
+| `non_targeted_sponsorship_revenue_cents` | non-negative simulation cents | Revenue not conditioned on player behaviour. |
+| `accessibility_eligible` | boolean | Eligibility for the accessibility bonus. |
+| `multilingual_support_eligible` | boolean | Eligibility for the multilingual bonus. |
+| `cultural_value_eligible` | boolean | Eligibility for the cultural-value bonus. |
+| `safety_certified` | boolean | Eligibility for the safety-certification bonus. |
+
+### `[epgc]`
+
+All money fields use non-negative integer simulation cents. The section defines
+payments per eligible access and institutional licence, an availability
+payment, four auditable bonuses, a prohibited-mechanic penalty, a clawback in
+basis points, and a maximum public budget. The evaluator reports the exact
+minimum public contribution needed for non-negative safe profit and whether it
+is feasible under the cap.
+
+No EPGC field rewards playtime, retention intensity, conversion, or player
+spending. This is a stylised policy calculation, not a representation of an
+existing programme, legal entitlement, or subsidy application.
+
+### `[output]`
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `output_dir` | non-empty path | Default artifact directory, resolved relative to the repository root. |
+| `histogram_bins` | positive integer | Shared bin count for distribution SVGs. |
+| `include_player_rows` | boolean | Enables synthetic player-level `player_outcomes.csv`. |
+| `run_sensitivity` | boolean | Enables the OAT grid for `policy-batch`; `reproduce` always includes it. |
+
+A complete `reproduce` run writes the 13 artifacts documented in
+[Usage](usage.md). `--output` changes only the destination; it does not change
+the model or configuration hash.
+
+### Policy validation and execution
+
+```text
+python -m microtx_sim policy-validate configs/policy_prototype.toml
+python -m microtx_sim policy-batch configs/policy_prototype.toml
+python -m microtx_sim policy-sensitivity configs/policy_prototype.toml
+python -m microtx_sim reproduce configs/policy_prototype.toml
+```
+
+See [Synthetic policy prototype](policy_prototype.md) for the implemented
+equations, scenario differences, and interpretation boundary.
+
+## Legacy market-world scenario schema
+
+### `[meta]`
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -28,7 +174,7 @@ Jurisdiction profiles and evidence contracts are stored separately in
 Campaign mode requires `provenance_status = "CALIBRATED"`. A synthetic scenario
 also requires `run.allow_synthetic = true`.
 
-## `[run]`
+### `[run]`
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
@@ -43,7 +189,7 @@ The non-campaign orchestrator additionally rejects more than 32 cycles or more
 than 5,000 players. This prevents an accidental large run. Campaign mode is a
 separate explicit API choice and has stricter evidence gates.
 
-## `[market]`
+### `[market]`
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
@@ -56,7 +202,7 @@ separate explicit API choice and has stricter evidence gates.
 Content search enumerates subsets of `stat_dimensions`, so its declared finite
 candidate set grows exponentially. The upper bound of 12 is a structural guard.
 
-## `[information]`
+### `[information]`
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
@@ -68,7 +214,7 @@ candidate set grows exponentially. The upper bound of 12 is a structural guard.
 The public board is a released signal, not latent popularity. Research cost is
 charged through company accounting; it does not grant access to `World`.
 
-## `[behavior]`
+### `[behavior]`
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
@@ -85,7 +231,7 @@ contracts. `World.create()` requires exact equality between the profile contract
 and run-level value, then uses the run-level value. This makes divergence
 explicit.
 
-## `[regulation]`
+### `[regulation]`
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
@@ -101,7 +247,7 @@ StateAgent values for the scenario. Audit capacity, inspection cost, treasuries,
 and initial subsidy budgets come from the jurisdiction profile and are currently
 synthetic.
 
-## `[causal]`
+### `[causal]`
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -112,7 +258,7 @@ synthetic.
 This section declares execution behaviour; it does not create an intervention.
 Treated and control interventions are explicit Python objects.
 
-## Calendar validation
+### Calendar validation
 
 The following intervals must be exactly divisible by `tick_days`:
 
@@ -126,7 +272,7 @@ The following intervals must be exactly divisible by `tick_days`:
 The model rejects misalignment rather than approximating event times. Intervention
 changes to audit or subsidy intervals are subject to the same rule.
 
-## Input precedence
+### Input precedence
 
 Effective inputs enter through several layers:
 
@@ -142,13 +288,15 @@ Effective inputs enter through several layers:
 No layer silently promotes provenance. An intervention changes a simulated
 regime; it does not make the underlying parameter calibrated.
 
-## Validation commands
+### Validation commands
 
 ```text
+python -m microtx_sim policy-validate configs/policy_prototype.toml
 python -m microtx_sim validate configs/smoke.toml
 python -m microtx_sim smoke configs/smoke.toml
 ```
 
-`validate` loads the scenario and profile contracts without running a world.
-`smoke` creates a world and executes only the scenario's short guarded run.
-Errors are returned on standard error with exit status 2.
+`policy-validate` checks the strict synthetic policy schema without running a
+cohort. `validate` loads the legacy scenario and profile contracts without
+running a world. `smoke` creates a legacy market world and executes only its
+short guarded run. Errors are returned on standard error with exit status 2.

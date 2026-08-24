@@ -1,176 +1,261 @@
 # Causal design
 
-## Research question
+## Purpose and interpretation boundary
 
-The project asks:
+The prototype asks how much additional simulated harm is caused by a declared
+mobile-game monetisation regime relative to a safer alternative, holding the
+synthetic population and exogenous random field fixed. It also asks whether a
+safe producer can remain financially viable under conventional revenue and a
+capped European Public-Value Game Contract (EPGC).
 
-> How much additional harm is causally attributable to mobile-game monetisation
-> mechanisms after accounting for a player's pre-existing vulnerability, and
-> which combination of regulation and public funding can sustain an economically
-> viable game without depending on compulsive spending?
+All causal language in this document refers to interventions inside the
+specified simulation. The population, behavioural coefficients, harm mapping,
+producer accounts, and public-payment rules are synthetic assumptions. The
+prototype does not estimate a real-world treatment effect, diagnose any person,
+classify a real game, or establish an optimal or lawful funding policy.
 
-The implemented design estimates contrasts inside the declared agent-based
-model. It does not yet identify a real-world treatment effect because the
-behavioural equations, exposure process, country profiles, and intervention
-parameters are not empirically calibrated.
+## Two causal execution layers
+
+The repository retains two complementary execution layers:
+
+| Layer | Entry point | Purpose |
+| --- | --- | --- |
+| Strategic market pair | `microtx_sim.causal.paired_worlds.run_paired_worlds()` | Compares one explicit treated/control pair inside the heterogeneous market with companies, rankings, regulation, audits, and subsidies. |
+| Seven-scenario policy batch | `microtx_sim.causal.batch.run_policy_batch()` | Compares the seven required monetisation and financing regimes over repeated seeds using the welfare-oriented player decision process. |
+
+The policy batch is the current source of the scenario comparison tables,
+distributional welfare outputs, EPGC calculation, sensitivity results, and
+charts. It does not yet embed every strategic-company and regulator interaction
+from the richer market `World`. Results from the two layers must therefore not
+be silently combined.
 
 ## Primary estimand
 
-For player `i`, define incremental harm under monetisation regime `M` relative
-to a declared comparison regime `M0` as:
+Let `s` denote one scenario and let `safe` denote the declared safer reference,
+`safe_fixed_price_subscription`. For player `i` under replication seed `r`, the
+individual contrast is:
 
 ```text
-tau_i = H_i(M, R, S; U_i) - H_i(M0, R0, S0; U_i)
+Delta H_i(s, r) = H_i(do(s), r) - H_i(do(safe), r)
 ```
 
-where:
+The repeated-seed batch estimand reported for scenario `s` is:
 
-- `H_i` is the seven-component harm outcome at the evaluation horizon;
-- `R` and `R0` are treated and control regulatory regimes;
-- `S` and `S0` are treated and control public-funding regimes;
-- `U_i` contains the player's pre-treatment characteristics and semantic
-  exogenous random coordinates.
+```text
+Delta H(s) = (1 / R) * sum_r [ (1 / N) * sum_i Delta H_i(s, r) ]
+```
 
-The default configuration names the aggregate target
-`market_regime_total_effect`. The comparison regime is never inferred from a
-label: treated and control interventions are supplied explicitly.
+The `do(...)` notation means that the scenario vector is set by the researcher
+before the branch runs. It does not imply that the simulation by itself
+identifies an effect in observed people. Spending, harmful spending, producer
+revenue, and other outcomes can be contrasted in the same paired way.
 
-The stored harm components are financial stress, essential-spend displacement,
-debt, unauthorised spending, loss of control, functioning impairment, and
-regret. `compare_outcomes()` preserves the full player-by-component difference
-matrix. The mean composite effect is a reporting view constructed with explicit
-weights; it does not replace the components.
+The welfare-oriented composite stored by the policy prototype is:
 
-## Structural control of pre-existing vulnerability
+```text
+H_i = w_M M_i + w_OC OC_i + w_S S_i + w_E E_i + w_F F_i + w_W W_i
+```
 
-Baseline vulnerability is initialised before treatment, copied into both worlds,
-and write-protected. The two worlds are created independently but checked for
-exact equality across causally relevant player and game columns, firms, states,
-and jurisdiction metadata before any intervention is applied.
+where the components are monetary harm, opportunity-cost burden, sleep burden,
+education/work burden, family/social burden, and wellbeing loss. The complete
+component vector is retained. The composite is an explicit reporting view, and
+changing its weights is a model change that must appear in the run manifest.
 
-This is preferable to subtracting vulnerability with a post-hoc regression
-inside the simulator: each player acts as their own structural counterfactual at
-the same pre-treatment state. It does not prove that the vulnerability construct
-or its distribution is empirically valid, and it does not control omitted
-real-world vulnerabilities that the model does not represent.
+The strategic market layer separately retains its established seven-column
+harm state: financial stress, essential-spend displacement, debt, unauthorised
+spending, loss of control, functioning impairment, and regret. Its
+`compare_outcomes()` function preserves the entire player-by-component
+difference matrix.
 
-## Common random numbers
+## Required scenario catalogue
 
-`CounterRNG` addresses a draw by:
+`microtx_sim.causal.scenarios.required_scenarios()` returns exactly these seven
+stable scenario identifiers. The numeric values are illustrative research
+coordinates, not estimates or commercial recommendations.
+
+| ID | Intervention relative to the catalogue baseline | Revenue interpretation |
+| --- | --- | --- |
+| `baseline_f2p` | High-pressure illustrative F2P vector with opaque currency, paid random rewards, progression pressure, time-limited offers, streak pressure, pay-to-progress, pay-to-win, social pressure, low purchase friction, no cap, and no cooling-off period. | Player purchases are decomposed into direct, opaque-currency, and paid-random-reward revenue. |
+| `transparent_direct_price` | Removes opaque virtual currency, displays prices in real currency, and increases purchase friction while retaining the other baseline pressures. | Purchases remain transactional but their presentation is more transparent. |
+| `no_random_rewards` | Sets paid random rewards to zero and otherwise retains the baseline vector. | No purchase revenue is attributed to paid random rewards. |
+| `no_time_limited_pressure` | Sets time-limited offers to zero and otherwise retains the baseline vector. | Purchase deadlines are removed in isolation. |
+| `spending_cap_cooling_off` | Applies a rolling spending cap, a 24-hour cooling-off period, real-currency display, and greater purchase friction. | Purchases are rejected when the cap or cooling rule binds. |
+| `safe_fixed_price_subscription` | Uses the low-pressure safe vector with transparent fixed-price and subscription access. This is the default causal reference. | Revenue is assigned to fixed-price and subscription access rather than pressure-linked purchases. |
+| `epgc` | Uses the low-pressure safe vector, a small transparent access price, and enables the EPGC calculation. | Safe conventional revenue may be supplemented by capped public-contract revenue. |
+
+Personalised offers are disabled in every catalogue scenario. Scenario IDs,
+the safe reference, mechanics, prices, horizon, and seed list are stored in the
+manifest so a label alone never determines treatment.
+
+## Same cohort, same initial state, and common random numbers
+
+Within each seed, `run_policy_batch()` creates the synthetic `PlayerTable` and
+pre-treatment `PlayerLifeTable` exactly once. Every scenario receives the same
+player identifiers, demographics, budgets, immutable vulnerability, intended
+spending and play commitments, obligations, initial sleep debt, wellbeing,
+habit state, and other pre-treatment columns.
+
+`run_policy_scenario()` deep-copies mutable life state before advancing a
+branch. Post-treatment spending, time allocation, progression, habit,
+reinforcement, and wellbeing therefore cannot leak into the next scenario. A
+SHA-256 cohort digest is recorded for each seed and repeated on every
+seed-scenario record.
+
+`CounterRNG` addresses each stochastic draw by:
 
 ```text
 (seed, entity_id, tick, stream, draw_index)
 ```
 
-The treated and control worlds therefore query the same random field at the same
-semantic coordinates. There is no shared mutable generator cursor. A purchase
-or action that happens only in one branch cannot consume an extra draw and shift
-later exogenous shocks in the other branch.
+All branches for one seed query the same semantic random coordinates. A choice
+or purchase that occurs only in one branch cannot consume a mutable generator
+cursor and shift later shocks in another branch. Stream names and draw-index
+meanings are part of the model version. Scenario order must not alter results.
 
-Random coordinates must remain semantically stable. Firm action shocks are
-allocated by action identity before financial feasibility is applied; consumer
-draws do not depend on block position or iteration order. Changing a stream name
-or draw-index meaning is a model-version change.
+The strategic paired-world runner applies the same principle independently: it
+constructs two worlds, checks equality of causally relevant player, game, firm,
+state, and jurisdiction state before treatment, and then applies explicit
+treated and control interventions. Null-versus-null equality is a tested
+software invariant.
 
-A null-versus-null pair is tested for exact equality. Exact null identity is a
-software and pairing invariant, not evidence that a non-null intervention is
-realistically specified.
+## Repeated seeds and uncertainty summaries
 
-## Implemented interventions
+`PolicyBatchSpec` requires unique integer seeds and all seven scenarios. Each
+seed creates a new independent synthetic cohort; within that seed, all
+scenarios remain paired. For a scalar outcome with replication values `x_r`,
+the batch reports:
 
-The current intervention protocol supports:
+```text
+mean = sum_r x_r / R
+sample variance = sum_r (x_r - mean)^2 / (R - 1)
+standard deviation = sqrt(sample variance)
+normal 95% interval = mean +/- 1.96 * standard deviation / sqrt(R)
+```
 
-| Intervention | Effect |
-| --- | --- |
-| `NullIntervention` | Makes no change and provides an explicit neutral branch. |
-| `MechanismCap` | Applies a persistent maximum to one monetisation mechanism, globally or for selected games. |
-| `AuditRegime` | Changes audit interval, sensitivity, specificity, or random-target fraction. |
-| `SubsidyRegime` | Changes per-state budget, review interval, and quality/design-safety/accessibility weights. |
-| `CompositeIntervention` | Applies an ordered tuple of interventions to the same world. |
+With a single seed, variance and interval width are reported as zero. These are
+Monte Carlo diagnostics for the configured simulator, not confidence intervals
+for a real population. A small seed count, non-normal tails, or unstable model
+parameters can make the normal interval inadequate; convergence and alternative
+interval procedures remain calibration-stage work.
 
-Mechanism caps remain active after later company decisions. Audit and subsidy
-intervals must remain aligned with `tick_days`. Subsidy applications must predate
-the review and are visible only in their eligible synthetic home jurisdiction.
+## Reported outcomes
 
-The current code runs one explicit treated/control pair. It does not yet build
-the full factorial matrix of monetisation × regulation × funding, run multiple
-independent seeds, estimate Monte Carlo intervals, or propagate parameter
-uncertainty.
+The batch retains one row per seed and scenario, repeated-seed summaries, and
+optional synthetic player rows. Outputs include:
+
+- total producer revenue, cost, and profit;
+- revenue composition: direct purchase, opaque virtual currency, paid random
+  rewards, fixed price, subscription, public contract, institutional licensing,
+  and non-targeted sponsorship;
+- total, unplanned, and harmful spending;
+- mean, variance, median, upper-tail, component-level, and composite harm;
+- adult and youth opportunity-cost proxies plus displaced sleep, work/study,
+  family/social, and physical-activity time;
+- sleep, education/work, family/social, and wellbeing burdens;
+- enjoyment;
+- the count and share of operationally high-risk simulated outcomes;
+- EPGC revenue, minimum public contribution, cap feasibility, safe profit,
+  penalty, and clawback;
+- effects against the safe reference and repeated-seed uncertainty summaries.
+
+A policy-run outcome is flagged `high_risk` when its configured operational rule
+finds high composite harm, a large harmful-spending share, or a high sleep
+burden. The exported profile includes age, minor share, budget, and baseline
+vulnerability for the flagged synthetic group. This is a simulation-tail label,
+not a clinical category or predicted diagnosis.
+
+## EPGC causal role
+
+The EPGC scenario changes financing without rewarding behavioural intensity.
+Its safe-profit identity is:
+
+```text
+Profit_safe =
+    PublicContractRevenue
+    + FixedPriceRevenue
+    + InstitutionalLicensingRevenue
+    + NonTargetedSponsorshipRevenue
+    - DevelopmentCost
+    - MaintenanceCost
+```
+
+Public-contract eligibility is based on access, institutional licences,
+availability, accessibility, multilingual support, cultural value, and safety
+certification. The EPGC API has no playtime, retention, conversion, or player
+spending input. A maximum budget caps the gross eligible contract. If prohibited
+mechanics are enabled, a clawback and penalty reduce recognised public-contract
+revenue.
+
+The exact minimum net public contribution required for non-negative safe profit
+is:
+
+```text
+MinimumPublicContribution = max(
+    0,
+    DevelopmentCost + MaintenanceCost
+    - FixedPriceRevenue
+    - InstitutionalLicensingRevenue
+    - NonTargetedSponsorshipRevenue
+)
+```
+
+`feasible_under_budget_cap` tests whether this residual fits within the declared
+maximum budget. `sustainable_under_policy` separately tests whether the actual
+eligible, capped, and sanctioned payment makes `Profit_safe >= 0`. The two flags
+can differ when eligibility is insufficient or sanctions apply.
 
 ## Market interference
 
-Individual no-interference assumptions do not hold. A mechanism cap can change
-spending and popularity, which changes the public board, switching, company
-content and monetisation choices, audit signals, subsidy applications, and later
-outcomes for players in both directly and indirectly affected games.
-Collaboration and collusion create additional spillovers.
+Individual no-interference assumptions do not hold. A monetisation intervention
+can change player choices, time allocation, spending, revenue composition, and
+welfare simultaneously. In the strategic market layer it can additionally
+change popularity, switching, company decisions, rankings, audit signals,
+subsidy applications, collaboration, and collusion.
 
-The primary output should therefore be interpreted as an equilibrium
-market-regime contrast conditional on this model. Estimating separate direct and
-spillover effects will require an additional design, such as game- or
-jurisdiction-level assignment, explicit exposure mappings, network structure,
-and prespecified cluster-level estimands.
-
-## Paired outputs
-
-`run_paired_worlds()` returns:
-
-- run metadata and final outcomes for treated and control worlds;
-- player-level differences in all seven harm dimensions;
-- player spend and debt differences;
-- firm operating-margin and cash differences;
-- state subsidy-outlay differences;
-- a `RegimeEffect` containing mean composite harm, total spend, total debt, total
-  operating margin, total subsidy effect, and affected-player share.
-
-Firm viability is currently represented by cash, operating margin, and
-safe-revenue share. These are model outcomes, not audited accounts. A future
-campaign must prospectively define the evaluation horizon, solvency threshold,
-required content cadence, safe-revenue threshold, treatment of unpaid fines, and
-social cost of public funds.
+The main contrast is therefore a market- or policy-regime effect conditional on
+the selected runner. It is not a direct individual treatment effect isolated
+from equilibrium spillovers. Separating direct and spillover effects would
+require an explicit exposure mapping and a different assignment design.
 
 ## Identification assumptions inside the simulator
 
-A paired contrast has a clear model interpretation only if:
+A policy contrast is internally interpretable only if:
 
-1. both branches begin from exactly the same pre-treatment state;
-2. the intervention is the only intentional branch difference;
-3. common random coordinates retain the same semantic meaning;
-4. no treated value is used to initialise a post-treatment control variable;
-5. outcome definitions are identical across branches;
-6. the selected horizon is sufficient for the market feedback under study;
+1. every branch for a seed starts from the same pre-treatment cohort and state;
+2. scenario construction is the only intentional branch difference;
+3. random coordinates retain the same semantic meaning across branches;
+4. branch-local mutable state is never reused to initialise another branch;
+5. outcome definitions, weights, horizon, and accounting rules are identical;
+6. the safe reference is declared before effects are inspected;
 7. interference is included in the regime estimand rather than ignored;
-8. the model equations and parameter statuses are reported with the result.
+8. revenue components and integer-cent accounts reconcile;
+9. configuration, code revision, source-registry digest, seeds, and cohort
+   digests accompany the output.
 
-These conditions support internal simulation identification. They do not solve
-external validity, calibration, measurement error, structural misspecification,
-or real-world confounding.
+These conditions support causal comparisons inside the program. They do not
+solve external validity, empirical calibration, structural misspecification,
+measurement error, omitted constructs, or uncertainty about real institutions.
 
-## Planned campaign design
+## Sensitivity design
 
-Before scientific execution, the project should add a preregistered factorial
-or response-surface design covering:
+The implemented one-at-a-time sensitivity runner varies declared mechanism,
+affordability, and decision parameters while reusing the same cohorts and
+random coordinates within each seed. It records harm, revenue, opportunity
+cost, EPGC contribution, Monte Carlo dispersion, expected monotonic direction,
+observed monotonicity, and an instability flag.
 
-- a declared neutral and several mechanism-specific monetisation regimes;
-- audit intensity, accuracy, targeting, and enforcement regimes;
-- funding budget, eligibility, scoring, and payment regimes;
-- independent seed replications;
-- jurisdiction-specific and vulnerable-subgroup contrasts;
-- component-level, tail, and viability outcomes;
-- sensitivity ranges for behavioural, information, rare-event, harm-weight, and
-  institutional assumptions;
-- uncertainty intervals and multiplicity rules.
+One-at-a-time analysis does not identify interactions or provide a posterior
+distribution. The configured grids and monotonic expectations are face-validity
+checks over synthetic assumptions. Global, joint, and empirically informed
+sensitivity analysis remains future work.
 
-Calibration targets and validation targets must be separated. Primary outcomes,
-weights, stopping rules, exclusions, and the role of public funds in welfare
-must be fixed before treatment results are inspected.
+## Synthetic-only interpretation
 
-## Current interpretation boundary
+No output from this prototype is an empirical prevalence, national spending
+estimate, clinical finding, legal conclusion, or recommended public payment.
+The manifest sets `synthetic_only=true` and
+`empirical_validation_claimed=false`. The charts and tables demonstrate how the
+declared model behaves and support reproducible software evaluation only.
 
-No full campaign is authorised or run in this release. The smoke scenario only
-checks software connections. Any effect produced with current inputs is a
-conditional result of an illustrative model, not an empirical estimate.
-
-See [Model specification](model_spec.md), [Data sources](data_sources.md), and
-[Limitations](limitations.md) for the assumptions that currently block
-scientific interpretation.
+See [Policy prototype](policy_prototype.md), [Model specification](model_spec.md),
+[Data sources](data_sources.md), and [Limitations](limitations.md).

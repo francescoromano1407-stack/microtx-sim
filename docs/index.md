@@ -1,8 +1,8 @@
 # Documentation index
 
-This documentation describes the executable research skeleton as it exists in
-the repository. It separates implemented mechanisms from calibration plans and
-should be read before interpreting any simulation output.
+This documentation describes the stable, tested synthetic prototype as it
+exists in the repository. It separates implemented software behaviour from
+calibration plans and should be read before interpreting any simulation output.
 
 ## Start here
 
@@ -11,6 +11,7 @@ should be read before interpreting any simulation output.
 | [README](../README.md) | Project status, principles, module map, and quick start. |
 | [Architecture](architecture.md) | System boundaries, agent knowledge, ownership, randomness, accounting, and complexity. |
 | [Model specification](model_spec.md) | Agents, mechanisms, dynamics, outcomes, and mathematical/computational scope. |
+| [Synthetic policy prototype](policy_prototype.md) | Seven scenarios, daily life actions, welfare harm, EPGC financing, sensitivity analysis, and synthetic interpretation. |
 | [Simulation lifecycle](simulation_lifecycle.md) | Exact ordering of one tick, events, phase coordination, and paired runs. |
 | [Causal design](causal_design.md) | Estimand, paired worlds, common random numbers, interventions, assumptions, and future campaign design. |
 
@@ -18,9 +19,9 @@ should be read before interpreting any simulation output.
 
 | Document | Use it for |
 | --- | --- |
-| [Usage](usage.md) | CLI commands and minimal Python examples. |
-| [Configuration](configuration.md) | Every scenario field, units, validation, precedence, and supplied scenarios. |
-| [Development guide](development.md) | Setup, module ownership, information boundaries, tests, and Git workflow. |
+| [Usage](usage.md) | Exact validation, batch, sensitivity, reproduction, smoke, and test commands plus the 13 artifacts. |
+| [Configuration](configuration.md) | Market and policy TOML schemas, units, validation, precedence, and supplied scenarios. |
+| [Development guide](development.md) | Setup, module ownership, reproducibility contract, tests, and Git workflow. |
 
 ## Evidence and interpretation
 
@@ -33,9 +34,15 @@ should be read before interpreting any simulation output.
 
 ## Current release boundary
 
-`configs/smoke.toml` is a three-cycle synthetic structural check. The larger
-`configs/base.toml` is a future-scale architecture scenario and is deliberately
-blocked by provenance validation. No full scientific campaign has been run.
+`configs/policy_prototype.toml` is the supported synthetic seven-scenario
+prototype. It can reproducibly generate six CSV files, one manifest, one
+Markdown summary, and five SVG charts. `configs/smoke.toml` remains a three-cycle
+structural check. The larger `configs/base.toml` is a future-scale architecture
+scenario and is deliberately blocked by provenance validation.
+
+No empirical validation is claimed and no full scientific campaign has been
+run. The exported comparisons are conditional results of synthetic structural
+assumptions, not estimates of observed people, markets, or policies.
 
 The documentation is written in English. Official source titles may retain
 proper names from the publishing institution, but all model descriptions,

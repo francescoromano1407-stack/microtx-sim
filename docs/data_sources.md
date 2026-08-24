@@ -6,7 +6,8 @@ This document describes what the current code actually reads and uses. It is not
 a claim that the model has been empirically calibrated. The machine-readable
 source register is `data/provenance/sources.toml`; jurisdiction inputs are in
 `configs/jurisdictions.toml`; run-level assumptions are in `configs/base.toml`
-and `configs/smoke.toml`.
+and `configs/smoke.toml`. The separate policy prototype reads
+`configs/policy_prototype.toml` and reuses the jurisdiction profile loader.
 
 At this stage:
 
@@ -16,6 +17,13 @@ At this stage:
 - population allocation, audit capacity, regulator operating budgets, and many
   agent defaults are `SYNTHETIC` or otherwise uncalibrated;
 - a scientific campaign is therefore rejected by construction.
+
+The policy prototype's time allocations, fourteen mechanic intensities,
+decision coefficients, harm thresholds and weights, opportunity-cost values,
+producer costs, and EPGC payment schedule are all explicit `SYNTHETIC` or
+`ILLUSTRATIVE` assumptions. They are not taken from the official records below.
+The run manifest stores their exact values so a structural result can be
+reproduced without implying that it was empirically calibrated.
 
 The four provenance statuses have deliberately different meanings:
 
@@ -45,6 +53,13 @@ simulation outcome. The current implementation separates inputs as follows.
 This distinction is essential: a dormant contract is useful for future work, but
 it cannot make the current simulated consumption distribution realistic by
 itself.
+
+For the policy engine, existing runtime-consumed age, income, household, trait,
+and motive profiles initialize the shared cohort. `PlayerLifeTable` then adds
+seeded synthetic leisure, sleep, work/study, social, physical-activity,
+enjoyment, financial-sensitivity, discounting, FOMO, commitment, habit, and
+wellbeing fields. No official source record currently calibrates those added
+distributions.
 
 ## Monetary units and transformations
 

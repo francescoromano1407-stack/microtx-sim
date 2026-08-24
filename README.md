@@ -1,6 +1,7 @@
 # Microtransactions — causal agent-based simulation
 
-This repository contains an executable research skeleton for the question:
+This repository contains a stable, tested synthetic simulation prototype for
+the question:
 
 > How much additional harm is causally attributable to mobile-game monetisation
 > mechanisms after accounting for a player's pre-existing vulnerability, and
@@ -14,16 +15,24 @@ conditional subsidies.
 
 ## Current status
 
-The code is a tested simulation skeleton, not a calibrated policy model. It can
-be used to inspect mechanisms, verify information boundaries, and run short
-structural checks. It must not yet be used to report real-world causal effects,
-national spending estimates, legal conclusions, or an optimal funding policy.
+The code is a tested research prototype, not a calibrated policy model. It now
+supports a reproducible seven-scenario synthetic policy batch, common seeded
+cohorts, multidimensional welfare-harm and opportunity-cost outputs, an EPGC
+financing calculation, one-at-a-time sensitivity analysis, and a versioned
+13-artifact export. These capabilities establish software behaviour inside the
+declared model only. They must not be used to report real-world causal effects,
+national spending estimates, clinical conclusions, legal conclusions, or an
+optimal funding policy.
 
 - `configs/smoke.toml` runs 384 players for three cycles and is explicitly
-  synthetic.
+  synthetic; it remains the smallest connectivity check for the market model.
+- `configs/policy_prototype.toml` runs the seven required policy scenarios over
+  identical seeded synthetic cohorts and is the supported reproducible
+  prototype workflow.
 - `configs/base.toml` describes a future 50,000-player, five-company, eight-game
   scale, but campaign validation deliberately rejects its uncalibrated inputs.
-- No full campaign has been run for this release.
+- No empirical or scientific campaign has been run or authorised for this
+  release.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.
@@ -64,6 +73,12 @@ See [Limitations](docs/limitations.md) before interpreting any output.
 | One simulated tick/day | `microtx_sim.simulation.day` |
 | Multi-cycle execution | `microtx_sim.simulation.orchestrator` |
 | Paired-world causal contrasts | `microtx_sim.causal` |
+| Seven-scenario synthetic policy batch | `microtx_sim.causal.batch` |
+| Daily life-action policy process | `microtx_sim.simulation.policy_day` |
+| Welfare harm and opportunity cost | `microtx_sim.metrics.harm` |
+| EPGC financing | `microtx_sim.funding` |
+| Sensitivity analysis | `microtx_sim.analysis` |
+| Versioned tables, manifests, summaries, and SVG charts | `microtx_sim.outputs` |
 | Profiles and provenance validation | `microtx_sim.data` |
 
 The old `microtx_sim.systems` imports remain as compatibility shims. New code
@@ -75,13 +90,24 @@ Python 3.11 or later is required.
 
 ```text
 python -m pip install -e ".[dev]"
-python -m microtx_sim validate configs/smoke.toml
-python -m microtx_sim smoke configs/smoke.toml
+python -m microtx_sim policy-validate configs/policy_prototype.toml
+python -m microtx_sim policy-batch configs/policy_prototype.toml
+python -m microtx_sim policy-sensitivity configs/policy_prototype.toml
+python -m microtx_sim reproduce configs/policy_prototype.toml
 python -m unittest discover -s tests -v
 ```
 
-The smoke command is intentionally short. It returns an in-memory summary and
-does not authorise or start a campaign.
+`reproduce` writes the complete 13-artifact synthetic result set to
+`artifacts/policy_prototype/` unless `--output` overrides that location. The
+directory is ignored by Git. The command does not authorise or start an
+empirical campaign.
+
+For the smaller legacy connectivity check, run:
+
+```text
+python -m microtx_sim validate configs/smoke.toml
+python -m microtx_sim smoke configs/smoke.toml
+```
 
 ## Documentation
 
@@ -91,6 +117,7 @@ Start with the [documentation index](docs/index.md). The main references are:
 - [Model specification](docs/model_spec.md)
 - [Simulated lifecycle](docs/simulation_lifecycle.md)
 - [Causal design](docs/causal_design.md)
+- [Synthetic policy prototype](docs/policy_prototype.md)
 - [Configuration reference](docs/configuration.md)
 - [Data sources and lineage](docs/data_sources.md)
 - [Limitations](docs/limitations.md)

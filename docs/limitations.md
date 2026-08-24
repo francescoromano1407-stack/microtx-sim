@@ -2,13 +2,17 @@
 
 ## What this release can and cannot establish
 
-This release is an executable research skeleton. It demonstrates an information
-boundary, heterogeneous agents, exact alternative evaluation, market feedback,
-imperfect audits, conditional subsidies, and paired counterfactual worlds. It
-does not estimate the real-world harm caused by mobile-game monetization and it
-does not identify an empirically optimal regulation or funding policy.
+This release is a stable, tested **synthetic simulation prototype**. The market
+layer demonstrates information boundaries, heterogeneous agents, exact
+alternative evaluation, market feedback, imperfect audits, conditional
+subsidies, and paired worlds. The policy layer adds time allocation, fourteen
+explicit mechanics, six welfare components, seven named counterfactuals,
+repeated seeds, EPGC financing, sensitivity analysis, and versioned outputs. It
+still does not estimate real-world harm or identify an empirically optimal
+regulation or funding policy.
 
-Outputs from the current smoke scenario are software checks only. They must not
+Outputs from the smoke run and policy prototype are software and structural
+checks only. They must not
 be reported as:
 
 - national prevalence, spending, welfare, or market-size estimates;
@@ -117,25 +121,29 @@ real-world vulnerability was measured or correctly represented.
 
 ### Outcome constructs are proxies
 
-The simulator records financial stress, essential-spend displacement, debt,
-unauthorized spend, loss of control, functioning impairment, and regret as
-separate dynamic indicators. These are operational states, not validated
-clinical scales. “Unsafe revenue” is a model classification used for research
-accounting; neither firms nor regulators observe the researcher's latent label.
+The market layer records financial stress, essential-spend displacement, debt,
+unauthorized spend, loss of control, functioning impairment, and regret. The
+policy layer separately reports monetary harm, opportunity cost, sleep,
+education/work, family/social, and wellbeing. Both vectors are operational
+proxies, not validated clinical scales, and they must not be conflated.
+“Unsafe revenue” is a researcher-side accounting label; firms and regulators do
+not observe it as latent truth.
 
 Any composite harm score depends on explicit researcher weights. Different
 weights can change aggregate conclusions and must be reported alongside the
 components. Solvency, cash, operating margin, update continuity, and safer-revenue
 share are model viability outcomes, not audited company accounts.
 
-### No campaign-level uncertainty design yet
+### Monte Carlo uncertainty is not empirical uncertainty
 
-The current runner executes an explicit treated/control pair and supports
-composable mechanism caps, audit regimes, and subsidy regimes. It does not yet
-automatically construct a full factorial design, run multiple independent seeds,
-estimate sampling uncertainty, propagate parameter uncertainty, calculate power,
-or correct for multiple comparisons. A null-versus-null pairing is a structural
-test, not empirical validation.
+The policy runner executes all seven required scenarios over repeated seeds and
+reports variance and normal 95% Monte Carlo intervals. It also runs a compact
+one-at-a-time sensitivity grid with monotonicity and instability flags. These
+tools quantify behaviour of the configured synthetic model only. They do not
+propagate joint parameter or structural uncertainty, calculate statistical
+power, correct for multiple comparisons, or create population confidence or
+posterior intervals. The market runner still exposes the lower-level composable
+treated/control pair for equilibrium interventions.
 
 ## Legal and regulatory limitations
 
@@ -166,26 +174,30 @@ should not be used to classify a real game without jurisdiction-specific review.
 
 ## Public-funding limitations
 
-The central research question includes economic viability under public funding,
-but the present funding mechanism is intentionally abstract. Firms have a
-synthetic home jurisdiction, assigned mechanically from their identifier. A firm
-must apply before review, and the state scores observable proxies for quality,
-design safety, accessibility, and jobs. These proxies and weights are not
+The market subsidy mechanism and the policy EPGC calculation are intentionally
+distinct. Market firms have a synthetic home jurisdiction and apply before a
+state scores stylized quality, safety, accessibility, and jobs proxies. The EPGC
+module instead uses an explicit safe-profit equation, public payments for
+access/licences/availability, four public-value bonuses, a budget cap, and
+penalties/clawbacks. Neither mechanism reproduces an existing programme or
 validated administrative criteria.
 
-State treasuries, inspection costs, subsidy budgets, payment capacity, and firm
-expectations are synthetic simulation-cent quantities. The runtime does not yet
-model:
+State treasuries, inspection costs, EPGC schedules, producer costs, payment
+capacity, and firm expectations are synthetic simulation-cent quantities. The
+runtime does not model:
 
 - tax-credit accounting, tax-shelter investors, or milestone certification;
 - exact eligible expenditure and aid-intensity rules;
 - deadweight loss, tax incidence, crowd-out, additionality, or opportunity cost;
-- application selection bias, fraud, appeals, clawbacks, or post-award audits;
+- application selection bias, fraud, appeals, or post-award audit processes
+  beyond the EPGC's mechanical prohibited-mechanic clawback;
 - exchange rates, government budget constraints, or national fiscal scale;
 - employment displacement and general-equilibrium effects.
 
-An intervention can change a uniform budget and scoring weights, but this does
-not implement the official VGEC, KOCCA, JLOX+, or Belgian tax-shelter programmes.
+The EPGC payment API intentionally has no playtime, retention, conversion, or
+spending performance input. That structural safeguard does not prove that a
+real contract would be lawful, incentive-compatible, or fiscally sustainable.
+Neither funding layer implements VGEC, KOCCA, JLOX+, or the Belgian tax shelter.
 
 ## Information-boundary limitations
 
@@ -230,10 +242,11 @@ does not reduce the exact alternative set. Popularity and accounting are roughly
 enumeration is exponential in the number of stat dimensions; the configuration
 therefore caps that dimension at 12.
 
-The current non-campaign runner deliberately rejects more than 32 cycles or
-5,000 players. `smoke.toml` is within that guard. `base.toml` describes a larger
-future-scale scenario but is also rejected because it disallows the bundle's
-current synthetic dependencies. No full campaign has been run for this release.
+The market non-campaign runner deliberately rejects more than 32 cycles or
+5,000 players. `smoke.toml` is within that guard. The policy prototype has its
+own exact `O(P*A*T)` action engine and a checked-in 1,000-player, 14-day,
+three-seed configuration. This is a reproducibility batch, not a scientific
+campaign. `base.toml` remains a rejected future-scale market configuration.
 
 The implementation is in-memory and has no checkpoint/restart, distributed
 execution, campaign scheduler, result database, schema migration, or long-run
@@ -264,9 +277,7 @@ Before a scientific campaign, the project needs at minimum:
 3. a justified common money target or country-specific market separation;
 4. legal review with dated product and territorial scope;
 5. external validation against outcomes not used for fitting;
-6. sensitivity analysis for rare events, harm weights, behavioral equations,
-   regulation, and funding assumptions;
-7. multi-seed or otherwise justified uncertainty estimation and a preregistered
-   estimand/reporting plan;
-8. performance, persistence, and recovery tests at intended campaign scale.
-
+6. joint parameter and structural sensitivity beyond the implemented OAT grid;
+7. a preregistered empirical estimand, power analysis, and reporting plan;
+8. performance, persistence, convergence, and recovery tests at intended
+   campaign scale.

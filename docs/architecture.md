@@ -17,9 +17,9 @@ characters, combat, or a complete power system. Competitive content is a vector
 of abstract statistics so that strategic releases can be studied without
 hard-coding any commercial title.
 
-The current repository is an executable research skeleton. Its architecture and
-invariants can be tested, but its illustrative profiles cannot support
-substantive policy estimates.
+The current repository is a stable, executable synthetic research prototype.
+Its architecture and invariants are tested, but its illustrative profiles
+cannot support substantive policy estimates.
 
 ## Design principles
 
@@ -57,6 +57,20 @@ differ in rules, budgets, audit capacity, priorities, accuracy, and subsidy
 weights. Actions emerge from these differences and fallible observations rather
 than a scenario script.
 
+The aligned `PlayerLifeTable` adds continuous time commitments, enjoyment,
+financial sensitivity, delay discounting, social/FOMO susceptibility, intended
+limits, habit, reinforcement, progression, sleep debt, and wellbeing. Baseline
+columns are immutable; only branch-local dynamic columns change after treatment.
+
+### Welfare components are not market diagnostics
+
+The competitive-market engine retains seven operational harm diagnostics for
+market feedback and backwards compatibility. The welfare policy runner computes
+the research estimand separately as `M/OC/S/E/F/W`: monetary harm, opportunity
+cost, sleep, education/work, family/social, and wellbeing. Keeping these types in
+different modules prevents a legacy diagnostic column from silently being
+relabelled as a welfare construct.
+
 ### Exact finite choices and exact cents
 
 Every known game is evaluated for every consumer. Population blocks bound peak
@@ -86,25 +100,31 @@ toward narrow domain systems. Agent policies do not depend back on the world.
 ```text
 CLI / causal experiment
           |
-          v
-simulation orchestrator
+          +--> market orchestrator
+          |          |
+          |          v
+          |    World <-> market day <-> company / market / state phases
+          |          |                         |
+          |          +----- typed observations-+
           |
-          v
-World (latent state) <-> day processor <-> phase coordinators
-          |                                   |
-          |                         accounting / company / market / state
-          v                                   |
-consumer, company, state and popularity logic |
-          |                                   |
-          +---------- typed observations -----+
-          |
-agents, game domain, metrics, RNG, events, ledger, evidence profiles
+          +--> policy batch / scenario orchestrator
+                     |
+                     v
+               policy day -> full action choice -> life transitions
+                     |                                  |
+                     +----------> welfare harm <--------+
+                                        |
+                                  producer / EPGC result
+
+shared foundations: players, RNG, monetisation domain, metrics, evidence profiles
 ```
 
-`World` owns data and intervention hooks. The day processor owns temporal order.
-Phase modules translate between latent tables and bounded domain interfaces. The
-run orchestrator owns validation, campaign guards, timing, and repeated steps.
-This division prevents temporal workflow, policy behaviour, and state storage
+`World` owns strategic-market data and intervention hooks. Its day processor owns
+event order, and phase modules translate between latent tables and bounded domain
+interfaces. The policy runner instead owns a cloned `PlayerLifeTable` and exact
+daily time accounts; it has no reference to company or regulator private state.
+Both orchestrators own validation, timing, and repeated steps. This division
+prevents temporal workflow, agent policy, welfare measurement, and state storage
 from accumulating in one monolithic class.
 
 ## Module map
@@ -119,10 +139,13 @@ from accumulating in one monolithic class.
 | `agents/jurisdictions.py` | Regulation rules, risk signals, audit/subsidy intents, and private regulator state. |
 | `consumers/population.py` | Jurisdiction-aware construction of heterogeneous players. |
 | `consumers/logic.py` | Exact game choice, activity, abstract competition, purchases, rare card events, and harm transitions. |
+| `consumers/welfare.py` | Aligned immutable-baseline/dynamic `PlayerLifeTable` and deterministic synthetic priors. |
+| `consumers/decision.py` | Full eight-action Gumbel/logit choice with hard budget, consent, cap, and cooling constraints. |
 | `companies/logic.py` | Company telemetry, bounded observations, simultaneous intent collection, content and strategy resolution. |
 | `states/logic.py` | Observable risk construction, audit selection, imperfect evidence, and enforcement resolution. |
 | `market/popularity.py` | Exact latent popularity snapshots and delayed, noisy public rankings. |
 | `domain/games.py` | Game table and exact non-dominating content-candidate search. |
+| `domain/monetisation.py` | Explicit fourteen-coordinate policy vector, derived risk views, and transaction safeguards. |
 | `core/world.py` | Latent mutable state, construction, event queue, intervention state, and compatibility entry points. |
 | `core/events.py` | Deterministic priority queue with stable order, immutable payloads, cancellation, and rescheduling. |
 | `core/observations.py` | Generic immutable signals, observations, and signal-only belief updates. |
@@ -133,9 +156,14 @@ from accumulating in one monolithic class.
 | `simulation/government_phase.py` | Kernel coordination of complaints, compliance truth, audits, fines, and subsidy review. |
 | `simulation/day.py` | One complete simulated day/tick and all event rescheduling. |
 | `simulation/orchestrator.py` | Validated multi-cycle execution and run summaries. |
-| `metrics/outcomes.py` | Seven-dimensional harm, firm viability, state outlay, summaries, and recording. |
+| `simulation/policy_day.py` | Exact 1,440-minute action allocation and welfare-state transitions. |
+| `simulation/policy_orchestrator.py` | One cloned policy branch, welfare calculation, revenue composition, and producer/EPGC result. |
+| `metrics/outcomes.py` | Legacy market diagnostics, firm viability, state outlay, summaries, and recording. |
+| `metrics/harm.py` | Pure six-component welfare harm, adult/youth opportunity valuation, and reporting weights. |
 | `causal/interventions.py` | Persistent mechanism caps and composable audit/subsidy regimes. |
 | `causal/paired_worlds.py` | Structurally paired worlds, common random numbers, outcome differences, and regime effects. |
+| `causal/scenarios.py` | Seven named monetisation/public-value policy regimes. |
+| `causal/batch.py` | Same-cohort, repeated-seed scenario comparison and uncertainty summaries. |
 | `data/profiles.py` | Source registry loading, country/state profiles, unit contracts, and provenance gates. |
 
 The legacy `systems/` namespace contains compatibility imports. New code should
@@ -145,11 +173,11 @@ use the domain packages above so ownership remains visible in import paths.
 
 | Actor or layer | Directly owns/knows | Receives imperfectly | Must not receive |
 | --- | --- | --- | --- |
-| Consumer/household | Age, motives, traits, available liquidity/credit, consent and supervision state, current game | Public rank/score, discovery, noisy personal quality | True popularity, other players' vulnerability, firm or regulator private state |
+| Consumer/household | Own age, motives, traits, resources, consent/supervision, current game, time obligations, commitments, habit, and wellbeing | Public rank/score, disclosed mechanics and price, discovery, noisy personal quality | True popularity, other players' vulnerability/welfare, firm or regulator private state |
 | Company | Cash, own portfolio, investments, costs, collusive trust | Own telemetry estimates, released rankings, demand estimates, expected audits/fines/subsidies, purchased research | Player-level latent vulnerability/harm, true popularity, actual audit selection, competitors' private state |
 | State/regulator | Treasury, budgets, capacity, rules, policy priorities, accumulated audit beliefs | Complaints, reported minor harm, reported spending anomalies, public detections, audit evidence, verified subsidy dossier | Researcher's latent harm mean, latent unsafe-revenue share, undetected compliance truth before audit |
 | Public market | Published score and rank | Delayed source data plus noise and promotion pressure | The current latent ranking snapshot |
-| Research kernel | Complete state needed to resolve mechanisms and measure outcomes | Not applicable | Must not pass this state wholesale to a policy |
+| Research kernel | Complete state needed to resolve mechanisms and measure outcomes, including latent welfare components | Not applicable | Must not pass this state wholesale to an agent policy |
 
 The kernel necessarily computes hidden compliance truth to resolve an audit. The
 state first selects firms from public signals; only then does the resolution
@@ -160,8 +188,8 @@ specificity. Evasion reduces detection, not the underlying breach.
 
 ### Consumers and households
 
-Players use a structure-of-arrays `PlayerTable` for population-scale operations.
-Columns cover:
+Players use a structure-of-arrays `PlayerTable` for population-scale demographic,
+financial, and market operations. Columns cover:
 
 - age, jurisdiction, household, and jurisdiction-specific minor status;
 - disposable income, liquid resources, allowance, credit, and household funds;
@@ -169,21 +197,81 @@ Columns cover:
 - impulsivity, reward sensitivity, social susceptibility, loss aversion,
   financial literacy, and self-control;
 - competition, collection, social, exploration, and relaxation motives;
-- immutable pre-treatment vulnerability and seven dynamic harm dimensions;
+- immutable pre-treatment vulnerability and legacy market diagnostics;
 - current game and awareness.
+
+An aligned structure-of-arrays `PlayerLifeTable` adds the welfare state needed by
+policy scenarios. Its write-protected baseline contains planned leisure,
+intended play, sleep need, work/study, social and physical obligations, baseline
+enjoyment, financial sensitivity, delay discounting, social/FOMO
+susceptibilities, vulnerability, and an intended spending limit. Branch-local
+dynamic arrays contain sleep debt, progression, habit, reinforcement, historical
+spending, actual play, and wellbeing.
+
+The initialiser uses counter-addressed, bounded illustrative priors: rounded
+clipped normals for time variables; trait-, resource-, age-, and
+vulnerability-conditioned affine priors for continuous states; and a bounded
+fraction of disposable resources for the intended spending limit. These are
+reproducible synthetic distributions, not empirical population estimates. Empty
+cohorts are valid, and alignment is checked by exact player ID.
 
 Traits are sampled with correlations and motives overlap. Age and income affect
 resources and behaviour continuously. The unauthorised-card event is possible
 only for an exposed minor lacking consent, with stored-payment access and low
 supervision; the event then remains stochastic and resource-capped.
 
-### Games and companies
+### Welfare decision and transition boundary
 
-A game stores quality, competitive integrity, novelty, six monetisation
-intensities, a multidimensional statistic frontier, price, activity, revenue,
-latent popularity, and its public board. The six current mechanisms are power
-sales, random rewards, artificial scarcity, social pressure, price obfuscation,
-and payment-friction removal.
+`consumers/decision.py` is a stateless policy over the narrow inputs it receives:
+the player's own tables, the disclosed `MonetisationVector`, current remaining
+obligations and budget, and the counter RNG. It never receives `World`, company
+beliefs, other players' welfare, or future outcomes. For the complete feasible
+action set,
+
+```text
+a_i* = argmax_a [V_ia + tau epsilon_ia],  epsilon_ia ~ Gumbel(0, 1),
+Pr(a_i=a) = exp(V_ia/tau) / sum_b exp(V_ib/tau).
+```
+
+The eight mutually exclusive actions are play, purchase, stop, sleep,
+study/work, socialise, exercise, and other. Infeasible purchase utility is
+`-infinity`, so affordability, consent, policy spending caps, and cooling-off
+cannot be bypassed by random utility. The intended spending limit is retained as
+the pre-treatment reference for unplanned-spending harm; access-plan adoption
+also enforces it directly.
+
+`simulation/policy_day.py` owns mutation and time accounting. With default
+30-minute steps it makes 48 full-set choices and asserts
+`sum_a minutes_ia = 1,440` for each completed player-day. Habit and reinforcement
+evolve as
+
+```text
+h' = clip(rho h + eta I(play or purchase) - 0.60 eta I(stop), 0, 1)
+delta = clip(observed_reward - (0.50 + 0.35 r), -1, 1)
+r' = clip(0.98 r + eta_r delta I(play or purchase), -1, 1).
+```
+
+Progression changes separately through play, gates, and pay-to-progress. The
+decision module computes intent; the policy day applies state transitions and
+reconciles time and money. The harm module receives realised period aggregates
+afterward and therefore cannot alter the choices whose welfare it measures.
+
+### Games, monetisation, and companies
+
+A strategic-market game stores quality, competitive integrity, novelty, a legacy
+six-intensity monetisation matrix, a multidimensional statistic frontier, price,
+activity, revenue, latent popularity, and its public board. That matrix remains
+the interface for existing company adaptation.
+
+Policy scenarios use the distinct immutable `MonetisationVector`:
+`direct_price_cents`, `opaque_virtual_currency`, `paid_random_rewards`,
+`progression_gates`, `time_limited_offers`, `daily_streak_pressure`,
+`pay_to_progress`, `pay_to_win`, `social_guild_pressure`, `purchase_friction`,
+`spending_cap_cents`, `cooling_off_hours`, `real_currency_price_display`, and
+`personalized_offers`. Personalisation defaults to disabled. Normalised risk
+coordinates, integer-cent caps, and hour-based cooling remain semantically
+distinct; central properties derive transparency, pressure, and aggregate risk
+without exposing player-level vulnerability to a company.
 
 For a content release, `ContentPlanner` evaluates every proper non-empty subset
 of statistic dimensions and every configured boost rate. At least one dimension
@@ -207,7 +295,7 @@ detections. Audit evidence can miss breaches and can produce false positives.
 
 Subsidies are ranked using verified quality, design-safety and accessibility
 proxies, employment, evidence age, and state priorities. A firm is assigned one
-synthetic home jurisdiction in the current skeleton. Applications must predate
+synthetic home jurisdiction in the current prototype. Applications must predate
 the review and remain constrained by both the subsidy appropriation and treasury
 cash.
 
@@ -243,29 +331,45 @@ rounded once to cents, and accumulated with overflow checks. Assessed fines and
 collected fines remain separate. Firm operating margin subtracts subsidies and
 unpaid assessed fines, while cash changes only for amounts actually paid.
 
-Player harm is stored in seven dimensions:
+The market `OutcomeSnapshot` retains seven legacy operational diagnostics:
+financial stress, essential-spend displacement, debt, unauthorised spending,
+loss of control, functioning impairment, and regret. Firm outputs include cash,
+operating margin, and safe-revenue share; state outputs include subsidy outlay.
 
-1. financial stress;
-2. displacement of essential spending;
-3. debt;
-4. unauthorised spending;
-5. loss of control;
-6. functioning impairment;
-7. regret.
+The policy runner instead produces the welfare equation
 
-A weighted composite is a reporting view; the underlying dimensions are never
-discarded. Firm outputs include cash, operating margin, and safe-revenue share.
-State outputs include subsidy outlay.
+```text
+H_i = w_M M_i + w_OC OC_i + w_S S_i + w_E E_i + w_F F_i + w_W W_i.
+```
+
+`M` is caused only by the union of spending beyond the remaining commitment,
+opacity/randomness/time pressure, and financial strain; total spending is not
+itself a harm label. For `OC`, excess play is
+`max(actual_play - planned_game_leisure, 0)`. Observed sleep, work/study, social,
+and physical shortfalls are allocated proportionally and total attributed
+displacement cannot exceed that excess. No excess play means zero gaming
+opportunity cost even when an unrelated deficit exists.
+
+`S` adds attributed sleep displacement to a bounded sleep-debt term; `E` and `F`
+are attributed obligation-shortfall ratios; `W` is positive wellbeing decline.
+Adult opportunity-cost proxies use adult time values. Youth profiles use lower,
+explicitly non-wage educational and welfare-resource proxies, while their
+non-monetary score is primary. Monetary proxies and component scores remain
+separate and reconcile in `WelfareHarmResult`. A weighted composite is only a
+reporting view; no component is discarded and none is a clinical diagnosis.
 
 ## Complexity
 
 Let `P` be players, `G` games, `F` firms, `S` jurisdictions, `D` content-stat
-dimensions, `K` boost rates, and `B` the consumer block size.
+dimensions, `K` boost rates, `B` the consumer block size, `A = 8` welfare
+actions, and `Q = 1440 / step_minutes` welfare decisions per day.
 
 | Operation | Time | Temporary memory | Notes |
 | --- | ---: | ---: | --- |
 | Exact consumer game choice | `O(P·G)` | `O(B·G + P)` | Every known alternative is evaluated. |
 | Activity, purchase, harm, aggregation | `O(P·G + Σ n_g log n_g)` as currently grouped | `O(P + G)` | Repeated per-game masks are exact but leave room for exact grouped optimisation. |
+| Welfare daily action process | `O(P·A·Q)` | `O(P·A)` | Every action is evaluated at every time step. |
+| Welfare harm decomposition | `O(P)` | `O(P)` | Six scores plus displaced-time and monetary-proxy columns. |
 | Popularity/public ranking | `O(P + G log G)` | `O(P + G)` | Publication uses a delayed truth snapshot. |
 | Regulatory observation and truth | `O(S·P·F + S·F·G)` as currently scanned | `O(P + F)` per state | Complaints and breaches remain exact; grouping can reduce repeated masks. |
 | Audit target selection | `O(S·F log F)` | `O(F)` per state | Risk and random-floor targets are sorted. |
@@ -274,11 +378,11 @@ dimensions, `K` boost rates, and `B` the consumer block size.
 
 The block size changes memory use, not the mathematical choice set. Persistent
 population state is linear in `P`; game state is linear in `G·D`. The current
-research skeleton retains `WorldStep` results in `step_history`, and its ledger
+research prototype retains `WorldStep` results in `step_history`, and its ledger
 is append-only, so a long run can also grow approximately as `O(T·P + E)` with
 `T` ticks and `E` financial transfers. Campaign output must stream or thin this
 history and define a ledger-retention policy rather than relying on the
-skeleton's in-memory retention.
+prototype's in-memory retention.
 
 ## Structural safeguards
 
@@ -286,6 +390,12 @@ skeleton's in-memory retention.
 - Mechanism caps are re-applied after subsequent company actions.
 - Player resources cannot become negative and minor-owned credit is prohibited.
 - Baseline vulnerability is copied and write-protected before treatment.
+- `PlayerLifeTable` baseline commitments are write-protected and dynamic state is
+  deep-copied for every policy branch.
+- Every completed welfare day conserves exactly 1,440 minutes per player.
+- Purchase feasibility enforces available budget, consent, policy spending caps,
+  and cooling-off before the stochastic argmax; access-plan adoption also checks
+  the intended spending limit.
 - Money arrays are non-negative `int64` where appropriate and checked before
   cumulative addition.
 - Public ranks are a complete permutation with stable game-ID tie-breaking.

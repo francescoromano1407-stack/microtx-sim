@@ -1,10 +1,26 @@
 # Roadmap
 
-The repository currently provides an executable research skeleton. It is useful
-for testing model structure, information boundaries, exact accounting, and the
-paired-world causal design. It is **not yet calibrated for substantive estimates**.
-The roadmap below treats calibration and identification as prerequisites, not as
-polish to be added after running a large campaign.
+The repository now provides a stable, tested synthetic prototype: the market
+ABM, policy time-allocation engine, seven-scenario repeated-seed batch, EPGC
+financing, sensitivity grid, and versioned outputs are executable. It is
+**not calibrated for substantive estimates**. The roadmap therefore treats
+calibration and empirical identification as prerequisites, not as polish.
+
+## Completed for the synthetic prototype
+
+- heterogeneous seeded player and welfare state;
+- explicit fourteen-coordinate monetisation intervention vector;
+- full eight-action daily decision process with exact time conservation;
+- six-component harm and adult/youth opportunity-cost proxies;
+- all seven named counterfactual scenarios with common cohorts and random fields;
+- repeated-seed variance and normal Monte Carlo intervals;
+- EPGC safe-profit equation, capped payments, bonuses, penalties, clawbacks,
+  and minimum contribution;
+- one-at-a-time sensitivity, monotonic checks, and instability flags;
+- CSV/JSON/Markdown/SVG outputs with configuration, seed, cohort, source, and
+  environment metadata;
+- unit and integration coverage for zero-player, zero-cost, extreme, seed,
+  cap, cooling-off, EPGC, batch, output, and CLI cases.
 
 ## Completion criteria for a research campaign
 
@@ -61,16 +77,15 @@ These tasks block scientific interpretation.
    recipe, source version, retrieval date, population base, unit, period, and
    status. Only then promote an input from `ILLUSTRATIVE` to `CALIBRATED`.
 
-## P1 — Causal design and uncertainty
+## P1 — Empirical causal design and uncertainty
 
-1. Add a factorial campaign orchestrator for monetisation, audit, and subsidy
-   regimes while preserving a clearly named neutral control.
-2. Run independent seed replications and report Monte Carlo uncertainty,
-   between-jurisdiction heterogeneity, tail outcomes, and the full vector of harm
-   components—not only a composite mean.
-3. Add sensitivity analyses for unobserved confounding assumptions, rare-event
-   priors, harm weights, observation noise, behavioural persistence, and company
-   expectations.
+1. Extend the implemented seven-regime policy batch into a preregistered
+   empirical factorial design spanning market audit and financing interventions.
+2. Add calibrated between-jurisdiction heterogeneity, convergence diagnostics,
+   joint parameter uncertainty, and externally justified interval semantics.
+3. Extend the implemented OAT grid to rare-event priors, harm weights,
+   observation noise, behavioural persistence, company expectations, structural
+   alternatives, and unobserved-confounding assumptions.
 4. Separate direct exposure effects from market-equilibrium spillovers through
    game- or jurisdiction-level assignment, recorded exposure mappings, or other
    designs that acknowledge interference.
@@ -106,16 +121,15 @@ These tasks block scientific interpretation.
 
 ## P2 — Validation, outputs, and reproducibility
 
-1. Introduce versioned schemas for input profiles, interventions, and output
-   datasets. Store configuration, code revision, source-registry digest, seed,
-   stream definitions, and environment metadata in every run manifest.
-2. Add tidy aggregate and optional individual output writers. Individual data
-   must be disabled by default for large runs and accompanied by disclosure-risk
-   controls when empirical microdata are introduced.
+1. Evolve the implemented output schema and manifest through explicit migration
+   tests; add a fully locked environment and signed immutable source bundles.
+2. Add streaming or columnar storage for campaign-scale outputs. The current
+   aggregate and optional synthetic individual CSV writers are sufficient for
+   the prototype, but real microdata would require disclosure-risk controls.
 3. Add empirical posterior-predictive or holdout checks for spending, retention,
    ranking mobility, firm actions, audit findings, and subsidy awards.
-4. Extend the test suite with property tests, overflow boundaries, schema
-   migration tests, campaign fixtures, and end-to-end paired policy checks.
+4. Extend the existing unit/integration coverage with property tests, broader
+   overflow boundaries, schema migration tests, and empirical campaign fixtures.
 5. Add continuous integration for supported Python versions, documentation links,
    unit tests, and a very small deterministic smoke run.
 

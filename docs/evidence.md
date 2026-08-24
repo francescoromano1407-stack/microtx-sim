@@ -53,7 +53,9 @@ Every documented input belongs to one of three categories:
 1. **Runtime-consumed:** it currently changes initial state or an equation.
 2. **Contract-only:** it is parsed and validated but does not yet affect outcomes.
 3. **Context-only:** it supports design or interpretation but is not a profile
-   contract consumed by the runtime.
+contract consumed by the runtime. The policy prototype is configured separately
+in `configs/policy_prototype.toml`; every added behavioural, harm, producer, and
+EPGC value in that file remains synthetic or illustrative.
 
 This classification must be reviewed whenever a value is connected to a new
 equation. Documentation should state the effective precedence when the same
@@ -104,10 +106,12 @@ The current rare-card hazard remains an illustrative sensitivity parameter.
 A campaign fails if a required dependency is synthetic, illustrative, or merely
 anchored.
 
-Passing this software gate will be necessary but not sufficient. A scientific
-campaign also requires frozen inputs, independent extraction review, calibrated
-and held-out validation targets, prespecified estimands, sensitivity analysis,
-uncertainty estimation, and a versioned run manifest.
+Passing this software gate will be necessary but not sufficient. The policy
+prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,
+and a versioned run manifest, but those are structural diagnostics. A scientific
+campaign still requires frozen inputs, independent extraction review,
+calibrated and held-out validation targets, prespecified estimands, joint
+uncertainty, power analysis, and governance for any empirical data.
 
 ## Updating evidence
 

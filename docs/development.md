@@ -1,8 +1,9 @@
 # Development guide
 
 This guide covers local setup, module boundaries, deterministic implementation,
-testing, and the repository workflow. It is written for the current research
-skeleton; large scientific campaigns remain deliberately gated.
+testing, and the repository workflow. It is written for the stable, tested
+synthetic prototype; empirical and large scientific campaigns remain
+deliberately gated.
 
 ## Requirements and setup
 
@@ -18,9 +19,10 @@ python -m pip install -e ".[dev]"
 ```
 
 The package exposes both a module entry point and the `microtx-sim` console
-command. Validate the small structural scenario before running it:
+command. Validate both supported entry points before changing model logic:
 
 ```text
+python -m microtx_sim policy-validate configs/policy_prototype.toml
 python -m microtx_sim validate configs/smoke.toml
 python -m microtx_sim smoke configs/smoke.toml
 ```
@@ -30,6 +32,19 @@ connectivity check, not an empirical result. The non-campaign runner rejects
 more than 32 cycles or more than 5,000 players. Campaign mode additionally
 requires calibrated configuration and provenance.
 
+The policy configuration is a separate synthetic-only prototype. Its complete
+reproducibility workflow is:
+
+```text
+python -m microtx_sim policy-batch configs/policy_prototype.toml
+python -m microtx_sim policy-sensitivity configs/policy_prototype.toml
+python -m microtx_sim reproduce configs/policy_prototype.toml
+```
+
+`reproduce` creates 13 ignored artifacts under
+`artifacts/policy_prototype/`. Passing tests or producing those files validates
+software contracts only, not external validity or calibration.
+
 ## Source-tree responsibilities
 
 Keep data, agent state, domain rules, daily execution, and experiment control
@@ -37,18 +52,25 @@ separate:
 
 ```text
 src/microtx_sim/
+├── analysis/     one-at-a-time sensitivity analysis and stability checks
 ├── agents/       agent records, immutable observations, and private state
-├── causal/       interventions, paired worlds, and regime contrasts
+├── causal/       interventions, paired worlds, seven scenarios, and batch contrasts
 ├── companies/    company decision and resolution logic
-├── consumers/    population construction and daily consumer dynamics
+├── consumers/    population, life-state, action choice, and consumer dynamics
 ├── core/         generic events, observations, ledger, and world state
 ├── data/         evidence profiles and provenance validation
-├── domain/       abstract game and content model
+├── domain/       abstract game, content, and monetisation intervention vectors
+├── funding/      EPGC public-value financing equation and audit trail
 ├── market/       popularity truth and delayed public rankings
-├── metrics/      outcome snapshots and recording
+├── metrics/      market outcomes plus policy harm and opportunity-cost measures
+├── outputs/      atomic tables, run manifests, summaries, and deterministic SVGs
 ├── states/       audit and public-funding logic
-└── simulation/   day processor and run orchestrator
+└── simulation/   market and policy day processors and run orchestrators
 ```
+
+`policy_config.py` owns the strict synthetic policy TOML boundary. Keep it
+separate from the legacy `SimulationConfig`: accepting a new policy field must
+be an explicit schema and documentation change.
 
 Place a change in the module that owns its mechanism. For example, an acquisition
 policy belongs in company logic; a complaint-to-audit sensor belongs in state
@@ -94,6 +116,10 @@ When adding an action menu, assign shocks to stable action coordinates even when
 an action is infeasible in one counterfactual branch. When vectorising or
 changing block size, write a test that permutes entity order or compares chunk
 sizes. Identical semantic coordinates must produce identical draws.
+
+The policy batch must additionally preserve one cohort digest per seed across
+all seven scenarios. A scenario-specific branch may make an action infeasible,
+but it must not shift later semantic random coordinates in another branch.
 
 ## Exact computation and money
 
@@ -162,14 +188,55 @@ The suite is organised by contract:
 - `test_causal.py`: paired differences and composable interventions;
 - `test_world_integration.py`: scheduling and end-to-end system connections;
 - `test_config_domain.py`: configuration safeguards, ledger balance, and exact
-  content search.
-- `test_module_boundaries.py`: canonical domain imports, legacy compatibility,
-  and separation of day/orchestrator logic from `World`.
+  content search;
+- `test_player_life.py` and `test_policy_decision.py`: heterogeneous life state,
+  action feasibility, seeded choice, spending limits, and zero-player paths;
+- `test_monetisation.py`: every intervention-vector field and safety control;
+- `test_welfare_harm.py`: six-component harm, adult/youth opportunity cost,
+  reconciliation, and extreme inputs;
+- `test_epgc.py`: safe-profit equation, bonuses, budget cap, penalties,
+  clawbacks, zero cost, and overflow boundaries;
+- `test_policy_batch.py`: all seven scenarios, shared cohorts, paired contrasts,
+  deterministic seeds, and complete-batch integration;
+- `test_sensitivity.py`: OAT grid, expected-direction checks, and unstable-field
+  reporting;
+- `test_outputs.py` and `test_policy_export.py`: schema, atomic writers,
+  escaping, empty rows, deterministic SVGs, hashes, and the 13-file contract;
+- `test_policy_config.py` and `test_policy_cli.py`: strict TOML parsing, command
+  dispatch, output overrides, and error behaviour.
 
 For a change local to one module, run its focused test first and the full suite
-before a milestone commit. A simulation test should use the smallest population
-and number of cycles that exercise the contract; do not launch a full campaign
-as routine verification.
+before a milestone commit. For example:
+
+```text
+python -m unittest tests.test_outputs -v
+python -m unittest tests.test_policy_batch -v
+python -m unittest discover -s tests -v
+```
+
+A simulation test should use the smallest population and horizon that exercise
+the contract. Do not launch the 50,000-player base scenario or an empirical
+campaign as routine verification.
+
+## Reproducible artifact contract
+
+`microtx_sim.outputs` owns the versioned column prefixes, fixed filenames,
+atomic UTF-8 CSV/JSON/Markdown writes, and dependency-free SVG renderers. Keep
+these properties when changing outputs:
+
+1. preserve canonical column order and append compatible extension columns in a
+   deterministic order;
+2. write through a same-directory temporary file and atomic replacement;
+3. reject `NaN`, infinity, inconsistent reconciliations, and conflicting schema
+   metadata;
+4. keep empty and zero-player results valid and machine-readable;
+5. update `OUTPUT_SCHEMA_VERSION` for an incompatible contract;
+6. include configuration/source hashes, seeds, cohort digests, Git state,
+   environment, equations, and scope limits in `manifest.json`;
+7. never imply that deterministic synthetic output is empirically validated.
+
+The six CSV files, manifest, Markdown summary, and five SVG charts form the
+13-file `reproduce` contract listed in [Usage](usage.md).
 
 ## Code conventions
 
@@ -195,19 +262,28 @@ materially. A practical sequence is:
 3. review the diff for information leaks, unit changes, accidental generated
    files, and undocumented random-stream changes;
 4. run focused tests, then the full suite;
-5. commit code, tests, and the documentation needed to explain that milestone;
-6. begin the next logical change from a clean or clearly understood worktree.
+5. run `policy-validate` when the policy schema or assumptions changed;
+6. commit code, tests, configuration, and documentation as one coherent
+   milestone;
+7. confirm `git status --short` is empty;
+8. run `reproduce` from that clean revision when an auditable artifact set is
+   required; the generated directory remains ignored by Git;
+9. begin the next logical change from a clean or clearly understood worktree.
 
 Use English, outcome-oriented commit subjects such as:
 
 ```text
 refactor: separate daily execution from world state
 docs: document evidence status and campaign limits
+feat(policy): add seeded seven-scenario prototype batch
+test(outputs): verify deterministic artifact contract
 ```
 
 Do not commit secrets, local environments, caches, large generated runs, or raw
-restricted microdata. A campaign result should record the exact commit identifier
-and refuse to run from an undocumented configuration.
+restricted microdata. Do not commit `artifacts/`; the manifest records the exact
+commit identifier, dirty state, configuration hash, source-registry hash, and
+runtime environment. A dirty manifest is useful for diagnosis but is not a
+clean archival reproduction.
 
 ## Pre-campaign checklist
 

@@ -176,7 +176,7 @@ auditing those targets.
 
 Applications submitted during the current tick are not eligible immediately;
 only applications with `submitted_tick < review_tick` mature. If a firm has
-reapplied, its latest mature dossier is used once. The current skeleton assigns
+reapplied, its latest mature dossier is used once. The current prototype assigns
 each firm one synthetic home jurisdiction, so the relevant state sees only
 eligible applications.
 
