@@ -98,16 +98,16 @@ def compare_outcomes(
             float(individual_composite.mean()) if len(individual_composite) else 0.0
         ),
         total_spend_effect_cents=int(
-            paired.player_spend_difference_cents.sum(dtype=np.int64)
+            sum(int(value) for value in paired.player_spend_difference_cents)
         ),
         total_debt_effect_cents=int(
-            paired.player_debt_difference_cents.sum(dtype=np.int64)
+            sum(int(value) for value in paired.player_debt_difference_cents)
         ),
         total_operating_margin_effect_cents=int(
-            paired.firm_margin_difference_cents.sum(dtype=np.int64)
+            sum(int(value) for value in paired.firm_margin_difference_cents)
         ),
         total_subsidy_effect_cents=int(
-            paired.state_subsidy_difference_cents.sum(dtype=np.int64)
+            sum(int(value) for value in paired.state_subsidy_difference_cents)
         ),
         affected_player_share=affected_share,
     )
@@ -168,13 +168,19 @@ def _assert_structural_pair(treated: World, control: World) -> None:
         "household_id",
         "is_minor",
         "monthly_disposable_income_cents",
+        "liquidity_cents",
+        "credit_limit_cents",
         "allowance_cents",
+        "household_liquidity_cents",
         "has_stored_payment_access",
         "guardian_supervision",
         "guardian_consent",
         "traits",
         "motive_weights",
         "baseline_vulnerability",
+        "harm_state",
+        "current_game",
+        "awareness",
     )
     game_columns = (
         "game_id",
@@ -185,6 +191,11 @@ def _assert_structural_pair(treated: World, control: World) -> None:
         "monetisation",
         "stat_frontier",
         "price_cents",
+        "active_players",
+        "revenue_cents",
+        "true_popularity",
+        "public_score",
+        "public_rank",
     )
     for name in player_columns:
         if not np.array_equal(
@@ -196,11 +207,14 @@ def _assert_structural_pair(treated: World, control: World) -> None:
             getattr(treated.games, name), getattr(control.games, name)
         ):
             raise ValueError(f"paired game column differs before treatment: {name}")
-    if tuple(firm.firm_id for firm in treated.firms) != tuple(
-        firm.firm_id for firm in control.firms
+    if treated.players.jurisdiction_codes != control.players.jurisdiction_codes:
+        raise ValueError("paired player jurisdiction metadata differ before treatment")
+    if (
+        treated.players.adult_age_by_jurisdiction
+        != control.players.adult_age_by_jurisdiction
     ):
-        raise ValueError("paired firm identities differ before treatment")
-    if tuple(state.code for state in treated.states) != tuple(
-        state.code for state in control.states
-    ):
-        raise ValueError("paired jurisdiction identities differ before treatment")
+        raise ValueError("paired adult-age rules differ before treatment")
+    if treated.firms != control.firms:
+        raise ValueError("paired firm agents differ before treatment")
+    if treated.states != control.states:
+        raise ValueError("paired jurisdiction agents differ before treatment")

@@ -83,10 +83,29 @@ class SubsidyApplicationView:
     firm_id: int
     requested_cents: int
     verified_quality: float
-    verified_safe_revenue_share: float
+    verified_design_safety_score: float
     verified_accessibility: float
     jobs_estimate: int
     evidence_age_days: int
+    submitted_tick: int = 0
+    eligible_jurisdictions: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.firm_id < 0 or self.requested_cents < 0 or self.submitted_tick < 0:
+            raise ValueError("subsidy application identifiers and money must be non-negative")
+        if self.jobs_estimate < 0 or self.evidence_age_days < 0:
+            raise ValueError("subsidy evidence metadata must be non-negative")
+        for value in (
+            self.verified_quality,
+            self.verified_design_safety_score,
+            self.verified_accessibility,
+        ):
+            if not 0.0 <= value <= 1.0:
+                raise ValueError("verified subsidy scores must be in [0, 1]")
+        if any(value < 0 for value in self.eligible_jurisdictions):
+            raise ValueError("eligible jurisdiction ids must be non-negative")
+        if len(set(self.eligible_jurisdictions)) != len(self.eligible_jurisdictions):
+            raise ValueError("eligible jurisdictions must be unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +248,7 @@ class StateAgent:
             score = recency * (
                 self.subsidy_quality_weight * application.verified_quality
                 + self.subsidy_safe_revenue_weight
-                * application.verified_safe_revenue_share
+                * application.verified_design_safety_score
                 + self.subsidy_accessibility_weight * application.verified_accessibility
                 + self.industry_priority * min(1.0, application.jobs_estimate / 100.0)
             )
@@ -255,4 +274,3 @@ class StateAgent:
             )
             budget -= award
         return tuple(awards)
-

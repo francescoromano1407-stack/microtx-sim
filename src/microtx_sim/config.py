@@ -45,6 +45,7 @@ class BehaviorConfig:
     switching_cost: float
     base_purchase_logit: float
     unauthorised_card_hazard_per_exposed_minor_day: float
+    essential_spend_share: float
     harm_decay: float
     daily_credit_interest_rate: float
 
@@ -103,6 +104,26 @@ class SimulationConfig:
             raise ConfigurationError(f"Values must be positive: {', '.join(invalid)}")
         if self.market.company_count > self.market.game_count:
             raise ConfigurationError("Every company needs at least one game")
+        if self.information.public_signal_delay < 0:
+            raise ConfigurationError("public_signal_delay cannot be negative")
+        scheduled_days = {
+            "ranking_interval": self.market.ranking_interval,
+            "firm_decision_interval": self.market.firm_decision_interval,
+            "audit_interval": self.regulation.audit_interval,
+            "subsidy_interval": self.regulation.subsidy_interval,
+            "public_signal_delay": self.information.public_signal_delay,
+            "income_renewal_interval": 30,
+        }
+        misaligned = [
+            name
+            for name, days in scheduled_days.items()
+            if days % self.run.tick_days != 0
+        ]
+        if misaligned:
+            raise ConfigurationError(
+                "Scheduled day intervals must be divisible by tick_days: "
+                + ", ".join(misaligned)
+            )
         if not 2 <= self.market.stat_dimensions <= 12:
             raise ConfigurationError("stat_dimensions must be between 2 and 12")
         for name, value in {
@@ -120,6 +141,7 @@ class SimulationConfig:
             "unauthorised_card_hazard_per_exposed_minor_day": (
                 self.behavior.unauthorised_card_hazard_per_exposed_minor_day
             ),
+            "essential_spend_share": self.behavior.essential_spend_share,
             "harm_decay": self.behavior.harm_decay,
             "daily_credit_interest_rate": self.behavior.daily_credit_interest_rate,
             "audit_sensitivity": self.regulation.audit_sensitivity,

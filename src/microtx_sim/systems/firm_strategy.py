@@ -40,20 +40,24 @@ class FirmPolicy(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PublicRankingSnapshot:
-    """A public ranking as it existed at a particular source tick.
+    """A ranking with separate publication time and underlying data time.
 
-    ``as_of`` is the time represented by the signal, not the time at which a
-    firm is allowed to consume it.  The system applies its configured delay when
-    selecting a snapshot.
+    ``as_of`` is the publication tick used for availability. ``data_tick`` is
+    the latent-observation tick represented by the delayed public signal.
     """
 
     as_of: int
     game_ids: tuple[int, ...]
     public_rank: tuple[int, ...]
+    data_tick: int | None = None
 
     def __post_init__(self) -> None:
         if self.as_of < 0:
             raise ValueError("ranking as_of cannot be negative")
+        if self.data_tick is None:
+            object.__setattr__(self, "data_tick", self.as_of)
+        if self.data_tick is None or not 0 <= self.data_tick <= self.as_of:
+            raise ValueError("ranking data_tick must be between zero and publication")
         if len(self.game_ids) != len(self.public_rank):
             raise ValueError("ranking columns are inconsistent")
         if len(set(self.game_ids)) != len(self.game_ids):
@@ -63,13 +67,20 @@ class PublicRankingSnapshot:
             raise ValueError("public ranks must be a permutation")
 
     @classmethod
-    def from_game_table(cls, *, as_of: int, games: GameTable) -> "PublicRankingSnapshot":
+    def from_game_table(
+        cls,
+        *,
+        as_of: int,
+        games: GameTable,
+        data_tick: int | None = None,
+    ) -> "PublicRankingSnapshot":
         """Capture only the explicitly public columns of ``games``."""
 
         return cls(
             as_of=int(as_of),
             game_ids=tuple(int(value) for value in games.game_id),
             public_rank=tuple(int(value) for value in games.public_rank),
+            data_tick=data_tick,
         )
 
     def as_mapping(self) -> dict[int, int]:
@@ -310,10 +321,27 @@ def capture_period_telemetry(
     games: GameTable,
     firms: Sequence[FirmAgent],
     rng: CounterRNG,
+    period_revenue_cents: npt.ArrayLike | None = None,
+    active_players: npt.ArrayLike | None = None,
 ) -> tuple[FirmTelemetry, ...]:
     """Measure only portfolio-local period aggregates with firm-specific error."""
 
     game_row = {int(game_id): row for row, game_id in enumerate(games.game_id)}
+    revenue_source = (
+        games.revenue_cents
+        if period_revenue_cents is None
+        else np.asarray(period_revenue_cents, dtype=np.int64)
+    )
+    active_source = (
+        games.active_players
+        if active_players is None
+        else np.asarray(active_players, dtype=np.int64)
+    )
+    expected_shape = games.game_id.shape
+    if revenue_source.shape != expected_shape or np.any(revenue_source < 0):
+        raise ValueError("period revenue telemetry must align with games")
+    if active_source.shape != expected_shape or np.any(active_source < 0):
+        raise ValueError("active-player telemetry must align with games")
     telemetry: list[FirmTelemetry] = []
     for firm in sorted(firms, key=lambda item: item.firm_id):
         rows = np.asarray([game_row[game] for game in firm.state.game_ids], dtype=np.int64)
@@ -340,8 +368,8 @@ def capture_period_telemetry(
         novelty_error = measurement_sigma * np.asarray(
             rng.normal(ids, tick, "firm_telemetry_novelty", firm.firm_id)
         )
-        active = np.rint(games.active_players[rows] * active_error).astype(np.int64)
-        revenue = np.rint(games.revenue_cents[rows] * revenue_error).astype(np.int64)
+        active = np.rint(active_source[rows] * active_error).astype(np.int64)
+        revenue = np.rint(revenue_source[rows] * revenue_error).astype(np.int64)
         novelty = np.clip(games.novelty[rows] + novelty_error, 0.0, 1.0)
 
         weights = np.maximum(revenue.astype(np.float64), 1.0)
@@ -481,6 +509,7 @@ class FirmStrategySystem:
             as_of=tick,
             game_ids=tuple(int(value) for value in game_ids),
             public_rank=tuple(int(value) for value in noisy_rank),
+            data_tick=tick,
         )
         self.record_public_ranking(snapshot)
         return snapshot
@@ -556,7 +585,8 @@ class FirmStrategySystem:
                 )
             else:
                 competitor_pressure = 0.0
-            signal_age = tick - snapshot.as_of
+            assert snapshot.data_tick is not None
+            signal_age = tick - snapshot.data_tick
 
         # ``_latest_telemetry`` is the completed previous decision round.  It is
         # replaced only after observations for every firm have been constructed.
@@ -621,14 +651,9 @@ class FirmStrategySystem:
 
     @staticmethod
     def _candidate_count(firm: FirmAgent) -> int:
-        # HOLD, ADJUST_MONETISATION, two agreement proposals, EVADE and subsidy.
-        count = 6
-        cash = firm.state.cash_cents
-        count += int(cash >= firm.content_cost_cents)
-        count += int(cash >= firm.research_cost_cents)
-        count += int(cash >= firm.compliance_cost_cents)
-        count += int(cash >= firm.acquisition_cost_cents)
-        return count
+        del firm
+        # One draw per semantic action, even when the action is infeasible.
+        return len(FirmAction)
 
     def _select_partner(
         self,
@@ -1198,7 +1223,7 @@ class FirmStrategySystem:
                 ledger=ledger,
             )
             intensity = np.mean(games.monetisation[rows], axis=1)
-            safe_share = float(
+            design_safety = float(
                 np.clip(
                     np.average(1.0 - intensity, weights=np.maximum(games.revenue_cents[rows], 1)),
                     0.0,
@@ -1210,7 +1235,7 @@ class FirmStrategySystem:
                     firm_id=firm.firm_id,
                     requested_cents=int(requested),
                     verified_quality=float(np.clip(np.mean(games.quality[rows]), 0.0, 1.0)),
-                    verified_safe_revenue_share=safe_share,
+                    verified_design_safety_score=design_safety,
                     verified_accessibility=float(
                         np.clip(np.mean(games.competitive_integrity[rows]), 0.0, 1.0)
                     ),
@@ -1224,6 +1249,7 @@ class FirmStrategySystem:
                         ),
                     ),
                     evidence_age_days=max(0, tick - (observation.as_of if observation else tick)),
+                    submitted_tick=tick,
                 )
             )
             return self._record(

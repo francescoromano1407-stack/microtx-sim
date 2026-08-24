@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import numpy.typing as npt
@@ -9,7 +9,7 @@ import numpy.typing as npt
 from ..agents.companies import FirmAgent
 from ..agents.jurisdictions import StateAgent, SubsidyApplicationView
 from ..agents.players import PlayerTable
-from ..config import SimulationConfig
+from ..config import ConfigurationError, SimulationConfig
 from ..data.profiles import ProfileBundle, load_profile_bundle
 from ..domain.games import GameTable
 from ..metrics.outcomes import OutcomeRecorder, OutcomeSnapshot
@@ -44,6 +44,21 @@ FloatArray = npt.NDArray[np.float64]
 
 _COMPLAINT_STREAM = stable_stream_id("player-complaint-report")
 _INCOME_STREAM = stable_stream_id("monthly-income-shock")
+_INT64_MAX = np.iinfo(np.int64).max
+
+
+def _checked_accumulate(
+    target: IntArray,
+    increment: IntArray,
+    *,
+    label: str,
+) -> None:
+    values = np.asarray(increment, dtype=np.int64)
+    if values.shape != target.shape or np.any(values < 0) or np.any(target < 0):
+        raise ValueError(f"{label} needs aligned non-negative int64 arrays")
+    if np.any(target > _INT64_MAX - values):
+        raise OverflowError(f"{label} would overflow int64")
+    target += values
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +98,14 @@ class World:
         self.games = games
         self.firms = firms
         self.states = states
+        if not states:
+            raise ValueError("at least one jurisdiction is required")
+        if tuple(firm.firm_id for firm in firms) != tuple(range(len(firms))):
+            raise ValueError("firm ids must be contiguous and position-aligned")
+        if tuple(state.jurisdiction_id for state in states) != tuple(
+            range(len(states))
+        ):
+            raise ValueError("jurisdiction ids must be contiguous and position-aligned")
         self.tick = 0
         self.ledger = Ledger()
         self.events = EventQueue()
@@ -93,7 +116,7 @@ class World:
                 base_unauthorised_card_hazard_per_exposed_minor_day=(
                     config.behavior.unauthorised_card_hazard_per_exposed_minor_day
                 ),
-                essential_spend_share=0.68,
+                essential_spend_share=config.behavior.essential_spend_share,
                 game_choice_temperature=config.behavior.game_choice_temperature,
                 switching_cost=config.behavior.switching_cost,
                 base_purchase_logit=config.behavior.base_purchase_logit,
@@ -103,7 +126,9 @@ class World:
         self.firm_system = FirmStrategySystem(
             firms,
             rng=rng,
-            public_signal_delay=config.information.public_signal_delay,
+            # PopularitySystem already owns delay and noise for the public
+            # series; the firm system only stores what was actually published.
+            public_signal_delay=0,
             public_signal_noise=config.information.public_signal_noise,
             expected_fine_cents=config.regulation.maximum_fine_cents,
             research_precision_gain=max(
@@ -116,6 +141,8 @@ class World:
             noise_sd=config.information.public_signal_noise,
         )
         self.regulation_system = RegulationSystem()
+        self._audit_interval = config.regulation.audit_interval
+        self._subsidy_interval = config.regulation.subsidy_interval
         self.recorder = OutcomeRecorder(
             record_individual=config.causal.record_individual_outcomes
         )
@@ -134,9 +161,23 @@ class World:
         self.firm_revenue_cents = np.zeros(firm_count, dtype=np.int64)
         self.firm_unsafe_revenue_cents = np.zeros(firm_count, dtype=np.int64)
         self.firm_subsidy_cents = np.zeros(firm_count, dtype=np.int64)
+        self.firm_fine_assessed_cents = np.zeros(firm_count, dtype=np.int64)
+        self.firm_fine_paid_cents = np.zeros(firm_count, dtype=np.int64)
         self.state_subsidy_outlay_cents = np.zeros(state_count, dtype=np.int64)
         self._public_detections = np.zeros(firm_count, dtype=np.int64)
         self._promotion_pressure = np.zeros(config.market.game_count, dtype=np.float64)
+        self._period_game_revenue_cents = np.zeros(
+            config.market.game_count, dtype=np.int64
+        )
+        self._latest_game_active_players = np.zeros(
+            config.market.game_count, dtype=np.int64
+        )
+        self._mechanism_caps = np.ones_like(
+            games.monetisation, dtype=np.float64
+        )
+        self._firm_home_jurisdiction = np.asarray(
+            [firm.firm_id % state_count for firm in firms], dtype=np.int64
+        )
         self._pending_subsidies: list[SubsidyApplicationView] = []
         self._last_player_result: StepResult | None = None
         self._last_firm_resolution: FirmResolution | None = None
@@ -155,6 +196,32 @@ class World:
     ) -> "World":
         config.validate(campaign=campaign)
         profile_bundle = profiles or load_profile_bundle(campaign=campaign)
+        profile_bundle.validate_for_run(
+            allow_synthetic=config.run.allow_synthetic
+        )
+        shared_contracts = {
+            contract.metric: contract
+            for contract in profile_bundle.contracts
+            if contract.jurisdiction_code == "*"
+        }
+        linked_behavior = {
+            "base_unauthorised_card_hazard_per_exposed_minor_day": (
+                "unauthorised_card_hazard_per_exposed_minor_day",
+                config.behavior.unauthorised_card_hazard_per_exposed_minor_day,
+            ),
+            "essential_spend_share_mean": (
+                "essential_spend_share",
+                config.behavior.essential_spend_share,
+            ),
+        }
+        for metric, (config_field, configured) in linked_behavior.items():
+            contract = shared_contracts.get(metric)
+            if contract is None or float(contract.value) != configured:
+                raise ConfigurationError(
+                    f"behavior.{config_field} diverges from its profile evidence "
+                    f"contract {metric}; "
+                    "update both inputs explicitly"
+                )
         if campaign and profiles is not None:
             profile_bundle.validate_for_campaign()
         rng = CounterRNG(config.run.seed)
@@ -217,11 +284,84 @@ class World:
         if not 0.0 <= maximum <= 1.0:
             raise ValueError("mechanism cap must be in [0, 1]")
         target = set(int(game) for game in game_ids) if game_ids is not None else None
+        if game_ids is not None and len(target) != len(game_ids):
+            raise ValueError("mechanism cap game_ids must be unique")
+        known = {int(game) for game in self.games.game_id}
+        if target is not None and not target.issubset(known):
+            raise ValueError("mechanism cap references an unknown game")
         for row, game_id in enumerate(self.games.game_id):
             if target is None or int(game_id) in target:
-                self.games.monetisation[row, int(mechanism)] = min(
-                    self.games.monetisation[row, int(mechanism)], maximum
+                column = int(mechanism)
+                self._mechanism_caps[row, column] = min(
+                    self._mechanism_caps[row, column], maximum
                 )
+        self._enforce_mechanism_caps()
+
+    def _enforce_mechanism_caps(self) -> None:
+        np.minimum(
+            self.games.monetisation,
+            self._mechanism_caps,
+            out=self.games.monetisation,
+        )
+
+    def configure_audit_regime(
+        self,
+        *,
+        interval_days: int | None = None,
+        sensitivity: float | None = None,
+        specificity: float | None = None,
+        random_fraction: float | None = None,
+    ) -> None:
+        if interval_days is not None:
+            if interval_days <= 0 or interval_days % self.config.run.tick_days:
+                raise ValueError("audit interval must align with tick_days")
+            self._audit_interval = interval_days
+        for value, name in (
+            (sensitivity, "sensitivity"),
+            (specificity, "specificity"),
+            (random_fraction, "random_fraction"),
+        ):
+            if value is not None and not 0.0 <= value <= 1.0:
+                raise ValueError(f"audit {name} must be in [0, 1]")
+        for state in self.states:
+            if sensitivity is not None:
+                state.audit_sensitivity = sensitivity
+            if specificity is not None:
+                state.audit_specificity = specificity
+            if random_fraction is not None:
+                state.random_audit_fraction = random_fraction
+
+    def configure_subsidy_regime(
+        self,
+        *,
+        budget_cents_per_state: int | None = None,
+        interval_days: int | None = None,
+        quality_weight: float | None = None,
+        design_safety_weight: float | None = None,
+        accessibility_weight: float | None = None,
+    ) -> None:
+        if budget_cents_per_state is not None and budget_cents_per_state < 0:
+            raise ValueError("subsidy budget must be non-negative")
+        if interval_days is not None:
+            if interval_days <= 0 or interval_days % self.config.run.tick_days:
+                raise ValueError("subsidy interval must align with tick_days")
+            self._subsidy_interval = interval_days
+        for value, name in (
+            (quality_weight, "quality_weight"),
+            (design_safety_weight, "design_safety_weight"),
+            (accessibility_weight, "accessibility_weight"),
+        ):
+            if value is not None and not 0.0 <= value <= 1.0:
+                raise ValueError(f"subsidy {name} must be in [0, 1]")
+        for state in self.states:
+            if budget_cents_per_state is not None:
+                state.state.subsidy_budget_cents = budget_cents_per_state
+            if quality_weight is not None:
+                state.subsidy_quality_weight = quality_weight
+            if design_safety_weight is not None:
+                state.subsidy_safe_revenue_weight = design_safety_weight
+            if accessibility_weight is not None:
+                state.subsidy_accessibility_weight = accessibility_weight
 
     def _renew_income(self, tick: int) -> None:
         essential_share = self.player_system.config.essential_spend_share
@@ -256,16 +396,34 @@ class World:
             games=self.games,
             firms=self.firms,
             rng=self.rng,
+            period_revenue_cents=self._period_game_revenue_cents,
+            active_players=self._latest_game_active_players,
         )
-        result = self.firm_system.step(
+        intents = self.firm_system.collect_intents(
             tick=tick,
             games=self.games,
             period_telemetry=telemetry,
-            ledger=self.ledger,
         )
+        result = self.firm_system.resolve(
+            tick=tick,
+            games=self.games,
+            intents=intents,
+            ledger=self.ledger,
+            period_telemetry=telemetry,
+        )
+        self._period_game_revenue_cents.fill(0)
+        self._enforce_mechanism_caps()
         self._promotion_pressure *= 0.65
         self._promotion_pressure += result.promotion_pressure
-        self._pending_subsidies.extend(result.subsidy_applications)
+        self._pending_subsidies.extend(
+            replace(
+                application,
+                eligible_jurisdictions=(
+                    int(self._firm_home_jurisdiction[application.firm_id]),
+                ),
+            )
+            for application in result.subsidy_applications
+        )
         self._last_firm_resolution = result
         self.events.schedule(
             tick + self.config.market.firm_decision_interval,
@@ -287,10 +445,20 @@ class World:
         )
         for firm in self.firms:
             firm.state.cash_cents += int(by_firm_int[firm.firm_id])
-        self.firm_revenue_cents += by_firm_int
-        self.firm_unsafe_revenue_cents += unsafe_int
+        _checked_accumulate(
+            self.firm_revenue_cents,
+            by_firm_int,
+            label="cumulative firm revenue",
+        )
+        _checked_accumulate(
+            self.firm_unsafe_revenue_cents,
+            unsafe_int,
+            label="cumulative unsafe firm revenue",
+        )
 
-    def _publish_ranking(self, tick: int, result: StepResult) -> PublishedRanking:
+    def _publish_ranking(
+        self, tick: int, result: StepResult
+    ) -> PublishedRanking | None:
         self.popularity_system.observe_truth(
             tick=tick,
             players=self.players,
@@ -303,11 +471,16 @@ class World:
             rng=self.rng,
             promotion_pressure=self._promotion_pressure,
         )
-        # Publication happens after firm decisions in this tick and becomes a
-        # signal for the following tick.
-        self.firm_system.record_public_ranking(
-            PublicRankingSnapshot.from_game_table(as_of=tick + 1, games=self.games)
-        )
+        if published is not None:
+            # Publication happens after firm decisions in this tick and becomes
+            # available only to later decisions.
+            self.firm_system.record_public_ranking(
+                PublicRankingSnapshot.from_game_table(
+                    as_of=published.published_tick,
+                    data_tick=published.data_tick,
+                    games=self.games,
+                )
+            )
         self._last_published_ranking = published
         self.events.schedule(
             tick + self.config.market.ranking_interval,
@@ -347,7 +520,8 @@ class World:
             result.player_spend_cents.astype(np.float64),
             np.maximum(1, self.players.monthly_disposable_income_cents),
         )
-        anomalous = valid & (burden > 0.10)
+        # Spending burden is latent until a player/household report exposes it.
+        anomalous = reports & (burden > 0.10)
         minor_report = reports & self.players.is_minor
         metrics: list[ObservableFirmMetrics] = []
         for firm_id in range(len(self.firms)):
@@ -476,7 +650,18 @@ class World:
                 tick=tick,
                 firms=metrics,
                 public_harm_index=float(
-                    np.clip(self.players.harm_state.mean(), 0.0, 1.0)
+                    np.clip(
+                        np.mean(
+                            [
+                                0.45 * item.complaint_rate
+                                + 0.35 * item.reported_minor_harm_rate
+                                + 0.20 * item.public_spend_anomaly
+                                for item in metrics
+                            ]
+                        ),
+                        0.0,
+                        1.0,
+                    )
                 ),
                 treasury_pressure=float(
                     1.0 - state.state.treasury_cents / max(1, 36_000_000)
@@ -508,9 +693,17 @@ class World:
                 )
             for resolution in resolutions:
                 firm = self.firms[resolution.intent.firm_id]
+                firm_id = firm.firm_id
+                assessed = resolution.fine_cents
+                if self.firm_fine_assessed_cents[firm_id] > _INT64_MAX - assessed:
+                    raise OverflowError("cumulative assessed fines would overflow int64")
+                self.firm_fine_assessed_cents[firm_id] += assessed
                 collected = min(firm.state.cash_cents, resolution.fine_cents)
                 if collected:
                     firm.state.cash_cents -= collected
+                    if self.firm_fine_paid_cents[firm_id] > _INT64_MAX - collected:
+                        raise OverflowError("cumulative paid fines would overflow int64")
+                    self.firm_fine_paid_cents[firm_id] += collected
                     state.state.treasury_cents += collected
                     self.ledger.transfer(
                         tick=tick,
@@ -526,7 +719,7 @@ class World:
                     self._public_detections[firm.firm_id] += 1
             all_resolutions.extend(resolutions)
         self.events.schedule(
-            tick + self.config.regulation.audit_interval,
+            tick + self._audit_interval,
             EventKind.AUDIT_DUE,
             priority=30,
         )
@@ -536,12 +729,33 @@ class World:
         total = 0
         # A firm can reapply between review dates. Regulators see its latest
         # dossier once, preventing duplicate awards from repeated submissions.
+        mature = [
+            replace(
+                application,
+                evidence_age_days=(
+                    application.evidence_age_days
+                    + tick
+                    - application.submitted_tick
+                ),
+            )
+            for application in self._pending_subsidies
+            if application.submitted_tick < tick
+        ]
+        future = [
+            application
+            for application in self._pending_subsidies
+            if application.submitted_tick >= tick
+        ]
         latest_by_firm = {
             application.firm_id: application
-            for application in self._pending_subsidies
+            for application in mature
         }
-        applications = tuple(latest_by_firm.values())
         for state in self.states:
+            applications = tuple(
+                application
+                for application in latest_by_firm.values()
+                if state.jurisdiction_id in application.eligible_jurisdictions
+            )
             awards = state.award_subsidies(applications)
             for award in awards:
                 available = min(
@@ -555,6 +769,13 @@ class World:
                 state.state.treasury_cents -= paid
                 state.state.subsidy_budget_cents -= paid
                 firm.state.cash_cents += paid
+                if self.firm_subsidy_cents[award.firm_id] > _INT64_MAX - paid:
+                    raise OverflowError("cumulative firm subsidy would overflow int64")
+                if (
+                    self.state_subsidy_outlay_cents[state.jurisdiction_id]
+                    > _INT64_MAX - paid
+                ):
+                    raise OverflowError("cumulative state subsidy would overflow int64")
                 self.firm_subsidy_cents[award.firm_id] += paid
                 self.state_subsidy_outlay_cents[state.jurisdiction_id] += paid
                 total += paid
@@ -566,9 +787,9 @@ class World:
                     kind="conditional_subsidy",
                     reference=f"subsidy:{tick}:{state.jurisdiction_id}:{firm.firm_id}",
                 )
-        self._pending_subsidies.clear()
+        self._pending_subsidies[:] = future
         self.events.schedule(
-            tick + self.config.regulation.subsidy_interval,
+            tick + self._subsidy_interval,
             EventKind.SUBSIDY_REVIEW,
             priority=40,
         )
@@ -576,18 +797,43 @@ class World:
 
     def _accrue_interest(self) -> None:
         principal = self._initial_credit_limit_cents - self.players.credit_limit_cents
-        interest = np.rint(
+        raw_interest = (
             principal.astype(np.float64)
             * self.config.behavior.daily_credit_interest_rate
             * self.config.run.tick_days
-        ).astype(np.int64)
-        self.player_interest_cents += interest
+        )
+        if (
+            not np.all(np.isfinite(raw_interest))
+            or np.any(raw_interest > 2**53)
+            or np.any(raw_interest < 0.0)
+        ):
+            raise OverflowError("interest calculation exceeded exact-cent range")
+        interest = np.rint(raw_interest).astype(np.int64)
+        _checked_accumulate(
+            self.player_interest_cents,
+            interest,
+            label="cumulative player interest",
+        )
 
     def outcome_snapshot(self, *, tick: int | None = None) -> OutcomeSnapshot:
-        firm_cash = np.asarray(
-            [firm.state.cash_cents for firm in self.firms], dtype=np.int64
+        cash_values = [firm.state.cash_cents for firm in self.firms]
+        if any(value < 0 or value > _INT64_MAX for value in cash_values):
+            raise OverflowError("firm cash is outside the reportable int64 range")
+        firm_cash = np.asarray(cash_values, dtype=np.int64)
+        outstanding_fines = (
+            self.firm_fine_assessed_cents - self.firm_fine_paid_cents
         )
-        margin = firm_cash - self._initial_firm_cash_cents - self.firm_subsidy_cents
+        margin_values = [
+            int(firm_cash[index])
+            - int(self._initial_firm_cash_cents[index])
+            - int(self.firm_subsidy_cents[index])
+            - int(outstanding_fines[index])
+            for index in range(len(self.firms))
+        ]
+        int64_min = np.iinfo(np.int64).min
+        if any(value < int64_min or value > _INT64_MAX for value in margin_values):
+            raise OverflowError("firm margin is outside the reportable int64 range")
+        margin = np.asarray(margin_values, dtype=np.int64)
         safe_share = np.divide(
             self.firm_revenue_cents - self.firm_unsafe_revenue_cents,
             self.firm_revenue_cents,
@@ -597,7 +843,11 @@ class World:
         debt = (
             self._initial_credit_limit_cents
             - self.players.credit_limit_cents
-            + self.player_interest_cents
+        )
+        _checked_accumulate(
+            debt,
+            self.player_interest_cents,
+            label="reported player debt",
         )
         return OutcomeSnapshot(
             tick=self.tick if tick is None else tick,
@@ -634,11 +884,27 @@ class World:
             tick=tick,
         )
         self._last_player_result = player_result
-        self.player_total_spend_cents += player_result.player_spend_cents
-        self.player_total_unsafe_spend_cents += player_result.player_unsafe_spend_cents
-        self.player_total_unauthorised_cents += (
-            player_result.player_unauthorised_spend_cents
+        _checked_accumulate(
+            self.player_total_spend_cents,
+            player_result.player_spend_cents,
+            label="cumulative player spend",
         )
+        _checked_accumulate(
+            self.player_total_unsafe_spend_cents,
+            player_result.player_unsafe_spend_cents,
+            label="cumulative unsafe player spend",
+        )
+        _checked_accumulate(
+            self.player_total_unauthorised_cents,
+            player_result.player_unauthorised_spend_cents,
+            label="cumulative unauthorised player spend",
+        )
+        _checked_accumulate(
+            self._period_game_revenue_cents,
+            player_result.game_revenue_cents,
+            label="period game revenue",
+        )
+        self._latest_game_active_players[:] = self.games.active_players
         self._credit_firm_revenue(player_result)
         self._accrue_interest()
 

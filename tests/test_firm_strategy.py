@@ -98,6 +98,26 @@ class FirmStrategyTests(unittest.TestCase):
         second = system.build_observation(tick=1, telemetry=telemetry[0])
         self.assertEqual(first, second)
 
+    def test_period_telemetry_does_not_reuse_cumulative_revenue(self) -> None:
+        games = self._market(3)
+        firms = create_firms(
+            company_count=3, games=games, rng=CounterRNG(19)
+        )
+        telemetry = capture_period_telemetry(
+            tick=4,
+            games=games,
+            firms=firms,
+            rng=CounterRNG(19),
+            period_revenue_cents=np.zeros(3, dtype=np.int64),
+            active_players=np.zeros(3, dtype=np.int64),
+        )
+        self.assertTrue(
+            all(sum(item.revenue_estimates_cents) == 0 for item in telemetry)
+        )
+        self.assertTrue(
+            all(sum(item.active_player_estimates) == 0 for item in telemetry)
+        )
+
     def test_content_release_contains_tradeoff_and_cash_is_posted(self) -> None:
         games = self._market(3, stat_dimensions=5)
         rng = CounterRNG(27)

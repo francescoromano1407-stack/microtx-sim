@@ -11,13 +11,13 @@ tau_i = H_i(M, R, S; U_i) - H_i(M0, R, S; U_i)
 
 `U_i` contiene vulnerabilità e shock esogeni pre-trattamento condivisi. `R` è la
 regolazione e `S` il finanziamento pubblico. Le componenti di `H` restano
-separate: stress finanziario, spesa oltre budget, debito, perdita di controllo,
-regret/rimborsi, tempo e compromissione del funzionamento.
+separate: stress finanziario, spostamento della spesa essenziale, debito, spesa
+non autorizzata, perdita di controllo, compromissione del funzionamento e regret.
 
-La vulnerabilità non viene sottratta con una regressione a posteriori: è mantenuta
-identica in mondi gemelli tramite un generatore controbasato indicizzato da seed,
-ciclo, meccanismo ed entità. In questo modo un ramo che compie più acquisti non
-sposta casualmente gli shock futuri dell'altro ramo.
+La vulnerabilità non viene sottratta con una regressione a posteriori: è
+mantenuta identica in mondi gemelli tramite un generatore basato su contatori,
+indicizzato da seed, ciclo, meccanismo ed entità. In questo modo un ramo che
+compie più acquisti non sposta casualmente gli shock futuri dell'altro ramo.
 
 ## Interferenza
 
@@ -29,8 +29,10 @@ esplicitamente registrate.
 
 ## Esperimento fattoriale futuro
 
-Il runner supporta una matrice `monetizzazione x regolazione x sussidio`. Gli
-outcome di viabilità comprendono solvibilità, margine, continuità degli
-aggiornamenti e quota di ricavi non proveniente da sessioni classificate ad alto
-rischio. Nessuna campagna viene eseguita in questa fase.
-
+Il runner corrente esegue una coppia trattato/controllo con interventi espliciti;
+il controllo nullo contro nullo è verificato bit-per-bit. Limiti persistenti alle
+meccaniche, regimi di audit e regimi di sussidio sono componibili. Una futura
+orchestrazione fattoriale costruirà automaticamente la matrice tra
+monetizzazione, regolazione e sussidio. Gli outcome di viabilità già disponibili
+comprendono solvibilità, margine e quota di ricavi non proveniente da sessioni
+classificate ad alto rischio. Nessuna campagna viene eseguita in questa fase.

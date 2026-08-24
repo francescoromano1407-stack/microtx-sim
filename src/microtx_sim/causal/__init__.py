@@ -1,6 +1,13 @@
 """Paired-world causal estimands and researcher interventions."""
 
-from .interventions import Intervention, MechanismCap, NullIntervention
+from .interventions import (
+    AuditRegime,
+    CompositeIntervention,
+    Intervention,
+    MechanismCap,
+    NullIntervention,
+    SubsidyRegime,
+)
 from .paired_worlds import (
     PairedOutcome,
     PairedWorldRun,
@@ -11,8 +18,11 @@ from .paired_worlds import (
 
 __all__ = [
     "Intervention",
+    "AuditRegime",
+    "CompositeIntervention",
     "MechanismCap",
     "NullIntervention",
+    "SubsidyRegime",
     "PairedOutcome",
     "PairedWorldRun",
     "RegimeEffect",

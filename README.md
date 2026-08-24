@@ -23,10 +23,12 @@ un segmento di spesa che emerge a posteriori, non un comportamento assegnato.
 - **Eterogeneità:** reddito, età, motivazioni, vulnerabilità, skill, controllo
   parentale, alfabetizzazione finanziaria e accesso al credito sono continui e
   correlati.
-- **Comportamento emergente:** contenuti, prezzi, elusione, collaborazione e
-  collusione sono scelti tramite utilità/NPV percepito; non seguono copioni.
-- **Contabilità esatta:** denaro in centesimi interi, aggregazioni esatte e scelte
-  tra giochi calcolate a blocchi senza campionare alternative.
+- **Comportamento emergente:** contenuti, intensità di monetizzazione, elusione,
+  collaborazione e collusione sono scelti tramite utilità/NPV percepito; non
+  seguono copioni.
+- **Contabilità esatta:** denaro in *simulation cents* interi, aggregazioni esatte
+  e scelte tra giochi calcolate a blocchi senza campionare alternative. Le cifre
+  nominali GBP/KRW/JPY/EUR restano separate e non sono trattate come cambi o PPP.
 - **Provenienza obbligatoria:** una campagna scientifica deve rifiutare parametri
   sintetici o non validati. La configurazione `smoke.toml` serve soltanto ai test.
 
@@ -36,6 +38,23 @@ Questa fase costruisce lo scheletro e una breve esecuzione di controllo, non una
 campagna. I profili iniziali UK/KR/JP/BE sono illustrativi e ancorati a fonti
 ufficiali, ma non costituiscono ancora una calibrazione comparabile tra Paesi.
 Questa distinzione è verificata dal codice.
+
+`configs/base.toml` descrive la scala futura (50.000 giocatori, 5 aziende e 8
+giochi), ma è deliberatamente bloccato: contiene dipendenze non calibrate e non
+può produrre stime scientifiche. `configs/smoke.toml` è l'unico scenario
+eseguibile in questa fase e usa 384 giocatori per tre cicli.
+
+## Componenti principali
+
+- `core/world.py`: unica sede della verità latente e orchestrazione degli eventi;
+- `systems/player_dynamics.py`: scelta esatta tra alternative note, competizione
+  astratta, acquisti, credito, evento carta e sette esiti di danno separati;
+- `systems/firm_strategy.py`: aggiornamenti, monetizzazione, ricerca, compliance,
+  acquisizione, collaborazione, collusione, elusione e domanda di sussidio;
+- `systems/regulation.py`: selezione dei controlli da segnali locali e risoluzione
+  con sensibilità/specificità finite;
+- `causal/paired_worlds.py`: mondi gemelli con popolazione e shock esogeni comuni;
+- `data/provenance/sources.toml`: registro delle fonti e del loro ambito.
 
 ## Avvio locale
 

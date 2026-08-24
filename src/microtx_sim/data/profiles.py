@@ -32,6 +32,22 @@ _RULE_FIELDS = frozenset(
         "direct_exhortation_to_minors_banned",
     }
 )
+_RULE_SUPPORTS = {
+    "paid_random_rewards_restricted": frozenset(
+        {"paid_random_reward_classification", "loot_boxes"}
+    ),
+    "complete_gacha_restricted": frozenset({"complete_gacha_restriction"}),
+    "odds_disclosure_required": frozenset({"odds_disclosure"}),
+    "parental_authorisation_required": frozenset(
+        {"express_consent", "parental_defaults"}
+    ),
+    "real_money_price_required": frozenset(
+        {"real_money_price", "price_transparency"}
+    ),
+    "direct_exhortation_to_minors_banned": frozenset(
+        {"direct_exhortation_to_minors", "minor_exhortation"}
+    ),
+}
 _NON_METRIC_FIELDS = frozenset(
     {
         "code",
@@ -356,6 +372,31 @@ class ProfileBundle:
                 f"CALIBRATED; found {preview}"
             )
 
+    def validate_for_run(self, *, allow_synthetic: bool) -> None:
+        """Apply the scenario's synthetic-data switch to profile dependencies."""
+
+        if allow_synthetic:
+            return
+        synthetic: list[str] = []
+        if self.profile_status is ProvenanceStatus.SYNTHETIC:
+            synthetic.append("profile_status")
+        synthetic.extend(
+            f"{contract.jurisdiction_code}.{contract.metric}"
+            for contract in self.contracts
+            if contract.status is ProvenanceStatus.SYNTHETIC
+        )
+        synthetic.extend(
+            f"{scale.jurisdiction_code}.money_scale"
+            for scale in self.money_scales
+            if scale.anchor_status is ProvenanceStatus.SYNTHETIC
+            or scale.scale_status is ProvenanceStatus.SYNTHETIC
+        )
+        if synthetic:
+            raise ProfileValidationError(
+                "Profile bundle contains SYNTHETIC dependencies while "
+                "allow_synthetic=false: " + ", ".join(synthetic)
+            )
+
 
 def load_profile_bundle(
     jurisdictions_path: str | Path = DEFAULT_JURISDICTIONS_PATH,
@@ -469,8 +510,9 @@ def load_profile_bundle(
                 "explicitly ILLUSTRATIVE scale, not an FX or PPP estimate."
             ),
             (
-                "UK and Belgium annual anchors are divided by 12 and rounded to the "
-                "nearest declared nominal unit; Korea uses the central monthly income "
+                "UK and Belgium annual anchors are stored in currency minor units, "
+                "divided by 12, and rounded to the nearest minor unit; Korea uses the "
+                "central monthly income "
                 "quintile; Japan's income anchor is ILLUSTRATIVE."
             ),
             (
@@ -633,7 +675,10 @@ def _country_profile(
         reported = (reported_value,)
         if period == "annual":
             nominal_monthly = _round_positive_ratio(reported_value, 12)
-            selection = "reported annual median divided by 12, nearest nominal unit"
+            selection = (
+                "reported annual median expressed in currency minor units, "
+                "divided by 12 and rounded to the nearest minor unit"
+            )
         else:
             nominal_monthly = reported_value
             selection = "reported monthly median used directly"
@@ -789,13 +834,38 @@ def _metric_status_and_sources(
     if field in {
         "income_log_sigma",
         "income_within_quintile_log_sigma",
-        "consumption_propensity_by_quintile",
     }:
         return _parse_status(row.get("income_shape_status"), field), ()
+    if field == "consumption_propensity_by_quintile":
+        return _parse_status(
+            row.get("consumption_propensity_status"), field
+        ), _source_ids_for(row, "income")
     if field.startswith("deprivation_"):
         source_ids = _source_ids_for(row, "deprivation")
     elif field in _RULE_FIELDS:
-        source_ids = _source_ids_for(row, "regulation")
+        status = _parse_status(row.get(f"{field}_status"), field)
+        source_ids = _source_ids_for(row, field)
+        if status in {ProvenanceStatus.ANCHORED, ProvenanceStatus.CALIBRATED}:
+            if not source_ids:
+                raise ProfileValidationError(
+                    f"{field} with {status.value} status requires its own source"
+                )
+            if status is ProvenanceStatus.CALIBRATED and any(
+                sources[source_id].status is not ProvenanceStatus.CALIBRATED
+                for source_id in source_ids
+            ):
+                raise ProfileValidationError(
+                    f"{field} cannot be CALIBRATED from a non-calibrated source"
+                )
+        expected = _RULE_SUPPORTS[field]
+        if source_ids and not any(
+            expected.intersection(sources[source_id].supports)
+            for source_id in source_ids
+        ):
+            raise ProfileValidationError(
+                f"{field} source metadata does not declare a compatible scope"
+            )
+        return status, source_ids
     elif field.startswith("subsidy_"):
         source_ids = _source_ids_for(row, "subsidy")
     elif field.startswith(("median_equivalised_", "disposable_income_")):
@@ -912,7 +982,11 @@ def _metric_semantics(
         period = "configured funding round"
     elif field.startswith(("median_equivalised_", "disposable_income_")):
         condition = f"households represented by the {code} income statistic"
-        denominator = "one equivalised household-income observation"
+        denominator = (
+            "one surveyed household-income observation"
+            if code == "KR"
+            else "one equivalised household-income observation"
+        )
         period = _required_string(row, "income_period", code)
     elif field in {
         "income_log_sigma",

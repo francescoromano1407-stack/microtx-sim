@@ -103,16 +103,20 @@ class PopularitySystem:
         games: GameTable,
         rng: CounterRNG,
         promotion_pressure: FloatArray | None = None,
-    ) -> PublishedRanking:
+    ) -> PublishedRanking | None:
         if not self._history:
             raise RuntimeError("truth must be observed before a ranking is published")
         eligible_tick = tick - self.delay_days
-        source = self._history[0]
+        source: TruthRankingSnapshot | None = None
         for snapshot in self._history:
             if snapshot.tick <= eligible_tick:
                 source = snapshot
             else:
                 break
+        if source is None:
+            # Preserve the pre-simulation public board until data are old
+            # enough; never backfill a delayed signal with current truth.
+            return None
         promotion = (
             np.zeros(self.game_count, dtype=np.float64)
             if promotion_pressure is None
@@ -151,4 +155,3 @@ class PopularitySystem:
                 break
         if keep_from:
             del self._history[:keep_from]
-

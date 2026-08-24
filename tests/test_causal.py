@@ -4,7 +4,13 @@ import unittest
 
 import numpy as np
 
-from microtx_sim.causal.interventions import MechanismCap, NullIntervention
+from microtx_sim.causal.interventions import (
+    AuditRegime,
+    CompositeIntervention,
+    MechanismCap,
+    NullIntervention,
+    SubsidyRegime,
+)
 from microtx_sim.causal.paired_worlds import compare_outcomes
 from microtx_sim.metrics.outcomes import OutcomeSnapshot
 from microtx_sim.types import MonetisationMechanism
@@ -29,9 +35,17 @@ def _outcome(harm_shift: float = 0.0, spend_shift: int = 0) -> OutcomeSnapshot:
 class _MockWorld:
     def __init__(self) -> None:
         self.calls: list[tuple[MonetisationMechanism, float, tuple[int, ...] | None]] = []
+        self.audit_calls: list[dict[str, object]] = []
+        self.subsidy_calls: list[dict[str, object]] = []
 
     def cap_mechanism(self, *, mechanism, maximum, game_ids) -> None:
         self.calls.append((mechanism, maximum, game_ids))
+
+    def configure_audit_regime(self, **kwargs) -> None:
+        self.audit_calls.append(kwargs)
+
+    def configure_subsidy_regime(self, **kwargs) -> None:
+        self.subsidy_calls.append(kwargs)
 
 
 class CausalTests(unittest.TestCase):
@@ -65,7 +79,25 @@ class CausalTests(unittest.TestCase):
             [(MonetisationMechanism.RANDOM_REWARD, 0.1, (1, 2))],
         )
 
+    def test_regulation_and_public_funding_compose_explicitly(self) -> None:
+        world = _MockWorld()
+        intervention = CompositeIntervention(
+            (
+                AuditRegime(interval_days=14, sensitivity=0.9),
+                SubsidyRegime(
+                    budget_cents_per_state=2_000_000,
+                    design_safety_weight=0.7,
+                ),
+            )
+        )
+        intervention.apply(world)
+        self.assertEqual(world.audit_calls[0]["interval_days"], 14)
+        self.assertEqual(world.audit_calls[0]["sensitivity"], 0.9)
+        self.assertEqual(
+            world.subsidy_calls[0]["budget_cents_per_state"], 2_000_000
+        )
+        self.assertEqual(world.subsidy_calls[0]["design_safety_weight"], 0.7)
+
 
 if __name__ == "__main__":
     unittest.main()
-

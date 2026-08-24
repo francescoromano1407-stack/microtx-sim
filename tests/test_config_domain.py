@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import unittest
 
@@ -19,6 +20,12 @@ class ConfigAndDomainTests(unittest.TestCase):
         self.assertEqual(config.run.player_count, 384)
         with self.assertRaisesRegex(ConfigurationError, "CALIBRATED"):
             load_config(ROOT / "configs" / "smoke.toml", campaign=True)
+
+    def test_calendar_intervals_must_align_exactly_with_tick_size(self) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        misaligned = replace(config, run=replace(config.run, tick_days=2))
+        with self.assertRaisesRegex(ConfigurationError, "divisible by tick_days"):
+            misaligned.validate()
 
     def test_ledger_balances_and_rejects_duplicate_reference(self) -> None:
         ledger = Ledger()
@@ -84,4 +91,3 @@ class ConfigAndDomainTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -80,7 +80,9 @@ class OutcomeSnapshot:
         return {
             "tick": self.tick,
             "players": len(self.player_spend_cents),
-            "total_spend_cents": int(self.player_spend_cents.sum(dtype=np.int64)),
+            "total_spend_cents": sum(
+                int(value) for value in self.player_spend_cents
+            ),
             "players_with_debt": int(np.count_nonzero(self.player_debt_cents > 0)),
             "mean_composite_harm": float(composite.mean()) if len(composite) else 0.0,
             "p99_composite_harm": (
@@ -92,8 +94,8 @@ class OutcomeSnapshot:
                 if len(self.firm_safe_revenue_share)
                 else 0.0
             ),
-            "subsidy_outlay_cents": int(
-                self.state_subsidy_outlay_cents.sum(dtype=np.int64)
+            "subsidy_outlay_cents": sum(
+                int(value) for value in self.state_subsidy_outlay_cents
             ),
         }
 
@@ -132,4 +134,3 @@ class OutcomeRecorder:
                 firm_safe_revenue_share=snapshot.firm_safe_revenue_share.copy(),
                 state_subsidy_outlay_cents=snapshot.state_subsidy_outlay_cents.copy(),
             )
-

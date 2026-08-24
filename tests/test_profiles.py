@@ -38,10 +38,10 @@ class ProfileLoadingTests(unittest.TestCase):
             scale.jurisdiction_code: scale.nominal_monthly_anchor_minor_units
             for scale in bundle.money_scales
         }
-        self.assertEqual(nominal["UK"], 3_055)  # 36,663 / 12, nearest unit
+        self.assertEqual(nominal["UK"], 305_525)  # £36,663 / 12, in pence
         self.assertEqual(nominal["KR"], 3_515_000)  # central monthly quintile
         self.assertEqual(nominal["JP"], 300_000)
-        self.assertEqual(nominal["BE"], 2_608)  # 31,299 / 12, nearest unit
+        self.assertEqual(nominal["BE"], 260_825)  # €31,299 / 12, in cents
         self.assertEqual(
             bundle.money_scale("JP").anchor_status,
             ProvenanceStatus.ILLUSTRATIVE,
@@ -56,6 +56,10 @@ class ProfileLoadingTests(unittest.TestCase):
         with self.assertRaisesRegex(ProfileValidationError, "cross-country"):
             bundle.money_scale("UK").nominal_ratio_to(bundle.money_scale("KR"))
         self.assertTrue(any("must not" in caveat for caveat in bundle.caveats))
+
+        with self.assertRaisesRegex(ProfileValidationError, "SYNTHETIC"):
+            bundle.validate_for_run(allow_synthetic=False)
+        bundle.validate_for_run(allow_synthetic=True)
 
     def test_sources_contracts_rules_and_synthetic_audit_are_integral(self) -> None:
         bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
@@ -84,6 +88,23 @@ class ProfileLoadingTests(unittest.TestCase):
         )
         self.assertEqual(audit_contract.status, ProvenanceStatus.SYNTHETIC)
 
+        contracts = {
+            (contract.jurisdiction_code, contract.metric): contract
+            for contract in bundle.contracts
+        }
+        self.assertEqual(
+            contracts[("KR", "odds_disclosure_required")].source_ids,
+            ("MCST_ODDS_DISCLOSURE_2024",),
+        )
+        self.assertEqual(
+            contracts[("JP", "complete_gacha_restricted")].source_ids,
+            ("JP_COMPLETE_GACHA_FAQ",),
+        )
+        self.assertEqual(
+            contracts[("BE", "paid_random_rewards_restricted")].status,
+            ProvenanceStatus.ILLUSTRATIVE,
+        )
+
         self.assertEqual(
             load_country_profiles(JURISDICTIONS, SOURCES), bundle.country_profiles
         )
@@ -98,6 +119,18 @@ class ProfileLoadingTests(unittest.TestCase):
             bad_path = Path(directory) / "jurisdictions.toml"
             bad_path.write_text(text, encoding="utf-8")
             with self.assertRaisesRegex(ProfileValidationError, "MISSING_SOURCE"):
+                load_profile_bundle(bad_path, SOURCES)
+
+    def test_rule_source_must_declare_compatible_scope(self) -> None:
+        text = JURISDICTIONS.read_text(encoding="utf-8").replace(
+            'odds_disclosure_required_source = "MCST_ODDS_DISCLOSURE_2024"',
+            'odds_disclosure_required_source = "JP_COMPLETE_GACHA_FAQ"',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            bad_path = Path(directory) / "jurisdictions.toml"
+            bad_path.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ProfileValidationError, "compatible scope"):
                 load_profile_bundle(bad_path, SOURCES)
 
     def test_campaign_rejects_every_non_calibrated_dependency(self) -> None:

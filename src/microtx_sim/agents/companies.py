@@ -154,25 +154,24 @@ class FirmAgent:
         )
 
         candidates: list[FirmIntent] = [FirmIntent(self.firm_id, FirmAction.HOLD, 0)]
-        if cash >= self.content_cost_cents:
-            update_value = int(
-                round(
-                    active
-                    * average_revenue_per_active
-                    * update_gap
-                    * (0.35 + self.analytics_capability)
-                    - self.content_cost_cents
-                )
+        update_value = int(
+            round(
+                active
+                * average_revenue_per_active
+                * update_gap
+                * (0.35 + self.analytics_capability)
+                - self.content_cost_cents
             )
-            candidates.append(
-                FirmIntent(
-                    self.firm_id,
-                    FirmAction.RELEASE_CONTENT,
-                    update_value,
-                    target_game_id=update_game,
-                    committed_cost_cents=self.content_cost_cents,
-                )
+        )
+        candidates.append(
+            FirmIntent(
+                self.firm_id,
+                FirmAction.RELEASE_CONTENT,
+                update_value,
+                target_game_id=update_game,
+                committed_cost_cents=self.content_cost_cents,
             )
+        )
 
         monetisation_gain = max(0.0, demand[mechanism_id]) * max(revenue, active * 120)
         monetisation_cost = detection_cost + reputation_scale * max(0.0, demand[mechanism_id])
@@ -186,42 +185,39 @@ class FirmAgent:
                 intensity_delta=0.025 + 0.055 * self.exploration_tendency,
             )
         )
-        if cash >= self.research_cost_cents:
-            candidates.append(
-                FirmIntent(
-                    self.firm_id,
-                    FirmAction.BUY_RESEARCH,
-                    int(round(information_value - self.research_cost_cents)),
-                    committed_cost_cents=self.research_cost_cents,
-                )
+        candidates.append(
+            FirmIntent(
+                self.firm_id,
+                FirmAction.BUY_RESEARCH,
+                int(round(information_value - self.research_cost_cents)),
+                committed_cost_cents=self.research_cost_cents,
             )
-        if cash >= self.compliance_cost_cents:
-            avoided_penalty = detection_cost * (0.35 + 0.45 * self.compliance_culture)
-            candidates.append(
-                FirmIntent(
-                    self.firm_id,
-                    FirmAction.INVEST_COMPLIANCE,
-                    int(round(avoided_penalty - self.compliance_cost_cents)),
-                    committed_cost_cents=self.compliance_cost_cents,
-                )
+        )
+        avoided_penalty = detection_cost * (0.35 + 0.45 * self.compliance_culture)
+        candidates.append(
+            FirmIntent(
+                self.firm_id,
+                FirmAction.INVEST_COMPLIANCE,
+                int(round(avoided_penalty - self.compliance_cost_cents)),
+                committed_cost_cents=self.compliance_cost_cents,
             )
-        if cash >= self.acquisition_cost_cents:
-            acquisition_return = (
-                active
-                * average_revenue_per_active
-                * observation.competitor_pressure_estimate
-                * log1p(rank_pressure)
-                * 0.12
+        )
+        acquisition_return = (
+            active
+            * average_revenue_per_active
+            * observation.competitor_pressure_estimate
+            * log1p(rank_pressure)
+            * 0.12
+        )
+        candidates.append(
+            FirmIntent(
+                self.firm_id,
+                FirmAction.ACQUIRE_USERS,
+                int(round(acquisition_return - self.acquisition_cost_cents)),
+                target_game_id=update_game,
+                committed_cost_cents=self.acquisition_cost_cents,
             )
-            candidates.append(
-                FirmIntent(
-                    self.firm_id,
-                    FirmAction.ACQUIRE_USERS,
-                    int(round(acquisition_return - self.acquisition_cost_cents)),
-                    target_game_id=update_game,
-                    committed_cost_cents=self.acquisition_cost_cents,
-                )
-            )
+        )
         collaboration_value = int(
             round(
                 max(0.0, 1.0 - observation.concentration_estimate)
@@ -281,9 +277,23 @@ class FirmAgent:
             raise ValueError("one bounded-rationality shock is required per candidate")
         if not shocks:
             shocks = [0.0] * len(candidates)
+        feasible = (
+            True,
+            cash >= self.content_cost_cents,
+            True,
+            cash >= self.research_cost_cents,
+            cash >= self.compliance_cost_cents,
+            cash >= self.acquisition_cost_cents,
+            True,
+            True,
+            True,
+            True,
+        )
+        if len(candidates) != len(FirmAction) or len(feasible) != len(candidates):
+            raise AssertionError("firm candidate ordering must match FirmAction")
         scale = max(1_000.0, revenue * 0.01)
         selected_index = max(
-            range(len(candidates)),
+            (index for index, allowed in enumerate(feasible) if allowed),
             key=lambda index: (
                 candidates[index].perceived_value_cents
                 + int(round(scale * self.exploration_tendency * shocks[index])),
@@ -302,4 +312,3 @@ class FirmAgent:
             committed_cost_cents=selected.committed_cost_cents,
             information_fingerprint=self._fingerprint(observation),
         )
-

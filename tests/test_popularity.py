@@ -35,7 +35,9 @@ class PopularityTests(unittest.TestCase):
             games=games,
             period_revenue_cents=np.array([100, 600, 1600], dtype=np.int64),
         )
-        publication = system.publish(tick=1, games=games, rng=CounterRNG(9))
+        self.assertIsNone(system.publish(tick=1, games=games, rng=CounterRNG(9)))
+        publication = system.publish(tick=2, games=games, rng=CounterRNG(9))
+        assert publication is not None
         self.assertEqual(publication.data_tick, first.tick)
         np.testing.assert_array_equal(games.active_players, second.active_players)
         self.assertEqual(set(publication.rank.tolist()), {1, 2, 3})
@@ -60,4 +62,3 @@ class PopularityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

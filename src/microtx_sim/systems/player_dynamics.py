@@ -39,6 +39,7 @@ _STREAM_DISCOVERY: Final[str] = "player-dynamics:game-discovery"
 _STREAM_GAME_TASTE: Final[str] = "player-dynamics:game-taste"
 _STREAM_OUTSIDE_TASTE: Final[str] = "player-dynamics:outside-taste"
 _STREAM_ACTIVITY: Final[str] = "player-dynamics:activity"
+_STREAM_ACTIVITY_QUALITY: Final[str] = "player-dynamics:activity-quality-experience"
 _STREAM_ACTIVITY_TIME: Final[str] = "player-dynamics:activity-time"
 _STREAM_MATCH_COUNT: Final[str] = "player-dynamics:match-count"
 _STREAM_STABLE_SKILL: Final[str] = "player-dynamics:stable-skill"
@@ -47,6 +48,7 @@ _STREAM_PURCHASE_CONSIDERATION: Final[str] = (
     "player-dynamics:purchase-consideration"
 )
 _STREAM_PURCHASE_CONVERSION: Final[str] = "player-dynamics:purchase-conversion"
+_STREAM_PURCHASE_QUALITY: Final[str] = "player-dynamics:purchase-quality-experience"
 _STREAM_PURCHASE_TAIL: Final[str] = "player-dynamics:purchase-tail"
 _STREAM_UNAUTHORISED_CARD: Final[str] = "player-dynamics:unauthorised-card"
 
@@ -511,6 +513,13 @@ def _activity_and_competition(
         quality[has_game] = games.quality[game_rows[has_game]]
         novelty[has_game] = games.novelty[game_rows[has_game]]
         integrity[has_game] = games.competitive_integrity[game_rows[has_game]]
+    quality_experience = np.clip(
+        quality
+        + 0.10
+        * rng.normal(players.player_id, tick, _STREAM_ACTIVITY_QUALITY, 0),
+        0.0,
+        1.0,
+    )
     competition = players.motive(Motive.COMPETITION).astype(np.float64)
     relaxation = players.motive(Motive.RELAXATION).astype(np.float64)
     impairment = players.harm_state[:, HarmDimension.FUNCTIONING_IMPAIRMENT].astype(
@@ -518,7 +527,7 @@ def _activity_and_competition(
     )
     activity_probability = _sigmoid(
         -0.95
-        + 1.30 * quality
+        + 1.30 * quality_experience
         + 0.70 * novelty
         + 0.70 * relaxation
         + 0.55 * competition
@@ -634,6 +643,13 @@ def _plan_purchases(
         price[has_game] = games.price_cents[game_rows[has_game]]
         quality[has_game] = games.quality[game_rows[has_game]]
         novelty[has_game] = games.novelty[game_rows[has_game]]
+    quality_experience = np.clip(
+        quality
+        + 0.10
+        * rng.normal(players.player_id, tick, _STREAM_PURCHASE_QUALITY, 0),
+        0.0,
+        1.0,
+    )
 
     motives = players.motive_weights.astype(np.float64)
     impulsivity = players.trait("impulsivity").astype(np.float64)
@@ -699,7 +715,7 @@ def _plan_purchases(
     conversion_latent = (
         0.40 * config.base_purchase_logit
         + 2.75 * pressure
-        + 0.55 * quality
+        + 0.55 * quality_experience
         + 0.35 * novelty
         + 0.48 * vulnerability
         + 0.22 * impulsivity
