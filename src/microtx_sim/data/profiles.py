@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 from fractions import Fraction
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 import tomllib
 
 from ..agents.jurisdictions import (
@@ -58,6 +60,35 @@ _NON_METRIC_FIELDS = frozenset(
         "income_period",
         "mobile_spend_population_base",
         "gaming_data_caveat",
+        "simulation_monthly_anchor_cents",
+    }
+)
+_CONVERSION_SOURCE_SUPPORTS = {
+    "FX": frozenset({"foreign_exchange_rate"}),
+    "PPP": frozenset({"purchasing_power_parity"}),
+}
+_MONETARY_CONVERSION_FIELDS = frozenset(
+    {
+        "jurisdiction_code",
+        "source_currency",
+        "target_currency",
+        "method",
+        "rate_numerator",
+        "rate_denominator",
+        "rate_period_start",
+        "rate_period_end",
+        "target_price_period_start",
+        "target_price_period_end",
+        "estimand",
+        "population_base",
+        "comparison_group",
+        "rounding_method",
+        "rounding_scope",
+        "aggregation_unit",
+        "status",
+        "source_ids",
+        "retrieved_on",
+        "notes",
     }
 )
 
@@ -69,6 +100,20 @@ class ProfileValidationError(ValueError):
 # A descriptive alias for callers which treat malformed profiles as configuration
 # failures rather than data-validation failures.
 ProfileConfigurationError = ProfileValidationError
+
+
+class MonetaryConversionMethod(str, Enum):
+    """Permitted bases for a cross-country monetary conversion."""
+
+    FX = "FX"
+    PPP = "PPP"
+
+
+class MonetaryRoundingScope(str, Enum):
+    """Stage at which a declared monetary aggregation is rounded."""
+
+    PER_OBSERVATION = "PER_OBSERVATION"
+    AFTER_AGGREGATION = "AFTER_AGGREGATION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +205,10 @@ class MetricContract:
             )
         if self.currency is not None and (
             len(self.currency) != 3 or self.currency.upper() != self.currency
+            or any(
+                character < "A" or character > "Z"
+                for character in self.currency
+            )
         ):
             raise ProfileValidationError(
                 f"metric contract {self.metric!r} needs an ISO-style currency code"
@@ -174,8 +223,8 @@ class MoneyScaleContract:
     A separate, explicitly illustrative scale maps each country's monthly anchor
     to the same purchasing-power-cent anchor used by prices inside the model.
     This is not an FX or PPP estimate and cannot be used for cross-country income
-    comparisons.  A future dated conversion contract must be implemented before
-    campaign outputs may pool currencies.
+    comparisons.  A separate dated ``MonetaryConversionContract`` with reviewed
+    rates must pass the campaign gate before outputs may pool currencies.
     """
 
     jurisdiction_code: str
@@ -196,6 +245,8 @@ class MoneyScaleContract:
         if not self.jurisdiction_code.strip():
             raise ProfileValidationError("money scale needs a jurisdiction code")
         if len(self.currency) != 3 or self.currency.upper() != self.currency:
+            raise ProfileValidationError("money scale needs an ISO-style currency code")
+        if any(character < "A" or character > "Z" for character in self.currency):
             raise ProfileValidationError("money scale needs an ISO-style currency code")
         if not self.reported_income_values or any(
             isinstance(value, bool) or not isinstance(value, int) or value <= 0
@@ -262,13 +313,211 @@ class MoneyScaleContract:
         if self.jurisdiction_code != other.jurisdiction_code:
             raise ProfileValidationError(
                 "nominal cross-country comparison is forbidden; use a calibrated "
-                "purchasing-power contract"
+                "FX/PPP conversion contract"
             )
         if self.currency != other.currency:
             raise ProfileValidationError("nominal amounts use different currencies")
         return Fraction(
             self.nominal_monthly_anchor_minor_units,
             other.nominal_monthly_anchor_minor_units,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MonetaryConversionContract:
+    """Dated exact-rate contract for one local monetary profile.
+
+    ``rate_numerator / rate_denominator`` is expressed in target minor units
+    per source minor unit.  Explicit estimand and population metadata preserve
+    denominator semantics. ``comparison_group`` binds the rates to one vintage
+    so that independently sourced FX or PPP values cannot be pooled merely
+    because they happen to share a target currency. Typed period endpoints and
+    an explicit aggregation-stage rounding scope prevent two further silent
+    transformations. The contract carries no default rate or scientific status.
+    """
+
+    jurisdiction_code: str
+    source_currency: str
+    target_currency: str
+    method: MonetaryConversionMethod
+    rate_numerator: int
+    rate_denominator: int
+    rate_period_start: date
+    rate_period_end: date
+    target_price_period_start: date
+    target_price_period_end: date
+    estimand: str
+    population_base: str
+    comparison_group: str
+    rounding_method: str
+    rounding_scope: MonetaryRoundingScope
+    aggregation_unit: str
+    status: ProvenanceStatus
+    source_ids: tuple[str, ...]
+    retrieved_on: date
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source_ids, tuple):
+            raise ProfileValidationError(
+                "monetary conversion source_ids must be an immutable tuple"
+            )
+        for name in (
+            "jurisdiction_code",
+            "estimand",
+            "population_base",
+            "comparison_group",
+            "aggregation_unit",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ProfileValidationError(
+                    f"monetary conversion has empty {name} metadata"
+                )
+        for name in (
+            "rate_period_start",
+            "rate_period_end",
+            "target_price_period_start",
+            "target_price_period_end",
+        ):
+            if type(getattr(self, name)) is not date:
+                raise ProfileValidationError(
+                    f"monetary conversion {name} must be an ISO calendar date"
+                )
+        if self.rate_period_end < self.rate_period_start:
+            raise ProfileValidationError(
+                "monetary conversion rate period ends before it starts"
+            )
+        if self.target_price_period_end < self.target_price_period_start:
+            raise ProfileValidationError(
+                "monetary conversion target price period ends before it starts"
+            )
+        if (
+            self.target_price_period_start,
+            self.target_price_period_end,
+        ) != (self.rate_period_start, self.rate_period_end):
+            raise ProfileValidationError(
+                "target price period must equal the rate period unless a separate "
+                "price-adjustment contract is implemented"
+            )
+        for name in ("source_currency", "target_currency"):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 3
+                or value.upper() != value
+                or any(character < "A" or character > "Z" for character in value)
+            ):
+                raise ProfileValidationError(
+                    f"monetary conversion {name} needs an ISO-style currency code"
+                )
+        if not isinstance(self.method, MonetaryConversionMethod):
+            raise ProfileValidationError("monetary conversion method must be FX or PPP")
+        if not isinstance(self.rounding_scope, MonetaryRoundingScope):
+            raise ProfileValidationError("monetary conversion rounding scope is invalid")
+        for name in ("rate_numerator", "rate_denominator"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ProfileValidationError(
+                    f"monetary conversion {name} must be a positive integer"
+                )
+        if not isinstance(self.status, ProvenanceStatus):
+            raise ProfileValidationError("monetary conversion status is invalid")
+        if not self.source_ids or any(
+            not isinstance(source_id, str) or not source_id.strip()
+            for source_id in self.source_ids
+        ):
+            raise ProfileValidationError(
+                "monetary conversion requires non-empty source ids"
+            )
+        if len(set(self.source_ids)) != len(self.source_ids):
+            raise ProfileValidationError("monetary conversion repeats a source id")
+        if type(self.retrieved_on) is not date:
+            raise ProfileValidationError(
+                "monetary conversion retrieved_on must be an ISO calendar date"
+            )
+        if self.retrieved_on < self.rate_period_end:
+            raise ProfileValidationError(
+                "monetary conversion retrieval date cannot predate the rate-period end"
+            )
+        if self.rounding_method != "nearest_minor_unit_half_away_from_zero":
+            raise ProfileValidationError(
+                "unsupported monetary conversion rounding method"
+            )
+        if not isinstance(self.notes, str):
+            raise ProfileValidationError("monetary conversion notes must be text")
+
+    @property
+    def conversion_ratio(self) -> Fraction:
+        """Exact target-minor/source-minor conversion ratio."""
+
+        return Fraction(self.rate_numerator, self.rate_denominator)
+
+    @property
+    def comparison_signature(self) -> tuple[str, ...]:
+        """Fields that must agree before jurisdiction values may be pooled."""
+
+        return (
+            self.target_currency,
+            self.method.value,
+            self.rate_period_start.isoformat(),
+            self.rate_period_end.isoformat(),
+            self.target_price_period_start.isoformat(),
+            self.target_price_period_end.isoformat(),
+            self.estimand,
+            self.population_base,
+            self.comparison_group,
+            self.rounding_method,
+            self.rounding_scope.value,
+            self.aggregation_unit,
+        )
+
+    @property
+    def rate_period_label(self) -> str:
+        """Canonical source-catalogue label for the dated rate interval."""
+
+        start = self.rate_period_start.isoformat()
+        end = self.rate_period_end.isoformat()
+        return start if start == end else f"{start}/{end}"
+
+    def convert_minor_units(self, amount: int, *, currency: str) -> int:
+        """Convert one declared aggregation-unit amount using exact arithmetic."""
+
+        if currency != self.source_currency:
+            raise ProfileValidationError(
+                f"cannot apply {self.source_currency} conversion to {currency}"
+            )
+        if isinstance(amount, bool) or not isinstance(amount, int):
+            raise ProfileValidationError(
+                "monetary conversion amount must be a strict integer"
+            )
+        return _round_signed_ratio(
+            amount * self.rate_numerator,
+            self.rate_denominator,
+        )
+
+    def convert_many_minor_units(
+        self,
+        amounts: Iterable[int],
+        *,
+        currency: str,
+    ) -> int:
+        """Apply the declared rounding stage to a sequence of source amounts."""
+
+        if currency != self.source_currency:
+            raise ProfileValidationError(
+                f"cannot apply {self.source_currency} conversion to {currency}"
+            )
+        values = tuple(amounts)
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in values):
+            raise ProfileValidationError(
+                "monetary conversion amounts must be strict integers"
+            )
+        if self.rounding_scope is MonetaryRoundingScope.AFTER_AGGREGATION:
+            return self.convert_minor_units(sum(values), currency=currency)
+        return sum(
+            self.convert_minor_units(value, currency=currency)
+            for value in values
         )
 
 
@@ -283,18 +532,34 @@ class ProfileBundle:
     caveats: tuple[str, ...]
     contracts: tuple[MetricContract, ...] = ()
     money_scales: tuple[MoneyScaleContract, ...] = ()
+    monetary_conversions: tuple[MonetaryConversionContract, ...] = ()
     jurisdictions_path: Path | None = None
     source_registry_path: Path | None = None
     jurisdictions_sha256: str | None = None
     source_registry_sha256: str | None = None
 
     def __post_init__(self) -> None:
+        for name in (
+            "country_profiles",
+            "state_agents",
+            "caveats",
+            "contracts",
+            "money_scales",
+            "monetary_conversions",
+        ):
+            if not isinstance(getattr(self, name), tuple):
+                raise ProfileValidationError(
+                    f"profile bundle {name} must be an immutable tuple"
+                )
         frozen_sources = MappingProxyType(dict(self.sources))
         object.__setattr__(self, "sources", frozen_sources)
 
         profile_codes = tuple(profile.code for profile in self.country_profiles)
         state_codes = tuple(state.code for state in self.state_agents)
         money_codes = tuple(scale.jurisdiction_code for scale in self.money_scales)
+        conversion_codes = tuple(
+            contract.jurisdiction_code for contract in self.monetary_conversions
+        )
         if profile_codes != _EXPECTED_CODES:
             raise ProfileValidationError(
                 f"expected country profiles {_EXPECTED_CODES}; got {profile_codes}"
@@ -302,6 +567,16 @@ class ProfileBundle:
         if state_codes != profile_codes or money_codes != profile_codes:
             raise ProfileValidationError(
                 "country profiles, state agents, and money contracts must align"
+            )
+        if len(set(conversion_codes)) != len(conversion_codes):
+            raise ProfileValidationError(
+                "monetary conversion contracts repeat a jurisdiction"
+            )
+        unknown_conversion_codes = sorted(set(conversion_codes).difference(profile_codes))
+        if unknown_conversion_codes:
+            raise ProfileValidationError(
+                "monetary conversions reference unknown jurisdictions: "
+                + ", ".join(unknown_conversion_codes)
             )
         if len(frozen_sources) != len(set(frozen_sources)):
             raise ProfileValidationError("source catalogue contains duplicate ids")
@@ -337,11 +612,72 @@ class ProfileBundle:
         referenced.update(
             source_id for scale in self.money_scales for source_id in scale.source_ids
         )
+        referenced.update(
+            source_id
+            for conversion in self.monetary_conversions
+            for source_id in conversion.source_ids
+        )
         missing = sorted(referenced.difference(frozen_sources))
         if missing:
             raise ProfileValidationError(
                 f"profile references unknown source ids: {', '.join(missing)}"
             )
+
+        scales_by_code = {
+            scale.jurisdiction_code: scale for scale in self.money_scales
+        }
+        for conversion in self.monetary_conversions:
+            scale = scales_by_code[conversion.jurisdiction_code]
+            if conversion.source_currency != scale.currency:
+                raise ProfileValidationError(
+                    f"{conversion.jurisdiction_code} monetary conversion source "
+                    f"currency {conversion.source_currency} does not match "
+                    f"money-scale currency {scale.currency}"
+                )
+            required_supports = _CONVERSION_SOURCE_SUPPORTS[
+                conversion.method.value
+            ]
+            compatible_sources = tuple(
+                frozen_sources[source_id]
+                for source_id in conversion.source_ids
+                if required_supports.intersection(
+                    frozen_sources[source_id].supports
+                )
+            )
+            if not compatible_sources:
+                raise ProfileValidationError(
+                    f"{conversion.jurisdiction_code} {conversion.method.value} "
+                    "conversion sources do not declare compatible scope"
+                )
+            if not any(
+                source.period == conversion.rate_period_label
+                for source in compatible_sources
+            ):
+                raise ProfileValidationError(
+                    f"{conversion.jurisdiction_code} monetary conversion rate "
+                    "period does not match a compatible source record"
+                )
+            if (
+                conversion.status is ProvenanceStatus.CALIBRATED
+                and any(
+                    frozen_sources[source_id].status
+                    is not ProvenanceStatus.CALIBRATED
+                    for source_id in conversion.source_ids
+                )
+            ):
+                raise ProfileValidationError(
+                    f"{conversion.jurisdiction_code} monetary conversion cannot "
+                    "be CALIBRATED from a non-calibrated source"
+                )
+            source_dates = {
+                frozen_sources[source_id].retrieved_on
+                for source_id in conversion.source_ids
+            }
+            if source_dates != {conversion.retrieved_on}:
+                raise ProfileValidationError(
+                    f"{conversion.jurisdiction_code} monetary conversion retrieval "
+                    "date does not match its source records"
+                )
 
     @property
     def provenance(self) -> tuple[MetricContract, ...]:
@@ -358,16 +694,67 @@ class ProfileBundle:
             None,
         )
 
+    def matches_registered_files(self) -> bool:
+        """Return whether every retained value matches the claimed input files."""
+
+        if any(
+            value is None
+            for value in (
+                self.jurisdictions_path,
+                self.jurisdictions_sha256,
+                self.source_registry_path,
+                self.source_registry_sha256,
+                self.source_retrieved_on,
+            )
+        ):
+            return False
+        assert self.jurisdictions_path is not None
+        assert self.source_registry_path is not None
+        try:
+            loaded = load_profile_bundle(
+                self.jurisdictions_path,
+                self.source_registry_path,
+                campaign=False,
+            )
+        except (OSError, ProfileValidationError):
+            return False
+        return (
+            loaded.country_profiles == self.country_profiles
+            and loaded.state_agents == self.state_agents
+            and loaded.sources == self.sources
+            and loaded.profile_status is self.profile_status
+            and loaded.caveats == self.caveats
+            and loaded.contracts == self.contracts
+            and loaded.money_scales == self.money_scales
+            and loaded.monetary_conversions == self.monetary_conversions
+            and loaded.jurisdictions_path == self.jurisdictions_path
+            and loaded.source_registry_path == self.source_registry_path
+            and loaded.jurisdictions_sha256 == self.jurisdictions_sha256
+            and loaded.source_registry_sha256 == self.source_registry_sha256
+            and loaded.source_retrieved_on == self.source_retrieved_on
+        )
+
     def money_scale(self, jurisdiction_code: str) -> MoneyScaleContract:
         for scale in self.money_scales:
             if scale.jurisdiction_code == jurisdiction_code:
                 return scale
         raise KeyError(jurisdiction_code)
 
+    def monetary_conversion(
+        self,
+        jurisdiction_code: str,
+    ) -> MonetaryConversionContract:
+        for conversion in self.monetary_conversions:
+            if conversion.jurisdiction_code == jurisdiction_code:
+                return conversion
+        raise KeyError(jurisdiction_code)
+
     def validate_for_campaign(self) -> None:
         """Reject any campaign containing a non-calibrated dependency."""
 
         failures: list[str] = []
+        if not self.matches_registered_files():
+            failures.append("profile_file_lineage=unregistered_or_changed")
         if self.profile_status is not ProvenanceStatus.CALIBRATED:
             failures.append(f"profile_status={self.profile_status.value}")
         failures.extend(
@@ -386,12 +773,8 @@ class ProfileBundle:
                     f"{scale.jurisdiction_code}.currency_scale="
                     f"{scale.scale_status.value}"
                 )
-        if len(self.money_scales) > 1:
-            failures.extend(
-                f"{scale.jurisdiction_code}.currency_scale_cross_country_comparable=false"
-                for scale in self.money_scales
-                if not scale.cross_country_comparable
-            )
+        monetary_failures = self._monetary_campaign_failures()
+        failures.extend(monetary_failures)
 
         used_source_ids = {
             source_id
@@ -404,6 +787,11 @@ class ProfileBundle:
         used_source_ids.update(
             source_id for scale in self.money_scales for source_id in scale.source_ids
         )
+        used_source_ids.update(
+            source_id
+            for conversion in self.monetary_conversions
+            for source_id in conversion.source_ids
+        )
         for source_id in sorted(used_source_ids):
             source = self.sources[source_id]
             if source.status is not ProvenanceStatus.CALIBRATED:
@@ -413,10 +801,106 @@ class ProfileBundle:
             preview = ", ".join(failures[:8])
             if len(failures) > 8:
                 preview += f", ... ({len(failures) - 8} more)"
+            hidden_monetary = [
+                failure
+                for failure in monetary_failures
+                if failure not in failures[:8]
+            ]
+            if hidden_monetary:
+                preview += "; monetary comparability: " + ", ".join(
+                    hidden_monetary
+                )
             raise ProfileValidationError(
-                "Scientific campaigns require every profile dependency to be "
-                f"CALIBRATED; found {preview}"
+                "Scientific campaigns require CALIBRATED profile dependencies "
+                f"and bound comparability evidence; found {preview}"
             )
+
+    def validate_monetary_comparability_for_campaign(self) -> None:
+        """Reject pooled-money claims until source rates are evidence-bound."""
+
+        failures = [
+            f"{scale.jurisdiction_code}.income_anchor={scale.anchor_status.value}"
+            for scale in self.money_scales
+            if scale.anchor_status is not ProvenanceStatus.CALIBRATED
+        ]
+        failures.extend(
+            f"{scale.jurisdiction_code}.currency_scale={scale.scale_status.value}"
+            for scale in self.money_scales
+            if scale.scale_status is not ProvenanceStatus.CALIBRATED
+        )
+        failures.extend(self._monetary_campaign_failures())
+        if failures:
+            raise ProfileValidationError(
+                "Pooled monetary outputs are not campaign-comparable: "
+                + ", ".join(failures)
+            )
+
+    def validate_monetary_contract_structure(self) -> None:
+        """Validate exact rate mechanics without claiming substantive evidence."""
+
+        failures = [
+            f"{scale.jurisdiction_code}.income_anchor={scale.anchor_status.value}"
+            for scale in self.money_scales
+            if scale.anchor_status is not ProvenanceStatus.CALIBRATED
+        ]
+        failures.extend(
+            f"{scale.jurisdiction_code}.currency_scale={scale.scale_status.value}"
+            for scale in self.money_scales
+            if scale.scale_status is not ProvenanceStatus.CALIBRATED
+        )
+        failures.extend(self._monetary_contract_structure_failures())
+        if failures:
+            raise ProfileValidationError(
+                "Pooled monetary contract structure is invalid: "
+                + ", ".join(failures)
+            )
+
+    def _monetary_campaign_failures(self) -> list[str]:
+        """Return fail-closed substantive comparability failures."""
+
+        failures = self._monetary_contract_structure_failures()
+        if not failures and len(self.money_scales) > 1:
+            failures.append("monetary_conversion.source_rate_binding=missing")
+        return failures
+
+    def _monetary_contract_structure_failures(self) -> list[str]:
+        """Return exact-rate structural failures without promoting evidence."""
+
+        if len(self.money_scales) <= 1:
+            return []
+        failures: list[str] = []
+        conversions = {
+            contract.jurisdiction_code: contract
+            for contract in self.monetary_conversions
+        }
+        for scale in self.money_scales:
+            conversion = conversions.get(scale.jurisdiction_code)
+            if conversion is None:
+                failures.append(
+                    f"{scale.jurisdiction_code}.monetary_conversion=missing"
+                )
+            elif conversion.status is not ProvenanceStatus.CALIBRATED:
+                failures.append(
+                    f"{scale.jurisdiction_code}.monetary_conversion="
+                    f"{conversion.status.value}"
+                )
+        if failures:
+            return failures
+
+        ordered = tuple(conversions[scale.jurisdiction_code] for scale in self.money_scales)
+        if len({contract.comparison_signature for contract in ordered}) != 1:
+            failures.append("monetary_conversion.comparison_basis=inconsistent")
+
+        # Each local-to-simulation scale divided by its local-to-target rate is
+        # the exact number of simulation cents per common target minor unit.
+        # Those ratios must agree; matching currency labels alone is insufficient.
+        simulation_per_target = {
+            scale.currency_scale_to_sim / conversion.conversion_ratio
+            for scale, conversion in zip(self.money_scales, ordered, strict=True)
+        }
+        if len(simulation_per_target) != 1:
+            failures.append("monetary_conversion.internal_scale=incoherent")
+        return failures
 
     def validate_for_run(self, *, allow_synthetic: bool) -> None:
         """Apply the scenario's synthetic-data switch to profile dependencies."""
@@ -436,6 +920,11 @@ class ProfileBundle:
             for scale in self.money_scales
             if scale.anchor_status is ProvenanceStatus.SYNTHETIC
             or scale.scale_status is ProvenanceStatus.SYNTHETIC
+        )
+        synthetic.extend(
+            f"{conversion.jurisdiction_code}.monetary_conversion"
+            for conversion in self.monetary_conversions
+            if conversion.status is ProvenanceStatus.SYNTHETIC
         )
         if synthetic:
             raise ProfileValidationError(
@@ -464,7 +953,11 @@ def load_profile_bundle(
     )
     sources = _parse_sources(sources_raw, sources_file)
 
-    if jurisdiction_raw.get("schema_version") != 1:
+    jurisdiction_schema_version = jurisdiction_raw.get("schema_version")
+    if (
+        type(jurisdiction_schema_version) is not int
+        or jurisdiction_schema_version not in {1, 2}
+    ):
         raise ProfileValidationError(
             f"{jurisdiction_file}: unsupported jurisdiction schema_version"
         )
@@ -492,6 +985,24 @@ def load_profile_bundle(
         raise ProfileValidationError(
             f"profiles must contain exactly {', '.join(_EXPECTED_CODES)}"
         )
+    if jurisdiction_schema_version == 1:
+        v2_fields = {
+            "monetary_conversion",
+            "simulation_monthly_anchor_cents",
+            "currency_scale_status",
+        }
+        present_v2_fields = set(jurisdiction_raw).intersection(v2_fields)
+        present_v2_fields.update(
+            field
+            for row in rows_by_code.values()
+            for field in set(row).intersection(v2_fields)
+        )
+        if present_v2_fields:
+            raise ProfileValidationError(
+                f"{jurisdiction_file}: profile schema_version 1 cannot contain "
+                "version-2 monetary fields: "
+                + ", ".join(sorted(present_v2_fields))
+            )
 
     shared = jurisdiction_raw.get("shared_assumptions")
     if not isinstance(shared, dict):
@@ -526,6 +1037,11 @@ def load_profile_bundle(
         state_agents.append(
             _state_agent(jurisdiction_id, code, row, audit_capacity=audit_capacity)
         )
+
+    monetary_conversions = _parse_monetary_conversions(
+        jurisdiction_raw.get("monetary_conversion", []),
+        jurisdiction_file,
+    )
 
     contracts.extend(_shared_contracts(shared))
     contracts.append(
@@ -594,6 +1110,7 @@ def load_profile_bundle(
         caveats=caveats,
         contracts=tuple(contracts),
         money_scales=tuple(money_scales),
+        monetary_conversions=monetary_conversions,
         jurisdictions_path=jurisdiction_file.resolve(),
         source_registry_path=sources_file.resolve(),
         jurisdictions_sha256=jurisdiction_sha256,
@@ -648,7 +1165,8 @@ def _read_toml(path: Path, label: str) -> tuple[dict[str, Any], str]:
 def _parse_sources(
     raw: Mapping[str, Any], path: Path
 ) -> Mapping[str, SourceProvenance]:
-    if raw.get("schema_version") != 1:
+    source_schema_version = raw.get("schema_version")
+    if type(source_schema_version) is not int or source_schema_version != 1:
         raise ProfileValidationError(f"{path}: unsupported source schema_version")
     retrieved_on = _parse_iso_date(raw.get("retrieved_on"), f"{path}: retrieved_on")
     records = raw.get("source")
@@ -684,6 +1202,116 @@ def _parse_sources(
     if not parsed:
         raise ProfileValidationError(f"{path}: source catalogue cannot be empty")
     return MappingProxyType(parsed)
+
+
+def _parse_monetary_conversions(
+    value: object,
+    path: Path,
+) -> tuple[MonetaryConversionContract, ...]:
+    """Parse optional v2 FX/PPP contracts without supplying fallback rates."""
+
+    if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
+        raise ProfileValidationError(
+            f"{path}: monetary_conversion must be an array of tables"
+        )
+    parsed: list[MonetaryConversionContract] = []
+    for index, raw_row in enumerate(value):
+        row = raw_row
+        context = f"{path}: monetary_conversion[{index}]"
+        unknown_fields = sorted(set(row).difference(_MONETARY_CONVERSION_FIELDS))
+        if unknown_fields:
+            raise ProfileValidationError(
+                f"{context} contains unknown fields: {', '.join(unknown_fields)}"
+            )
+        method_value = _required_string(row, "method", context)
+        try:
+            method = MonetaryConversionMethod(method_value)
+        except ValueError as exc:
+            raise ProfileValidationError(
+                f"{context}.method must be FX or PPP"
+            ) from exc
+        rounding_scope_value = _required_string(row, "rounding_scope", context)
+        try:
+            rounding_scope = MonetaryRoundingScope(rounding_scope_value)
+        except ValueError as exc:
+            raise ProfileValidationError(
+                f"{context}.rounding_scope must be PER_OBSERVATION or "
+                "AFTER_AGGREGATION"
+            ) from exc
+        source_ids_raw = row.get("source_ids")
+        if not isinstance(source_ids_raw, list) or not source_ids_raw or any(
+            not isinstance(source_id, str) or not source_id.strip()
+            for source_id in source_ids_raw
+        ):
+            raise ProfileValidationError(
+                f"{context}.source_ids must be a non-empty text array"
+            )
+        notes = row.get("notes", "")
+        if not isinstance(notes, str):
+            raise ProfileValidationError(f"{context}.notes must be text")
+        parsed.append(
+            MonetaryConversionContract(
+                jurisdiction_code=_required_string(
+                    row, "jurisdiction_code", context
+                ),
+                source_currency=_required_string(
+                    row, "source_currency", context
+                ),
+                target_currency=_required_string(
+                    row, "target_currency", context
+                ),
+                method=method,
+                rate_numerator=_positive_int(
+                    row.get("rate_numerator"),
+                    f"{context}.rate_numerator",
+                ),
+                rate_denominator=_positive_int(
+                    row.get("rate_denominator"),
+                    f"{context}.rate_denominator",
+                ),
+                rate_period_start=_parse_iso_date(
+                    row.get("rate_period_start"),
+                    f"{context}.rate_period_start",
+                ),
+                rate_period_end=_parse_iso_date(
+                    row.get("rate_period_end"),
+                    f"{context}.rate_period_end",
+                ),
+                target_price_period_start=_parse_iso_date(
+                    row.get("target_price_period_start"),
+                    f"{context}.target_price_period_start",
+                ),
+                target_price_period_end=_parse_iso_date(
+                    row.get("target_price_period_end"),
+                    f"{context}.target_price_period_end",
+                ),
+                estimand=_required_string(row, "estimand", context),
+                population_base=_required_string(
+                    row, "population_base", context
+                ),
+                comparison_group=_required_string(
+                    row, "comparison_group", context
+                ),
+                rounding_method=_required_string(
+                    row, "rounding_method", context
+                ),
+                rounding_scope=rounding_scope,
+                aggregation_unit=_required_string(
+                    row, "aggregation_unit", context
+                ),
+                status=_parse_status(
+                    row.get("status"),
+                    f"{context}.status",
+                ),
+                source_ids=tuple(source_ids_raw),
+                retrieved_on=_parse_iso_date(
+                    row.get("retrieved_on"),
+                    f"{context}.retrieved_on",
+                ),
+                notes=notes,
+            )
+        )
+    return tuple(parsed)
 
 
 def _country_profile(
@@ -754,6 +1382,17 @@ def _country_profile(
         source_ids=income_sources,
         condition=condition,
         denominator=denominator,
+        simulation_monthly_anchor_cents=_positive_int(
+            row.get(
+                "simulation_monthly_anchor_cents",
+                _SIMULATION_MONTHLY_INCOME_CENTS,
+            ),
+            f"{code}.simulation_monthly_anchor_cents",
+        ),
+        scale_status=_parse_status(
+            row.get("currency_scale_status", "ILLUSTRATIVE"),
+            f"{code}.currency_scale_status",
+        ),
     )
     source_ids = tuple(
         dict.fromkeys(
@@ -1209,7 +1848,12 @@ def _positive_int(value: object, context: str) -> int:
 
 
 def _positive_float(value: object, context: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(value)
+        or value <= 0
+    ):
         raise ProfileValidationError(f"{context} must be positive")
     return float(value)
 
@@ -1225,10 +1869,16 @@ def _nonnegative_float_tuple(value: object, context: str) -> tuple[float, ...]:
         raise ProfileValidationError(f"{context} must be a non-empty number array")
     result: list[float] = []
     for item in value:
-        if isinstance(item, bool) or not isinstance(item, (int, float)) or item < 0:
+        if (
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not isfinite(item)
+            or item < 0
+        ):
             raise ProfileValidationError(f"{context} must contain non-negative numbers")
         result.append(float(item))
-    if sum(result) <= 0:
+    total = sum(result)
+    if not isfinite(total) or total <= 0:
         raise ProfileValidationError(f"{context} must have positive total weight")
     return tuple(result)
 
@@ -1236,6 +1886,16 @@ def _nonnegative_float_tuple(value: object, context: str) -> tuple[float, ...]:
 def _round_positive_ratio(numerator: int, denominator: int) -> int:
     if numerator < 0 or denominator <= 0:
         raise ProfileValidationError("money ratio requires positive inputs")
+    return (numerator + denominator // 2) // denominator
+
+
+def _round_signed_ratio(numerator: int, denominator: int) -> int:
+    """Round an exact signed ratio to nearest, with half ties away from zero."""
+
+    if denominator <= 0:
+        raise ProfileValidationError("money ratio denominator must be positive")
+    if numerator < 0:
+        return -((-numerator + denominator // 2) // denominator)
     return (numerator + denominator // 2) // denominator
 
 
@@ -1293,6 +1953,9 @@ __all__ = [
     "DEFAULT_JURISDICTIONS_PATH",
     "DEFAULT_SOURCES_PATH",
     "MetricContract",
+    "MonetaryConversionContract",
+    "MonetaryConversionMethod",
+    "MonetaryRoundingScope",
     "MoneyScaleContract",
     "ProfileBundle",
     "ProfileConfigurationError",

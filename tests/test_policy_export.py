@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
 import json
@@ -24,6 +25,10 @@ from microtx_sim.consumers.decision import DecisionParameters
 from microtx_sim.consumers.population import CountryProfile
 from microtx_sim.data.profiles import load_profile_bundle
 from microtx_sim.outputs.export import export_policy_batch
+from microtx_sim.outputs.manifest import (
+    _money_conversion_structure_coherent,
+    _money_outputs_cross_country_comparable,
+)
 from microtx_sim.outputs.schema import (
     EPGC_FINANCING_COLUMNS,
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
@@ -52,6 +57,73 @@ def _canonical_sha256(value: object) -> str:
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _comparable_profile_inputs_fixture() -> dict[str, object]:
+    """Minimal serialized fixture for the manifest's fail-closed mirror."""
+
+    scales = [
+        {
+            "jurisdiction_code": "AA",
+            "currency": "GBP",
+            "nominal_monthly_anchor_minor_units": 4,
+            "simulation_monthly_anchor_cents": 2,
+            "anchor_status": "CALIBRATED",
+            "scale_status": "CALIBRATED",
+        },
+        {
+            "jurisdiction_code": "BB",
+            "currency": "EUR",
+            "nominal_monthly_anchor_minor_units": 6,
+            "simulation_monthly_anchor_cents": 3,
+            "anchor_status": "CALIBRATED",
+            "scale_status": "CALIBRATED",
+        },
+    ]
+    conversions = [
+        {
+            "jurisdiction_code": code,
+            "source_currency": source_currency,
+            "target_currency": "TST",
+            "method": "FX",
+            "rate_numerator": 1,
+            "rate_denominator": 2,
+            "rate_numerator_decimal": "1",
+            "rate_denominator_decimal": "2",
+            "rate_period_start": "2025-01-01",
+            "rate_period_end": "2025-12-31",
+            "target_price_period_start": "2025-01-01",
+            "target_price_period_end": "2025-12-31",
+            "estimand": "test-only comparable amount",
+            "population_base": "test-only common population",
+            "comparison_group": "test-only common basis",
+            "aggregation_unit": "one test-only jurisdiction-seed total",
+            "status": "CALIBRATED",
+            "source_ids": ["TEST_ONLY_SOURCE"],
+            "retrieved_on": "2026-08-24",
+            "rounding_method": "nearest_minor_unit_half_away_from_zero",
+            "rounding_scope": "AFTER_AGGREGATION",
+        }
+        for code, source_currency in (("AA", "GBP"), ("BB", "EUR"))
+    ]
+    return {
+        "lineage_status": "registered_profile_bundle",
+        "snapshot": {
+            "profile_bundle": {
+                "sources": [
+                    {
+                        "id": "TEST_ONLY_SOURCE",
+                        "period": "2025-01-01/2025-12-31",
+                        "supports": ["foreign_exchange_rate"],
+                        "calibration_status": "CALIBRATED",
+                        "retrieved_on": "2026-08-24",
+                    }
+                ],
+                "money_scales": scales,
+                "monetary_conversions": conversions,
+            }
+        },
+    }
 
 
 def _tree_snapshot(root: Path) -> tuple[tuple[str, bytes | None], ...]:
@@ -509,6 +581,90 @@ class PolicyExportTests(unittest.TestCase):
                 )
             self.assertEqual(_tree_snapshot(output), before)
 
+    def test_manifest_currency_contract_structure_mirror_fails_closed(self) -> None:
+        profile_inputs = _comparable_profile_inputs_fixture()
+        self.assertTrue(_money_conversion_structure_coherent(profile_inputs))
+        self.assertFalse(_money_outputs_cross_country_comparable(profile_inputs))
+
+        mutations = (
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ].pop(),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("status", "ILLUSTRATIVE"),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("comparison_group", "different basis"),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("rate_numerator", 2),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("source_ids", []),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__(
+                "source_ids",
+                ["TEST_ONLY_SOURCE", "TEST_ONLY_SOURCE"],
+            ),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("target_currency", "123"),
+            lambda value: (
+                value["snapshot"]["profile_bundle"]["money_scales"][
+                    0
+                ].__setitem__("jurisdiction_code", 7),
+                value["snapshot"]["profile_bundle"]["monetary_conversions"][
+                    0
+                ].__setitem__("jurisdiction_code", 7),
+            ),
+            lambda value: (
+                value["snapshot"]["profile_bundle"]["money_scales"][
+                    0
+                ].__setitem__("jurisdiction_code", ["AA"]),
+                value["snapshot"]["profile_bundle"]["monetary_conversions"][
+                    0
+                ].__setitem__("jurisdiction_code", ["AA"]),
+            ),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("rate_numerator_decimal", "999"),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("target_price_period_end", "2099-12-31"),
+            lambda value: value["snapshot"]["profile_bundle"][
+                "monetary_conversions"
+            ][0].__setitem__("retrieved_on", "not-a-date"),
+            lambda value: (
+                value["snapshot"]["profile_bundle"]["monetary_conversions"][
+                    0
+                ].__setitem__("retrieved_on", "2025-06-01"),
+                value["snapshot"]["profile_bundle"]["sources"][0].__setitem__(
+                    "retrieved_on", "2025-06-01"
+                ),
+            ),
+            lambda value: value["snapshot"]["profile_bundle"]["sources"][
+                0
+            ].__setitem__("supports", []),
+            lambda value: value["snapshot"]["profile_bundle"]["sources"][
+                0
+            ].__setitem__("supports", [[]]),
+            lambda value: value["snapshot"]["profile_bundle"]["sources"][
+                0
+            ].__setitem__("period", "different period"),
+            lambda value: value["snapshot"]["profile_bundle"]["money_scales"][
+                0
+            ].__setitem__("scale_status", "ILLUSTRATIVE"),
+        )
+        for index, mutate in enumerate(mutations):
+            with self.subTest(index=index):
+                changed = deepcopy(profile_inputs)
+                mutate(changed)
+                self.assertFalse(
+                    _money_conversion_structure_coherent(changed)
+                )
+
     def test_manifest_lineage_matches_injected_profile_bundle(self) -> None:
         base = load_policy_config(CONFIG_PATH)
         spec = PolicyBatchSpec(
@@ -593,6 +749,31 @@ class PolicyExportTests(unittest.TestCase):
                 len(bundle.contracts),
             )
             self.assertEqual(lineage["money_scale_summary"]["count"], 4)
+            self.assertEqual(
+                lineage["monetary_conversion_summary"],
+                {
+                    "count": 0,
+                    "methods": [],
+                    "source_currencies": [],
+                    "target_currencies": [],
+                    "rate_period_starts": [],
+                    "rate_period_ends": [],
+                    "target_price_period_starts": [],
+                    "target_price_period_ends": [],
+                    "estimands": [],
+                    "population_bases": [],
+                    "comparison_groups": [],
+                    "retrieval_dates": [],
+                    "rounding_scopes": [],
+                    "aggregation_units": [],
+                    "status_counts": {},
+                },
+            )
+            self.assertEqual(lineage["snapshot"]["schema_version"], 2)
+            self.assertEqual(
+                lineage["snapshot"]["profile_bundle"]["monetary_conversions"],
+                [],
+            )
             self.assertEqual(
                 manifest["jurisdictions_sha256"],
                 lineage["jurisdictions"]["sha256"],

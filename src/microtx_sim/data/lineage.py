@@ -8,6 +8,7 @@ from enum import Enum
 from hashlib import sha256
 import json
 from pathlib import Path
+import tomllib
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -22,7 +23,8 @@ from .profiles import (
 )
 
 
-_PROFILE_INPUT_SCHEMA_VERSION = 1
+_PROFILE_INPUT_SCHEMA_VERSION = 2
+_SUPPORTED_PROFILE_INPUT_SCHEMA_VERSIONS = frozenset({1, 2})
 _REGISTERED_PROFILE_LINEAGE = "registered_profile_bundle"
 _UNREGISTERED_PROFILE_LINEAGE = "unregistered_custom_profiles"
 _UNREGISTERED_BUNDLE_LINEAGE = "unregistered_profile_bundle"
@@ -66,7 +68,11 @@ class ProfileInputLineage:
             raise ProfileValidationError("profile snapshot root must be an object")
         if self.snapshot_json != _canonical_snapshot_json(snapshot):
             raise ProfileValidationError("profile snapshot JSON must be canonical")
-        if snapshot.get("schema_version") != _PROFILE_INPUT_SCHEMA_VERSION:
+        snapshot_schema_version = snapshot.get("schema_version")
+        if (
+            type(snapshot_schema_version) is not int
+            or snapshot_schema_version not in _SUPPORTED_PROFILE_INPUT_SCHEMA_VERSIONS
+        ):
             raise ProfileValidationError("unsupported profile snapshot schema version")
         if snapshot.get("lineage_status") != self.lineage_status:
             raise ProfileValidationError(
@@ -172,6 +178,13 @@ class ProfileInputLineage:
             raise ProfileValidationError(
                 "unregistered profile-bundle lineage requires its bundle snapshot"
             )
+        if snapshot_schema_version == 1 and isinstance(bundle, dict) and (
+            "monetary_conversions" in bundle
+        ):
+            raise ProfileValidationError(
+                "profile snapshot schema version 1 cannot contain monetary conversions"
+            )
+        self._validate_registered_files(snapshot)
 
     @property
     def snapshot(self) -> dict[str, object]:
@@ -206,11 +219,17 @@ class ProfileInputLineage:
         """Return deterministic run-manifest metadata without status promotion."""
 
         snapshot = self.snapshot
+        self._validate_registered_files(snapshot)
         bundle = snapshot.get("profile_bundle")
         bundle_payload = bundle if isinstance(bundle, dict) else {}
         metric_contracts = bundle_payload.get("metric_contracts", [])
         money_scales = bundle_payload.get("money_scales", [])
-        if not isinstance(metric_contracts, list) or not isinstance(money_scales, list):
+        monetary_conversions = bundle_payload.get("monetary_conversions", [])
+        if (
+            not isinstance(metric_contracts, list)
+            or not isinstance(money_scales, list)
+            or not isinstance(monetary_conversions, list)
+        ):
             raise ProfileValidationError("profile snapshot contract tables are malformed")
         file_lineage = snapshot.get("file_lineage")
         if not isinstance(file_lineage, dict):
@@ -242,7 +261,132 @@ class ProfileInputLineage:
                     money_scales, "scale_status"
                 ),
             },
+            "monetary_conversion_summary": {
+                "count": len(monetary_conversions),
+                "methods": sorted(
+                    {
+                        str(item["method"])
+                        for item in monetary_conversions
+                        if isinstance(item, dict) and "method" in item
+                    }
+                ),
+                "source_currencies": sorted(
+                    {
+                        str(item["source_currency"])
+                        for item in monetary_conversions
+                        if isinstance(item, dict) and "source_currency" in item
+                    }
+                ),
+                "target_currencies": sorted(
+                    {
+                        str(item["target_currency"])
+                        for item in monetary_conversions
+                        if isinstance(item, dict) and "target_currency" in item
+                    }
+                ),
+                "rate_period_starts": _distinct_text(
+                    monetary_conversions,
+                    "rate_period_start",
+                ),
+                "rate_period_ends": _distinct_text(
+                    monetary_conversions,
+                    "rate_period_end",
+                ),
+                "target_price_period_starts": _distinct_text(
+                    monetary_conversions,
+                    "target_price_period_start",
+                ),
+                "target_price_period_ends": _distinct_text(
+                    monetary_conversions,
+                    "target_price_period_end",
+                ),
+                "estimands": _distinct_text(
+                    monetary_conversions,
+                    "estimand",
+                ),
+                "population_bases": _distinct_text(
+                    monetary_conversions,
+                    "population_base",
+                ),
+                "comparison_groups": _distinct_text(
+                    monetary_conversions,
+                    "comparison_group",
+                ),
+                "retrieval_dates": _distinct_text(
+                    monetary_conversions,
+                    "retrieved_on",
+                ),
+                "rounding_scopes": _distinct_text(
+                    monetary_conversions,
+                    "rounding_scope",
+                ),
+                "aggregation_units": _distinct_text(
+                    monetary_conversions,
+                    "aggregation_unit",
+                ),
+                "status_counts": _status_counts(
+                    monetary_conversions,
+                    "status",
+                ),
+            },
         }
+
+    def _validate_registered_files(self, snapshot: Mapping[str, object]) -> None:
+        """Re-attest every registered claim against the current source files."""
+
+        if self.lineage_status != _REGISTERED_PROFILE_LINEAGE:
+            return
+        assert self.jurisdictions_path is not None
+        assert self.source_registry_path is not None
+        try:
+            loaded = load_profile_bundle(
+                self.jurisdictions_path,
+                self.source_registry_path,
+                campaign=False,
+            )
+        except (OSError, ProfileValidationError) as exc:
+            raise ProfileValidationError(
+                "registered profile lineage files are unavailable or invalid"
+            ) from exc
+        if (
+            str(loaded.jurisdictions_path) != self.jurisdictions_path
+            or loaded.jurisdictions_sha256 != self.jurisdictions_sha256
+            or str(loaded.source_registry_path) != self.source_registry_path
+            or loaded.source_registry_sha256 != self.source_registry_sha256
+            or loaded.source_retrieved_on != self.source_retrieved_on
+        ):
+            raise ProfileValidationError(
+                "registered profile lineage no longer matches its claimed files"
+            )
+        expected_bundle = _profile_bundle_snapshot(loaded)
+        if snapshot.get("schema_version") == 1:
+            try:
+                with Path(self.jurisdictions_path).open("rb") as handle:
+                    claimed_schema_version = tomllib.load(handle).get(
+                        "schema_version"
+                    )
+            except (OSError, tomllib.TOMLDecodeError) as exc:
+                raise ProfileValidationError(
+                    "registered profile lineage files are unavailable or invalid"
+                ) from exc
+            if (
+                type(claimed_schema_version) is not int
+                or claimed_schema_version != 1
+                or loaded.monetary_conversions
+            ):
+                raise ProfileValidationError(
+                    "profile snapshot schema version 1 requires a version-1 "
+                    "jurisdiction file without monetary conversions"
+                )
+            expected_bundle.pop("monetary_conversions")
+        if (
+            snapshot.get("country_profiles")
+            != [_snapshot_dataclass(profile) for profile in loaded.country_profiles]
+            or snapshot.get("profile_bundle") != expected_bundle
+        ):
+            raise ProfileValidationError(
+                "registered profile snapshot values do not match their input files"
+            )
 
 
 def build_profile_input_lineage(
@@ -264,20 +408,7 @@ def build_profile_input_lineage(
 
     bundle_snapshot: dict[str, object] | None = None
     if profile_bundle is not None:
-        bundle_snapshot = {
-            "profile_status": profile_bundle.profile_status.value,
-            "caveats": list(profile_bundle.caveats),
-            "sources": [
-                _snapshot_dataclass(profile_bundle.sources[source_id])
-                for source_id in sorted(profile_bundle.sources)
-            ],
-            "metric_contracts": [
-                _snapshot_dataclass(contract) for contract in profile_bundle.contracts
-            ],
-            "money_scales": [
-                _snapshot_dataclass(scale) for scale in profile_bundle.money_scales
-            ],
-        }
+        bundle_snapshot = _profile_bundle_snapshot(profile_bundle)
     registered_bundle = profile_bundle is not None and _matches_loaded_profile_bundle(
         profile_bundle
     )
@@ -379,40 +510,31 @@ def resolve_profile_inputs(
 def _matches_loaded_profile_bundle(bundle: ProfileBundle) -> bool:
     """Return whether bundle contents exactly match its declared input files."""
 
-    if any(
-        value is None
-        for value in (
-            bundle.jurisdictions_path,
-            bundle.jurisdictions_sha256,
-            bundle.source_registry_path,
-            bundle.source_registry_sha256,
-            bundle.source_retrieved_on,
-        )
-    ):
-        return False
-    assert bundle.jurisdictions_path is not None
-    assert bundle.source_registry_path is not None
-    try:
-        loaded = load_profile_bundle(
-            bundle.jurisdictions_path,
-            bundle.source_registry_path,
-            campaign=False,
-        )
-    except ProfileValidationError:
-        return False
-    return (
-        loaded.country_profiles == bundle.country_profiles
-        and loaded.sources == bundle.sources
-        and loaded.profile_status is bundle.profile_status
-        and loaded.caveats == bundle.caveats
-        and loaded.contracts == bundle.contracts
-        and loaded.money_scales == bundle.money_scales
-        and loaded.jurisdictions_path == bundle.jurisdictions_path
-        and loaded.source_registry_path == bundle.source_registry_path
-        and loaded.jurisdictions_sha256 == bundle.jurisdictions_sha256
-        and loaded.source_registry_sha256 == bundle.source_registry_sha256
-        and loaded.source_retrieved_on == bundle.source_retrieved_on
-    )
+    return bundle.matches_registered_files()
+
+
+def _profile_bundle_snapshot(bundle: ProfileBundle) -> dict[str, object]:
+    conversions: list[dict[str, object]] = []
+    for conversion in bundle.monetary_conversions:
+        snapshot = _snapshot_dataclass(conversion)
+        snapshot["rate_numerator_decimal"] = str(conversion.rate_numerator)
+        snapshot["rate_denominator_decimal"] = str(conversion.rate_denominator)
+        conversions.append(snapshot)
+    return {
+        "profile_status": bundle.profile_status.value,
+        "caveats": list(bundle.caveats),
+        "sources": [
+            _snapshot_dataclass(bundle.sources[source_id])
+            for source_id in sorted(bundle.sources)
+        ],
+        "metric_contracts": [
+            _snapshot_dataclass(contract) for contract in bundle.contracts
+        ],
+        "money_scales": [
+            _snapshot_dataclass(scale) for scale in bundle.money_scales
+        ],
+        "monetary_conversions": conversions,
+    }
 
 
 def _snapshot_dataclass(value: object) -> dict[str, object]:
@@ -465,6 +587,16 @@ def _status_counts(rows: Sequence[object], field: str) -> dict[str, int]:
         status = str(row[field])
         counts[status] = counts.get(status, 0) + 1
     return {status: counts[status] for status in sorted(counts)}
+
+
+def _distinct_text(rows: Sequence[object], field: str) -> list[str]:
+    return sorted(
+        {
+            str(row[field])
+            for row in rows
+            if isinstance(row, dict) and field in row
+        }
+    )
 
 
 __all__ = [

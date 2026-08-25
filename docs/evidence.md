@@ -49,8 +49,9 @@ calibrated.
 The profile loader validates the catalogue-wide retrieval date in canonical
 `YYYY-MM-DD` form and retains it on every `SourceProvenance` record. Policy runs
 content-address the exact `CountryProfile` values used; a registered bundle also
-adds its metric contracts, money scales, jurisdiction-file hash, and source-
-register hash to that fingerprinted snapshot. These are software-lineage
+adds its metric contracts, money scales, optional dated conversion contracts,
+jurisdiction-file hash, and source-register hash to that fingerprinted snapshot.
+These are software-lineage
 controls, not evidence promotion: all current illustrative and synthetic
 statuses remain unchanged.
 
@@ -123,6 +124,32 @@ neither an exchange rate nor a purchasing-power-parity conversion and removes
 empirical cross-country income-level differences. Simulation cents must not be
 reported as GBP, KRW, JPY, EUR, or comparable real purchasing power.
 
+The profile schema now defines a fail-closed `MonetaryConversionContract` for
+future dated FX or PPP evidence. It retains an exact rational target-minor-unit
+rate, typed rate and target-price intervals, estimand, population base, one
+comparison-group identifier, method-specific source lineage, retrieval date,
+and an explicit signed rounding stage and aggregation unit. Campaign
+validation requires complete jurisdiction coverage, calibrated compatible
+sources, a common comparison signature, and exact coherence with the internal
+money scales. No such records or rates are checked in, so this software boundary
+does not make present outputs comparable.
+
+Registered profile lineage is not a caller-supplied assertion. Construction and
+manifest export reload the claimed files, compare their hashes and normalized
+values, and reject missing or changed inputs. Full profile campaign validation
+also rejects an unregistered programmatic bundle. Exact rate numerators and
+denominators are mirrored as decimal strings in lineage JSON so consumers that
+cannot represent integers above (2^{53}) still have a lossless encoding.
+
+These checks validate the declared contract, not whether a chosen estimand or
+population is substantively appropriate. The declared conversion design still
+needs to be bound to the future preregistered output contract and actual
+campaign population, and source snapshots/extractions still need independent
+review. Identical labels are necessary, never sufficient evidence. Accordingly,
+the public cross-country-comparability flag stays false and campaign validation
+reports `monetary_conversion.source_rate_binding=missing` until that binding is
+implemented.
+
 ## Legal and clinical evidence
 
 Regulatory sources support only the scope explicitly declared in their source
@@ -147,9 +174,10 @@ The current rare-card hazard remains an illustrative sensitivity parameter.
 `CALIBRATED` and forbids synthetic inputs. The profile bundle then checks every
 dependent contract and source, including money-scale sources. Because current
 outcomes pool money across jurisdictions, campaign validation also requires a
-cross-country-comparable monetary contract. The present local-currency anchor
-scales cannot make that declaration: a dated FX or purchasing-power contract
-must be implemented first. A campaign fails if a required dependency is
+cross-country-comparable monetary contract. The typed dated FX/PPP contract and
+its gate are implemented, but the present bundle supplies no contract instances
+and the local-currency anchor scales remain illustrative. A campaign fails if a
+required dependency is
 synthetic, illustrative, merely anchored, or not monetarily comparable.
 
 Policy-output campaign validation is independently fail-closed. The output

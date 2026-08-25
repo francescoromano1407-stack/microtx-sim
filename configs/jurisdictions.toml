@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 profile_status = "ILLUSTRATIVE"
 notes = "Mixed-source anchors plus explicit scenario assumptions; not campaign-ready."
 

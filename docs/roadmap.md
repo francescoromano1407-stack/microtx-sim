@@ -53,6 +53,18 @@ These tasks block scientific interpretation.
    then define dated exchange-rate or purchasing-power contracts for any pooled
    estimand. Never treat nominal GBP, KRW, JPY, and EUR minor units as directly
    comparable simulation cents.
+
+   The version-2 profile schema now implements the typed exact-rate contract,
+   method-specific source and typed-date validation, explicit aggregation-stage
+   rounding, registered-file re-attestation, lossless decimal-string rate
+   mirrors, lineage/manifest retention, complete-coverage gate, common-basis
+   check, and exact internal-scale coherence check. No rates are checked in and
+   the present bundle fails with a missing contract for every jurisdiction, so
+   this P0 item remains open pending reviewed calibrated evidence, a declared
+   target estimand, and binding to the preregistered campaign population. The
+   public comparability claim and campaign gate remain false with an explicit
+   `source_rate_binding=missing` blocker even when test-only algebra clears the
+   structural checks.
 3. **Calibrate participation and spending.** Estimate gaming participation,
    payer conversion including zero spenders, conditional spend distributions,
    price sensitivity, switching, churn, and time allocation by age and income.
@@ -137,6 +149,11 @@ These tasks block scientific interpretation.
    ranking mobility, firm actions, audit findings, and subsidy awards.
 4. Extend the existing unit/integration coverage with property tests, broader
    overflow boundaries, schema migration tests, and empirical campaign fixtures.
+
+   Policy revenue composition now uses Python-integer aggregation before the
+   signed-64-bit storage check, with exact-boundary and prior wrap-to-zero
+   regression tests across purchase, fixed-price, and subscription channels.
+   Property generation, migration fixtures, and empirical fixtures remain open.
 5. Add continuous integration for supported Python versions, documentation links,
    unit tests, and a very small deterministic smoke run.
 

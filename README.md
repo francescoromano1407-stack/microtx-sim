@@ -35,6 +35,11 @@ optimal funding policy.
   future scale has not been run or benchmarked.
 - No empirical or scientific campaign has been run or authorised for this
   release.
+- Profile schema version 2 can retain dated exact FX/PPP conversion contracts
+  and fails pooled-currency campaign validation closed. The substantive
+  comparability flag also remains false until rates are bound to immutable,
+  reviewed extractions and the preregistered design. No conversion rates are
+  checked in, so present outputs remain non-comparable across jurisdictions.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.

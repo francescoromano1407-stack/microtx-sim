@@ -24,6 +24,44 @@ Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
 `data/provenance/sources.toml`.
 
+`jurisdictions.toml` uses profile schema version 2. It optionally accepts one
+`[[monetary_conversion]]` table per jurisdiction with `jurisdiction_code`,
+`source_currency`, `target_currency`, `method` (`FX` or `PPP`), positive exact
+`rate_numerator` and `rate_denominator`, canonical ISO
+`rate_period_start`/`rate_period_end` and
+`target_price_period_start`/`target_price_period_end`, `estimand`,
+`population_base`, `comparison_group`, provenance `status`, non-empty
+`source_ids`, and canonical `retrieved_on`. The rounding contract also requires
+the fixed `nearest_minor_unit_half_away_from_zero` method, a `rounding_scope` of
+`PER_OBSERVATION` or `AFTER_AGGREGATION`, and a named `aggregation_unit`.
+Jurisdiction rows may also declare `simulation_monthly_anchor_cents` and
+`currency_scale_status`.
+
+The loader supplies no conversion defaults. The checked-in file has no
+conversion tables, so its four local money profiles remain deliberately
+non-comparable and campaign-blocking. A future pooled campaign must provide
+complete calibrated coverage with one common comparison signature and exact
+coherence between conversion rates and internal scales. The target price period
+must equal the rate period until a separate price-adjustment/deflator contract
+exists. Rate sources must use the method-specific `foreign_exchange_rate` or
+`purchasing_power_parity` support scope and the same canonical date interval.
+The retrieval date cannot predate the rate-period end. Unknown
+conversion-table keys are rejected.
+
+Those are structural checks, not a substantive comparability attestation. The
+campaign and public output flag remain fail-closed with
+`monetary_conversion.source_rate_binding=missing` until an immutable numerical
+rate extraction is bound to the preregistered output and population design.
+
+Legacy profile schema version 1 remains readable when it contains only its
+original fields. The loader rejects version-2 monetary fields under a version-1
+declaration and rejects unknown schema versions.
+
+Campaign validation also requires the complete bundle to match its hashed
+jurisdiction and source-registry files. Registered lineage is reloaded and
+re-attested when a manifest is built; an in-memory or changed bundle cannot
+self-promote by assigning calibrated status labels.
+
 ## Synthetic policy prototype schema
 
 `configs/policy_prototype.toml` is self-contained for the policy batch. It does

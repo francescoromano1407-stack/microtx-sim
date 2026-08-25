@@ -14,6 +14,8 @@ At this stage:
 - every record in the source register is `ANCHORED`, not `CALIBRATED`;
 - the jurisdiction bundle is globally `ILLUSTRATIVE`;
 - the common money scale is `ILLUSTRATIVE`;
+- the version-2 profile schema can retain dated exact FX/PPP contracts, but the
+  checked-in bundle supplies none and no fallback rates are invented;
 - population allocation, audit capacity, regulator operating budgets, and many
   agent defaults are `SYNTHETIC` or otherwise uncalibrated;
 - a scientific campaign is therefore rejected by construction.
@@ -81,6 +83,53 @@ rounded to the nearest declared minor unit. With the current values both results
 are exact. The Korean central quintile is an anchor from a household table; it
 is not asserted to be an individual-income median. The Japanese value has no
 income source and is explicitly illustrative.
+
+### Cross-country conversion contract: implemented boundary, absent evidence
+
+Profile schema version 2 accepts optional `[[monetary_conversion]]` records as
+immutable `MonetaryConversionContract` values. Each record names one
+jurisdiction and its source and target ISO-style currency codes; selects `FX`
+or `PPP`;
+stores an exact positive rational rate in target minor units per source minor
+unit; declares typed start/end dates for the rate and target-price periods,
+comparison group, status, estimand, population base, source IDs, retrieval date,
+rounding stage, and aggregation unit. Signed integer conversion rounds half ties
+away from zero, either per observation or after the declared aggregate is
+formed. There is no default method, target, rate, period, rounding stage, or
+scientific status.
+
+For pooled campaign outputs, the gate requires exactly one contract per local
+money profile. Every contract and referenced source must be `CALIBRATED`; source
+records must declare a compatible FX/PPP support scope and the same retrieval
+date, and at least one compatible source must match the rate period. All
+jurisdictions must share one target currency, method, rate period, target price
+period, estimand, population base, comparison group, rounding stage, and
+aggregation unit. FX evidence must explicitly support `foreign_exchange_rate`;
+PPP evidence must support `purchasing_power_parity`. A generic conversion label
+cannot justify switching methods, and retrieval cannot predate the declared
+rate-period end. Until a separate deflator contract exists,
+the target-price and rate intervals must be identical. The gate also checks exact algebraic
+coherence between each local-to-target rate and the corresponding
+local-to-simulation scale. Matching labels alone cannot make outputs comparable.
+
+This structural gate is deliberately not the public substantive-comparability
+claim. The latter remains false, and full campaign validation reports
+`monetary_conversion.source_rate_binding=missing`, until each numerical rate and
+transformation recipe is bound to an immutable source extraction and the actual
+preregistered output/population contract.
+
+The checked-in `jurisdictions.toml` deliberately has zero conversion records.
+That absence is fingerprinted, summarized in exported manifests, and reported
+as four explicit campaign blockers. Even a structurally coherent test contract
+cannot clear the separate source-rate binding blocker. The software contract is
+ready to receive reviewed rates later, but P0 monetary calibration is not
+complete.
+
+The complete profile bundle must also match the jurisdiction and source files
+whose hashes it claims. Registered lineage reloads those files both when the
+lineage object is constructed and when a manifest is emitted. Programmatic or
+changed bundles remain unregistered and fail full campaign validation even when
+their test-only statuses are labelled `CALIBRATED`.
 
 ### Layer 2: internal simulation cents
 
@@ -227,7 +276,7 @@ provenance but does not change outcomes at the current fixed reference median.
 |---|---|---|
 | [`EUROSTAT_ILC_DI03`](https://ec.europa.eu/eurostat/databrowser/view/ilc_di03/default/table?lang=en) | European income by age/sex | Context-only; no current numeric extraction |
 | [`EUROSTAT_DEMO_PJANIND`](https://ec.europa.eu/eurostat/databrowser/view/demo_pjanind/default/table?lang=en) | European population structure | Context-only; current age weights are illustrative |
-| [`OECD_HOUSEHOLD_DISPOSABLE_INCOME`](https://www.oecd.org/en/data/indicators/household-disposable-income.html) | OECD disposable income | Context-only; no PPP or FX conversion is implemented |
+| [`OECD_HOUSEHOLD_DISPOSABLE_INCOME`](https://www.oecd.org/en/data/indicators/household-disposable-income.html) | OECD disposable income | Context-only; no reviewed PPP or FX rate is loaded into the implemented conversion contract |
 | [`ONS_HDI_FYE2024`](https://www.ons.gov.uk/peoplepopulationandcommunity/personalandhouseholdfinances/incomeandwealth/bulletins/householddisposableincomeandinequality/latest) | UK disposable income | Contract-only nominal anchor and scale metadata; the runtime median is fixed |
 | [`OFCOM_CHILD_SPENDING_2025`](https://www.ofcom.org.uk/media-use-and-attitudes/media-habits-children/top-trends-from-our-latest-look-at-uk-childrens-online-lives) | UK children's online lives | Context-only; the profile uses the detailed PDF record instead |
 | [`UK_LOOT_BOX_RESPONSE_2022`](https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence/outcome/government-response-to-the-call-for-evidence-on-loot-boxes-in-video-games) | UK loot-box evidence review | Context-only causal and harm background |
@@ -259,14 +308,16 @@ Validation occurs at several boundaries:
 1. `load_config` parses one run scenario and validates types, ranges, positive
    intervals, and calendar alignment with `tick_days`.
 2. `load_profile_bundle` parses both TOML data files, validates source integrity
-   and the canonical ISO retrieval date, hashes the exact files, builds metric
-   and money contracts, and creates country and state agents.
+   and canonical ISO retrieval dates, hashes the exact files, builds metric,
+   local-money, and optional FX/PPP conversion contracts, and creates country
+   and state agents.
 3. `World.create` applies `allow_synthetic`, checks the duplicated shared
    behavioural values for exact equality, and applies the run-level audit
    parameters to each state.
 4. Campaign mode separately requires the scenario, every used profile contract,
    every used source, every nominal anchor, and the money scale to be
-   `CALIBRATED`.
+   `CALIBRATED`. Pooled money additionally requires complete, calibrated,
+   common-basis conversion coverage and exact internal-scale coherence.
 
 `smoke.toml` permits synthetic dependencies and is the intended executable
 structural check. `base.toml` sets `allow_synthetic=false`; with the current
@@ -275,7 +326,8 @@ It is a future-scale configuration, not an authorized campaign.
 
 The policy runner retains the exact `CountryProfile` tuple it used. A canonical
 snapshot fingerprints every profile field and, for a loaded `ProfileBundle`,
-the metric contracts and money scales. Exported manifests identify the actual
+the metric contracts, money scales, and conversion contracts. Exported
+manifests identify the actual
 profile codes, jurisdiction and source-register hashes, global source retrieval
 date, and compact contract-status summaries. A caller-supplied bare profile
 tuple is fingerprinted but marked `unregistered_custom_profiles`; it is never
