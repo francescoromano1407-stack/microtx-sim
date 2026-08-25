@@ -52,7 +52,7 @@ exact accounting: cumulative spend -> revenue -> interest
 post-consumer events: ranking -> audits/fines -> subsidy review
       |
       v
-novelty decay -> ledger check -> outcome -> history -> advance calendar
+novelty decay -> ledger check -> outcome -> COMMIT -> history -> calendar
 ```
 
 ### 1. Pop events due at the current tick
@@ -114,9 +114,10 @@ ledger, but not `World`. It performs one transactional calculation:
    and cannot exceed household/card resources.
 5. **Harm transition.** Seven dimensions evolve separately from realised spend,
    unsafe exposure, debt, time, and the rare event, with configured persistence.
-6. **Preflight and commit.** Shapes, resources, overflow, and ledger references
-   are checked before mutable tables change. Then game choice, balances, harm,
-   activity, revenue, and ledger entries commit together.
+6. **Preflight and commit.** Shapes, resources, and overflow are checked first.
+   The complete purchase-ledger batch then passes indexed uniqueness checks and
+   appends atomically before game choice, balances, harm, activity, and revenue
+   mutate. The enclosing day transaction remains the durable boundary.
 
 Dense `P × G` utility work is split into player blocks. The block changes peak
 memory only: stable player/game random coordinates and evaluation of all known
@@ -191,34 +192,43 @@ the researcher's latent unsafe-revenue classification.
 
 ### 8. Close the day
 
-After event phases:
+The day processor begins one outer ledger transaction before popping events.
+Phase-level batches use savepoints, so a duplicate reference or native storage
+failure cannot prefix-commit only part of a batch. A step rejects any
+caller-owned outer ledger transaction; otherwise history and the calendar could
+advance before that caller commits. After event phases:
 
 1. game novelty decays smoothly according to elapsed tick days;
-2. the complete ledger is checked for balance;
+2. the ledger schema invariant is checked without rescanning prior transfers;
 3. an immutable `OutcomeSnapshot` is built at the current tick;
-4. aggregate summary history and, when configured, the latest individual
+4. the outer ledger transaction commits;
+5. aggregate summary history and, when configured, the latest individual
    snapshot are recorded;
-5. a `WorldStep` containing phase results is retained in full history or
+6. a `WorldStep` containing phase results is retained in full history or
    replaces the previously retained step under `final_only`; the cumulative
    audit counter is updated in either mode;
-6. `world.tick` advances by `tick_days`.
+7. `world.tick` advances by `tick_days`.
 
 The outcome includes cumulative player spend, income, debt including accrued
 interest, the seven harm columns, firm cash, operating margin, safe-revenue
 share, and state subsidy outlay. Outstanding assessed fines reduce reported firm
 margin even when insufficient cash prevented collection.
 
-Only a successfully completed step changes retained history or `audit_count`.
-This is a reporting-retention guarantee, not whole-day transactionality: an
-exception earlier in a day can occur after model state or the event queue has
-already changed, and the world is not a supported restart checkpoint.
+Only a successfully committed step changes retained history, `audit_count`, or
+the calendar. If any phase, storage operation, commit, or later recording step
+fails, the world is marked poisoned and every later `step()` or `run()` call is
+rejected. The ledger transaction rolls back uncommitted rows, but NumPy arrays,
+agent state, and the event queue are not rolled back byte-for-byte. Poisoning
+therefore prevents unsafe retry; it is not whole-world transactionality and it
+does not implement checkpoint/restart.
 
 ## Multi-cycle orchestration
 
 `simulation/orchestrator.py` owns run-level policy:
 
 1. validate structural configuration;
-2. in campaign mode, require every profile dependency to be calibrated;
+2. in campaign mode, require every profile dependency to be calibrated and an
+   explicit non-temporary SQLite ledger;
 3. resolve the cycle count and reject non-positive values;
 4. for non-campaign runs, enforce the safety ceiling of 32 cycles and 5,000
    players;
@@ -239,6 +249,12 @@ configuration and profile bundle. Before treatment, it checks equality of every
 causally relevant player and game column plus firms, states, and jurisdiction
 metadata. It then applies explicit treated and control interventions and runs
 both worlds for the same number of cycles.
+
+Each branch owns or receives a physically distinct ledger store. Pre-treatment
+balance compares ordered logical ledger entries and their canonical digest while
+excluding connection and path identity; shared storage is a hard imbalance.
+Owned temporary stores are closed and deleted when the paired runner finishes.
+Injected persistent ledgers remain caller-owned so they can be sealed separately.
 
 Common random numbers do not mean shared mutable generator state. Both branches
 query the same counter field at the same semantic coordinates. A purchase or
@@ -285,5 +301,8 @@ blocked from scientific campaign execution.
 - Evasion changes detection probability, not the truth label.
 - Consumer results do not change when population block size changes.
 - Every committed cent has a balanced, unique ledger transfer.
+- A failed tick poisons the world, rolls back its uncommitted ledger rows, and
+  cannot be retried on the same mutable state.
+- Paired branches never share physical ledger storage.
 - Outcome ticks increase strictly and the calendar advances exactly once.
 - A null treated/control pair remains exactly identical.

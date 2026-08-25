@@ -16,9 +16,9 @@ Three run configurations are supplied:
 
 | File | Purpose | Scale | Status |
 | --- | --- | --- | --- |
-| `configs/smoke.toml` | Short connectivity check | 384 players, 3 companies, 4 games, 3 one-day cycles | `SYNTHETIC` and executable only as a non-campaign run |
+| `configs/smoke.toml` | Short connectivity check | 384 players, 3 companies, 4 games, 3 one-day cycles; full history and memory ledger | `SYNTHETIC` and executable only as a non-campaign run |
 | `configs/policy_prototype.toml` | Reproducible seven-scenario policy prototype | 1,000 players, 14 days, 3 seeds, 7 scenarios | Strictly `synthetic`; tested but not empirically calibrated |
-| `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
+| `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles; final-only history and SQLite ledger | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
 
 Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
@@ -185,9 +185,12 @@ equations, scenario differences, and interpretation boundary.
 | `provenance_status` | enum | One of `CALIBRATED`, `ANCHORED`, `ILLUSTRATIVE`, or `SYNTHETIC`. |
 | `notes` | string | Human-readable scope and interpretation warning. |
 
-Campaign mode requires `provenance_status = "CALIBRATED"` and
-`run.allow_synthetic = false`. A synthetic non-campaign scenario instead
-requires `run.allow_synthetic = true`.
+Campaign mode requires `provenance_status = "CALIBRATED"`,
+`run.allow_synthetic = false`, and `run.ledger_backend = "sqlite"`. World
+construction and orchestration additionally require an explicit non-temporary
+persistent ledger; the configuration value alone does not create a campaign
+artifact. A synthetic non-campaign scenario instead requires
+`run.allow_synthetic = true`.
 
 ### `[run]`
 
@@ -200,6 +203,7 @@ requires `run.allow_synthetic = true`.
 | `chunk_size` | positive integer | Consumer rows processed per dense choice block; changes memory, not alternatives. |
 | `allow_synthetic` | boolean | Allows synthetic dependencies in structural, non-campaign runs. |
 | `step_history_retention` | `full` or `final_only` | Retains every completed `WorldStep`, or only the latest successfully completed step. Omission defaults to `full` for compatibility. |
+| `ledger_backend` | `memory` or `sqlite` | Uses an in-memory SQLite database or a file-backed SQLite database for the authoritative append-only ledger. Omission defaults to `memory` for compatibility. |
 
 The non-campaign orchestrator additionally rejects more than 32 cycles or more
 than 5,000 players. This prevents an accidental large run. Campaign mode is a
@@ -210,10 +214,21 @@ separate explicit API choice and has stricter evidence gates.
 final outcome, or paired estimand. It replaces the retained step after each
 successful tick, including across repeated `step()` or `run()` calls; a fresh
 world therefore has empty history. `world.audit_count` remains cumulative over
-all successfully completed steps. The setting does not bound the append-only
-ledger, aggregate recorder summaries, popularity history, caller-held results,
-or temporary arrays. Future run manifests and checkpoints must record the
-normalized effective retention mode.
+all successfully completed steps. The setting does not bound aggregate recorder
+summaries, popularity history, caller-held results, or temporary arrays. Future
+run manifests and checkpoints must record the normalized effective retention
+mode.
+
+`ledger_backend = "sqlite"` bounds Python-retained ledger history by streaming
+entries to a database file; the file itself remains `O(E)` in the number of
+transfers. If no path is supplied to `World.create`, a non-campaign world owns a
+temporary database and deletes it on `close()`. `World.create(ledger_path=...)`
+creates a fresh persistent database and refuses an existing database, seal, or
+SQLite journal/WAL sidecar.
+Alternatively, a caller can inject a fresh `Ledger.create(...)`; caller-owned
+ledgers remain open when the world closes so the caller can seal them. Storage
+paths are runtime infrastructure, not causal parameters, and paired branches
+must use distinct physical stores.
 
 ### `[market]`
 

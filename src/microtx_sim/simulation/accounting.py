@@ -13,6 +13,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ..consumers.logic import StepResult
+from ..core.ledger import LedgerEntry
 from ..metrics.outcomes import OutcomeSnapshot
 
 if TYPE_CHECKING:
@@ -53,18 +54,22 @@ def renew_income(world: "World", *, tick: int) -> None:
     ).astype(np.int64)
     if np.any(world.players.liquidity_cents > INT64_MAX - inflow):
         raise OverflowError("player liquidity would overflow")
-    world.players.liquidity_cents[:] += inflow
+    entries: list[LedgerEntry] = []
     for row in np.flatnonzero(inflow > 0):
         player_id = int(world.players.player_id[row])
         jurisdiction = int(world.players.jurisdiction[row])
-        world.ledger.transfer(
-            tick=tick,
-            debit_account=f"external:income:{jurisdiction}",
-            credit_account=f"player:{player_id}:liquid",
-            amount_cents=int(inflow[row]),
-            kind="disposable_income",
-            reference=f"income:{tick}:{player_id}",
+        entries.append(
+            LedgerEntry(
+                tick=tick,
+                debit_account=f"external:income:{jurisdiction}",
+                credit_account=f"player:{player_id}:liquid",
+                amount_cents=int(inflow[row]),
+                kind="disposable_income",
+                reference=f"income:{tick}:{player_id}",
+            )
         )
+    world.ledger.append_many(entries)
+    world.players.liquidity_cents[:] += inflow
 
 
 def credit_firm_revenue(world: "World", result: StepResult) -> None:

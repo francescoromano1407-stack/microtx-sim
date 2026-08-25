@@ -14,13 +14,64 @@ from microtx_sim.config import (
 )
 from microtx_sim.core.ledger import Ledger
 from microtx_sim.domain.games import ContentPlanner, GameTable, OwnGameSnapshot
-from microtx_sim.types import ProvenanceStatus
+from microtx_sim.types import LedgerBackend, ProvenanceStatus
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigAndDomainTests(unittest.TestCase):
+    def test_ledger_backend_is_typed_and_backward_compatible(self) -> None:
+        source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
+        explicit = load_config(ROOT / "configs" / "smoke.toml")
+        self.assertIs(explicit.run.ledger_backend, LedgerBackend.MEMORY)
+
+        without_field = source.replace('ledger_backend = "memory"\n', "")
+        invalid_value = source.replace(
+            'ledger_backend = "memory"',
+            'ledger_backend = "csv"',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy_path = root / "legacy.toml"
+            legacy_path.write_text(without_field, "utf-8")
+            legacy = load_config(legacy_path)
+            self.assertIs(legacy.run.ledger_backend, LedgerBackend.MEMORY)
+
+            invalid_path = root / "invalid.toml"
+            invalid_path.write_text(invalid_value, "utf-8")
+            with self.assertRaisesRegex(ConfigurationError, "ledger_backend"):
+                load_config(invalid_path)
+
+        for raw_value in ("memory", "bogus", None):
+            with self.subTest(raw_value=raw_value):
+                invalid_direct = replace(
+                    explicit,
+                    run=replace(
+                        explicit.run,
+                        ledger_backend=raw_value,  # type: ignore[arg-type]
+                    ),
+                )
+                with self.assertRaisesRegex(ConfigurationError, "ledger_backend"):
+                    invalid_direct.validate()
+
+    def test_campaign_requires_streamed_ledger_backend(self) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        candidate = replace(
+            config,
+            meta=replace(
+                config.meta,
+                provenance_status=ProvenanceStatus.CALIBRATED,
+            ),
+            run=replace(
+                config.run,
+                allow_synthetic=False,
+                ledger_backend=LedgerBackend.MEMORY,
+            ),
+        )
+        with self.assertRaisesRegex(ConfigurationError, "ledger_backend='sqlite'"):
+            candidate.validate(campaign=True)
+
     def test_step_history_retention_is_typed_and_backward_compatible(self) -> None:
         source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
         explicit = load_config(ROOT / "configs" / "smoke.toml")

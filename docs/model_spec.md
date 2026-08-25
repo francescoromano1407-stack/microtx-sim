@@ -370,13 +370,22 @@ KRW, JPY, or EUR source values.
 The accounting layer:
 
 - posts income, purchases, company costs, audit costs, fines, and subsidies to an
-  append-only balanced ledger;
+  append-only balanced ledger in atomic batches with binary-unique references;
 - uses exact integer aggregation for game and firm revenue;
 - checks cumulative arrays and material balances before overflow;
 - records assessed fines separately from collected fines;
 - accrues player interest from used credit with one explicit rounded cent
   conversion after a bounded rate calculation;
 - builds immutable outcome snapshots from latent state.
+
+Each ledger entry is restricted to built-in signed-`int64` ticks and positive
+signed-`int64` cents. Aggregate reconciliation streams into unbounded Python
+integers. The `memory` and file-backed `sqlite` backends have identical ordered
+entry semantics and canonical logical hashes. One outer SQLite transaction
+covers a competitive-market day. Persistent finalization seals contain both a
+backend-independent logical digest and a raw database-file digest; they verify
+ledger content against a trusted manifest, not run completion, provenance, or a
+world checkpoint.
 
 Outstanding assessed fines reduce reported operating margin even when they
 cannot be collected immediately. Subsidies increase cash but are removed when
@@ -397,14 +406,19 @@ remain visible.
 6. select and resolve audits and collect fines if due;
 7. review mature subsidy applications if due;
 8. decay novelty;
-9. assert ledger balance;
-10. build and record an outcome;
-11. retain the completed `WorldStep` under the configured full or final-only
-    policy and advance the calendar.
+9. assert the per-row ledger balance invariant and build an outcome;
+10. commit the outer ledger transaction;
+11. record the outcome, retain the completed `WorldStep` under the configured
+    full or final-only policy, and advance the calendar.
 
 Recurring events are rescheduled by the day processor. Domain phases implement
 what an event does, not when it next occurs. All configured intervals and the
 30-day income renewal must be exact multiples of `tick_days`.
+
+Any phase, ledger, commit, or recording failure poisons the mutable world and
+prohibits retry. Uncommitted ledger rows roll back, but the rest of world state
+is not restored byte-for-byte; this is a fail-closed execution rule, not a
+checkpoint/restart contract.
 
 ### Welfare policy day
 
@@ -477,17 +491,20 @@ size, `D` content-stat dimensions, and `K` boost rates.
 | Current regulator scans | `O(S·P·F + S·F·G)` | `O(P + F)` per jurisdiction |
 | Audit target sorting | `O(S·F log F)` | `O(F)` per jurisdiction |
 | Content candidate enumeration | `O(K·D·2^D)` per search | same order while materialised |
-| Accounting | `O(P + G + F + ledger entries)` | `O(P + F)` |
+| Accounting and current-tick ledger append | `O(P + G + F + N_tick log E)` | `O(P + F + N_tick)` Python state |
+| Full ledger verification/sealing | `O(E)` | bounded row buffers, plus `O(accounts)` for requested net reconciliation |
 
 Here `A = 8` welfare actions and `T = 1440 / step_minutes` decisions per day.
 Blocking changes memory consumption, not the declared market alternative set.
 Content search is exact only within the declared finite grid and is exponential
 in `D`; configuration restricts `D` to 2–12. For `R` simulated ticks and `E`
-retained financial transfers, full step history adds `O(R·P)` retained state.
-Final-only retention removes that term while preserving each returned step and
-the final estimand, but the append-only `O(E)` ledger and smaller `O(R)`
-summaries and market histories remain. Campaign-scale persistence is therefore
-still future work.
+retained financial transfers, and `N_tick` new transfers in the current tick,
+full step history adds `O(R·P)` retained state. Final-only retention removes that
+term while preserving each returned step and the final estimand. File-backed
+SQLite keeps historical ledger rows out of Python while retaining `O(E)` disk;
+smaller `O(R)` summaries and market histories remain. Campaign-scale resource
+measurement, disclosure controls, and empirical readiness are therefore still
+future work.
 
 ## Status of assumptions
 

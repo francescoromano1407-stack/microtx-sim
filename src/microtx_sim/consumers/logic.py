@@ -380,10 +380,11 @@ def step_player_dynamics(
     ledger_entries = _ledger_entries(
         players, games, game_rows, purchase, tick
     )
-    _preflight_mutations(players, games, purchase, ledger, ledger_entries)
+    _preflight_mutations(players, games, purchase)
+    ledger.append_many(ledger_entries)
 
-    # Mutations are deliberately delayed until all calculations and ledger
-    # reference checks succeed.
+    # Mutations are deliberately delayed until all calculations and the atomic
+    # ledger append succeed.
     players.current_game[...] = chosen_game
     players.liquidity_cents[...] -= purchase.liquid_used
     players.credit_limit_cents[...] -= purchase.credit_used
@@ -395,7 +396,6 @@ def step_player_dynamics(
         np.add.at(active_by_game, game_rows[activity.active], 1)
     games.active_players[...] = active_by_game
     games.revenue_cents[...] += purchase.game_revenue
-    ledger.extend(ledger_entries)
 
     changed = previous_game != chosen_game
     counters = PlayerStepCounters(
@@ -1198,8 +1198,6 @@ def _preflight_mutations(
     players: PlayerTable,
     games: GameTable,
     purchase: _PurchasePlan,
-    ledger: Ledger,
-    entries: tuple[LedgerEntry, ...],
 ) -> None:
     if np.any(purchase.liquid_used > players.liquidity_cents):
         raise AssertionError("purchase plan exceeds player liquidity")
@@ -1208,13 +1206,6 @@ def _preflight_mutations(
     maximum = np.iinfo(np.int64).max
     if np.any(games.revenue_cents > maximum - purchase.game_revenue):
         raise OverflowError("cumulative game revenue would overflow int64 cents")
-    references = [entry.reference for entry in entries]
-    if len(references) != len(set(references)):
-        raise ValueError("duplicate references inside player purchase batch")
-    existing = {entry.reference for entry in ledger.entries}
-    duplicate = existing.intersection(references)
-    if duplicate:
-        raise ValueError(f"duplicate ledger reference: {min(duplicate)}")
 
 
 def _validate_dynamic_tables(

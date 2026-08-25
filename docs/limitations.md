@@ -267,16 +267,30 @@ own exact `O(P*A*T)` action engine and a checked-in 1,000-player, 14-day,
 three-seed configuration. This is a reproducibility batch, not a scientific
 campaign. `base.toml` remains a rejected future-scale market configuration.
 
-The implementation remains in-memory and has no checkpoint/restart, distributed
-execution, campaign scheduler, result database, schema migration, or long-run
-resource benchmark. Final-only step retention removes the dominant `O(T·P)`
-`WorldStep` history term and is selected by the blocked future-scale baseline.
-It does not make execution campaign-scale ready: the exact-cent ledger is still
-append-only, aggregate recorder summaries grow by tick, popularity truth history
-grows with scheduled ranking observations, and callers can retain returned
-steps and run results. Integer overflow checks exist at important accumulation
-boundaries, but they are not a proof against every possible extreme custom
-configuration.
+The implementation has no checkpoint/restart, distributed execution, campaign
+scheduler, general result database, ledger schema migration, or long-run resource
+benchmark. Final-only step retention removes the dominant `O(T·P)` `WorldStep`
+history term, and file-backed SQLite removes `O(E)` Python-object retention for
+ledger entries. Both are selected by the blocked future-scale baseline.
+
+These changes do not make execution campaign-scale ready. The database remains
+append-only at `O(E)` disk, aggregate recorder summaries grow by tick,
+popularity truth history grows with scheduled ranking observations, and callers
+can retain returned steps and run results. Compatibility snapshots, account-net
+reconciliation, full integrity checks, and sealing scan `O(E)` entries. SQLite
+is a local single-world audit store, not a distributed result system or a
+privacy-controlled microdata repository. Paired worlds need two separate files.
+
+If a tick fails, its uncommitted ledger rows roll back and the world is poisoned,
+but already-mutated NumPy, event, or agent state is not restored. Retry and
+resume are prohibited. A seal verifies finalized, ordered accounting content
+against its trusted manifest; it neither proves that every intended simulation
+tick completed nor captures enough world state to restart a run. Its hashes
+detect accidental or uncoordinated changes, but the seal is not digitally signed
+and does not authenticate an artifact against an adversary who can rewrite both
+the database and manifest. Unsealed databases are incomplete.
+Integer overflow checks exist at important accumulation boundaries, but they are
+not a proof against every possible extreme custom configuration.
 
 Exact reproducibility is conditional on the same code, configuration, source
 files, interpreter, and platform-level numerical behavior. The dependency graph,

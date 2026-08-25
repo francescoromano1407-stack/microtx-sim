@@ -144,9 +144,11 @@ These tasks block scientific interpretation.
 
 An explicit full/final-only `WorldStep` retention contract now removes the
 `O(T·P)` history term for the future-scale baseline with byte-exact outcome and
-paired-effect equality tests. This is a prerequisite, not the planned benchmark:
-the append-only ledger and smaller tick histories still require measured and
-tested retention policies.
+paired-effect equality tests. An exact SQLite ledger now also batches transfers,
+uses indexed binary-unique references, bounds Python-retained history, and
+finalizes persistent ledger artifacts with logical and raw-file digests. These are
+prerequisites, not the planned benchmark: disk growth, smaller tick histories,
+and the complete world still require representative measurement.
 
 1. Benchmark the planned 50,000-player, 8-game scenario before optimisation and
    record peak memory, time per phase, and ledger growth.
@@ -155,8 +157,10 @@ tested retention policies.
 3. Replace repeated player-by-game and player-by-firm masks with exact grouped
    indices or scatter operations, with equality tests against the reference
    implementation.
-4. Batch ledger construction while retaining integer-cent reconciliation and
-   unique references.
+4. **Implemented for the synthetic prototype:** batch ledger construction while
+   retaining integer-cent reconciliation and unique references. Keep backend
+   equivalence, failure rollback, seal verification, and memory-retention tests
+   as regression gates.
 5. Parallelise independent worlds or replications, not stateful fragments of one
    world. Counter-based streams make this safe when coordinate contracts remain
    unchanged.

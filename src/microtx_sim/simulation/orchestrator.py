@@ -7,7 +7,9 @@ from time import perf_counter
 from typing import Protocol
 
 from ..config import ConfigurationError, SimulationConfig
+from ..core.ledger import Ledger
 from ..metrics.outcomes import OutcomeSnapshot
+from ..types import LedgerBackend
 
 
 class SteppableWorld(Protocol):
@@ -57,6 +59,16 @@ class SimulationOrchestrator:
         world.config.validate(campaign=campaign)
         if campaign:
             world.profiles.validate_for_campaign()
+            ledger = getattr(world, "ledger", None)
+            if (
+                not isinstance(ledger, Ledger)
+                or ledger.backend is not LedgerBackend.SQLITE
+                or ledger.path is None
+                or ledger.temporary_store
+            ):
+                raise ConfigurationError(
+                    "Scientific campaigns require a non-temporary SQLite ledger"
+                )
         count = world.config.run.cycles if cycles is None else cycles
         if count <= 0:
             raise ValueError("cycles must be positive")

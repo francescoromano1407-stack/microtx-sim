@@ -11,6 +11,7 @@ player_count = 384
 chunk_size = 128
 allow_synthetic = true
 step_history_retention = "full"
+ledger_backend = "memory"
 
 [market]
 company_count = 3

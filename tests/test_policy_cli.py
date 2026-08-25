@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from hashlib import sha256
 import io
 import json
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from microtx_sim.cli import main
+from microtx_sim.core.ledger import LedgerStorageError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +19,24 @@ BASE_CONFIG = ROOT / "configs" / "policy_prototype.toml"
 
 
 class PolicyCliTests(unittest.TestCase):
+    def test_smoke_normalises_sqlite_storage_failures(self) -> None:
+        for failure in (
+            sqlite3.OperationalError("forced SQLite failure"),
+            LedgerStorageError("forced durability failure"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                stderr = io.StringIO()
+                with (
+                    patch("microtx_sim.cli._smoke", side_effect=failure),
+                    redirect_stderr(stderr),
+                ):
+                    code = main(
+                        ("smoke", str(ROOT / "configs" / "smoke.toml"))
+                    )
+                self.assertEqual(code, 2)
+                self.assertIn("error:", stderr.getvalue())
+                self.assertIn(str(failure), stderr.getvalue())
+
     def test_smoke_command_is_deterministic_except_for_elapsed_time(self) -> None:
         payloads: list[dict[str, object]] = []
         for _ in range(2):

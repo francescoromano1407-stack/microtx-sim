@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import fields, replace
 import gc
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import weakref
@@ -24,9 +27,10 @@ from microtx_sim.config import (
     load_config,
 )
 from microtx_sim.core.engine import SimulationEngine
+from microtx_sim.core.ledger import Ledger
 from microtx_sim.core.world import World
 from microtx_sim.data.profiles import ProfileValidationError
-from microtx_sim.types import MonetisationMechanism
+from microtx_sim.types import LedgerBackend, MonetisationMechanism, ProvenanceStatus
 
 
 class _RecordingIntervention:
@@ -133,6 +137,103 @@ class WorldIntegrationTests(unittest.TestCase):
         )
         self.assertGreater(len(world.ledger.entries), 0)
         world.ledger.assert_balanced()
+
+    def test_sqlite_world_is_byte_exact_and_releases_temporary_store(self) -> None:
+        sqlite_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        memory_world = World.create(self.config)
+        sqlite_world = World.create(sqlite_config)
+        sqlite_path = sqlite_world.ledger.path
+        self.assertIsNotNone(sqlite_path)
+        assert sqlite_path is not None
+        self.assertTrue(sqlite_path.exists())
+
+        memory_result = SimulationEngine.run(memory_world)
+        sqlite_result = SimulationEngine.run(sqlite_world)
+
+        self._assert_array_dataclass_equal(
+            self,
+            memory_result.final_outcome,
+            sqlite_result.final_outcome,
+        )
+        self.assertEqual(memory_result.summary, sqlite_result.summary)
+        self.assertEqual(memory_world.ledger.entries, sqlite_world.ledger.entries)
+        self.assertEqual(
+            memory_world.ledger.logical_sha256(),
+            sqlite_world.ledger.logical_sha256(),
+        )
+        memory_world.close()
+        sqlite_world.close()
+        self.assertFalse(sqlite_path.exists())
+
+    def test_world_leaves_caller_owned_persistent_ledger_open(self) -> None:
+        sqlite_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "world.sqlite3"
+            ledger = Ledger.create(path)
+            world = World.create(sqlite_config, ledger=ledger)
+            self.assertFalse(world.owns_ledger)
+            world.step()
+            world.close()
+            self.assertTrue(world.closed)
+            self.assertFalse(ledger.closed)
+            self.assertGreater(ledger.entry_count(), 0)
+            ledger.close()
+            self.assertTrue(path.exists())
+
+    def test_campaign_requires_explicit_persistent_ledger_before_profiles(self) -> None:
+        candidate = replace(
+            self.config,
+            meta=replace(
+                self.config.meta,
+                provenance_status=ProvenanceStatus.CALIBRATED,
+            ),
+            run=replace(
+                self.config.run,
+                allow_synthetic=False,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "explicit persistent ledger",
+        ):
+            World.create(candidate, campaign=True)
+
+    def test_orchestrator_cannot_promote_a_temporary_ledger_to_campaign(self) -> None:
+        candidate = replace(
+            self.config,
+            meta=replace(
+                self.config.meta,
+                provenance_status=ProvenanceStatus.CALIBRATED,
+            ),
+            run=replace(
+                self.config.run,
+                allow_synthetic=False,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        ledger = Ledger.temporary()
+        fake_world = SimpleNamespace(
+            config=candidate,
+            profiles=SimpleNamespace(validate_for_campaign=lambda: None),
+            players=[object()],
+            ledger=ledger,
+        )
+        with self.assertRaisesRegex(ConfigurationError, "non-temporary SQLite"):
+            SimulationEngine.run(fake_world, cycles=1, campaign=True)
+        ledger.close()
 
     def test_final_only_history_is_bounded_without_changing_results(self) -> None:
         bounded_config = replace(
@@ -276,6 +377,34 @@ class WorldIntegrationTests(unittest.TestCase):
         self.assertEqual(world.recorder.summaries, ())
         self.assertIsNone(world.recorder.latest)
 
+    def test_world_step_rejects_a_caller_owned_outer_ledger_transaction(
+        self,
+    ) -> None:
+        world = World.create(self.config)
+        with self.assertRaisesRegex(RuntimeError, "root ledger transaction"):
+            with world.ledger.transaction():
+                world.step()
+
+        self.assertTrue(world.poisoned)
+        self.assertEqual(world.tick, 0)
+        self.assertEqual(world.step_history, ())
+        self.assertEqual(world.audit_count, 0)
+        self.assertEqual(world.recorder.summaries, ())
+        self.assertEqual(world.ledger.entry_count(), 0)
+        world.close()
+
+        raw_world = World.create(self.config)
+        raw_world.ledger._connection.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "root ledger transaction"):
+                raw_world.step()
+        finally:
+            raw_world.ledger._connection.execute("ROLLBACK")
+        self.assertTrue(raw_world.poisoned)
+        self.assertEqual(raw_world.tick, 0)
+        self.assertEqual(raw_world.ledger.entry_count(), 0)
+        raw_world.close()
+
     def test_failed_late_step_does_not_replace_last_completed_history(self) -> None:
         bounded_config = replace(
             self.config,
@@ -291,6 +420,8 @@ class WorldIntegrationTests(unittest.TestCase):
         world = World.create(bounded_config)
         completed = world.step()
         audit_count = world.audit_count
+        completed_ledger_count = world.ledger.entry_count()
+        completed_ledger_hash = world.ledger.logical_sha256()
 
         with (
             patch(
@@ -312,6 +443,11 @@ class WorldIntegrationTests(unittest.TestCase):
         self.assertEqual(world.audit_count, audit_count)
         self.assertEqual(len(world.recorder.summaries), 1)
         self.assertIs(world.recorder.latest, completed.outcome)
+        self.assertTrue(world.poisoned)
+        self.assertEqual(world.ledger.entry_count(), completed_ledger_count)
+        self.assertEqual(world.ledger.logical_sha256(), completed_ledger_hash)
+        with self.assertRaisesRegex(RuntimeError, "poisoned"):
+            world.step()
 
     def test_retention_mode_does_not_change_paired_effects(self) -> None:
         bounded_config = replace(
@@ -384,6 +520,57 @@ class WorldIntegrationTests(unittest.TestCase):
         self.assertEqual(result.effect.total_operating_margin_effect_cents, 0)
         self.assertEqual(result.effect.total_subsidy_effect_cents, 0)
         self.assertEqual(result.effect.affected_player_share, 0.0)
+
+    def test_sqlite_paired_worlds_use_distinct_caller_owned_ledgers(self) -> None:
+        sqlite_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            treated_ledger = Ledger.create(root / "treated.sqlite3")
+            control_ledger = Ledger.create(root / "control.sqlite3")
+            result = run_paired_worlds(
+                sqlite_config,
+                treated=NullIntervention(),
+                control=NullIntervention(),
+                cycles=1,
+                treated_ledger=treated_ledger,
+                control_ledger=control_ledger,
+            )
+            self.assertTrue(result.pre_treatment_balance.balanced)
+            self.assertFalse(treated_ledger.closed)
+            self.assertFalse(control_ledger.closed)
+            self.assertFalse(treated_ledger.shares_storage_with(control_ledger))
+            self.assertEqual(
+                treated_ledger.logical_sha256(),
+                control_ledger.logical_sha256(),
+            )
+            treated_ledger.close()
+            control_ledger.close()
+
+    def test_paired_worlds_reject_shared_sqlite_storage(self) -> None:
+        sqlite_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            shared = Ledger.create(Path(directory) / "shared.sqlite3")
+            with self.assertRaisesRegex(ValueError, "physically distinct"):
+                run_paired_worlds(
+                    sqlite_config,
+                    treated=NullIntervention(),
+                    cycles=1,
+                    treated_ledger=shared,
+                    control_ledger=shared,
+                )
+            shared.close()
 
     def test_pre_treatment_imbalance_fails_before_intervention_or_run(self) -> None:
         treated_world = World.create(self.config)

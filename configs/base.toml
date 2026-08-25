@@ -11,6 +11,7 @@ player_count = 50000
 chunk_size = 4096
 allow_synthetic = false
 step_history_retention = "final_only"
+ledger_backend = "sqlite"
 
 [market]
 company_count = 5

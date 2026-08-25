@@ -52,7 +52,29 @@ def schedule_initial_events(world: "World") -> None:
 
 
 def advance_day(world: "World") -> WorldStep:
-    """Advance exactly one configured tick while preserving causal ordering."""
+    """Advance one tick or permanently poison the world after any failure.
+
+    The ledger transaction is the durable boundary for a tick. NumPy and agent
+    state cannot yet be rolled back byte-for-byte, so a failed tick is never
+    retried on the same mutable world even when its ledger rows were rolled back.
+    """
+
+    world._require_runnable()
+    try:
+        with world.ledger.root_transaction():
+            step = _advance_day_mutations(world)
+        # Record completion only after the durable ledger commit succeeds.
+        world.recorder.record(step.outcome)
+        world._record_completed_step(step)
+        world.tick += world.config.run.tick_days
+        return step
+    except BaseException:
+        world._mark_poisoned()
+        raise
+
+
+def _advance_day_mutations(world: "World") -> WorldStep:
+    """Apply the ordered in-tick mutations inside the ledger transaction."""
 
     tick = world.tick
     due = world.events.pop_due(tick)
@@ -140,8 +162,7 @@ def advance_day(world: "World") -> WorldStep:
     world.games.novelty[:] *= np.exp(-0.01 * world.config.run.tick_days)
     world.ledger.assert_balanced()
     outcome = outcome_snapshot(world, tick=tick)
-    world.recorder.record(outcome)
-    step = WorldStep(
+    return WorldStep(
         tick=tick,
         player_result=player_result,
         firm_resolution=firm_resolution,
@@ -150,6 +171,3 @@ def advance_day(world: "World") -> WorldStep:
         subsidies_paid_cents=subsidies_paid,
         outcome=outcome,
     )
-    world._record_completed_step(step)
-    world.tick += world.config.run.tick_days
-    return step

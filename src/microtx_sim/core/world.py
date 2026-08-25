@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
 import numpy as np
 
@@ -32,7 +33,7 @@ from ..consumers.logic import (
 )
 from ..market.popularity import PopularitySystem, PublishedRanking
 from ..states.logic import RegulationSystem
-from ..types import MonetisationMechanism
+from ..types import LedgerBackend, MonetisationMechanism
 from .events import EventQueue
 from .ledger import Ledger
 
@@ -55,6 +56,8 @@ class World:
         games: GameTable,
         firms: tuple[FirmAgent, ...],
         states: tuple[StateAgent, ...],
+        ledger: Ledger | None = None,
+        ledger_path: str | Path | None = None,
     ) -> None:
         # ``World.create`` performs campaign-aware validation, but the public
         # constructor must still reject malformed execution contracts before
@@ -76,7 +79,6 @@ class World:
         ):
             raise ValueError("jurisdiction ids must be contiguous and position-aligned")
         self.tick = 0
-        self.ledger = Ledger()
         self.events = EventQueue()
         self.player_system = PlayerDynamicsSystem(
             PlayerDynamicsConfig(
@@ -156,8 +158,14 @@ class World:
         self._last_published_ranking: PublishedRanking | None = None
         self._step_history: list[WorldStep] = []
         self._audit_count = 0
+        self._closed = False
+        self._poisoned = False
 
         schedule_initial_events(self)
+        self.ledger, self._owns_ledger = self._initialise_ledger(
+            ledger=ledger,
+            ledger_path=ledger_path,
+        )
 
     @classmethod
     def create(
@@ -166,8 +174,25 @@ class World:
         *,
         profiles: ProfileBundle | None = None,
         campaign: bool = False,
+        ledger: Ledger | None = None,
+        ledger_path: str | Path | None = None,
     ) -> "World":
         config.validate(campaign=campaign)
+        if ledger is not None and ledger_path is not None:
+            raise ValueError("provide ledger or ledger_path, not both")
+        if campaign:
+            if ledger is None and ledger_path is None:
+                raise ConfigurationError(
+                    "Scientific campaigns require an explicit persistent ledger"
+                )
+            if ledger is not None and (
+                ledger.backend is not LedgerBackend.SQLITE
+                or ledger.path is None
+                or ledger.temporary_store
+            ):
+                raise ConfigurationError(
+                    "Scientific campaigns require a non-temporary SQLite ledger"
+                )
         profile_bundle = profiles or load_profile_bundle(campaign=campaign)
         profile_bundle.validate_for_run(
             allow_synthetic=config.run.allow_synthetic
@@ -237,7 +262,38 @@ class World:
             games=games,
             firms=firms,
             states=states,
+            ledger=ledger,
+            ledger_path=ledger_path,
         )
+
+    def _initialise_ledger(
+        self,
+        *,
+        ledger: Ledger | None,
+        ledger_path: str | Path | None,
+    ) -> tuple[Ledger, bool]:
+        if ledger is not None and ledger_path is not None:
+            raise ValueError("provide ledger or ledger_path, not both")
+        configured = self.config.run.ledger_backend
+        if ledger is not None:
+            if ledger.closed:
+                raise ValueError("initial ledger is closed")
+            if ledger.backend is not configured:
+                raise ValueError(
+                    "initial ledger backend does not match run.ledger_backend"
+                )
+            if ledger.entry_count() != 0:
+                raise ValueError("initial ledger must be empty")
+            return ledger, False
+        if ledger_path is not None:
+            if configured is not LedgerBackend.SQLITE:
+                raise ValueError("ledger_path requires ledger_backend='sqlite'")
+            return Ledger.create(ledger_path), True
+        if configured is LedgerBackend.MEMORY:
+            return Ledger(), True
+        if configured is LedgerBackend.SQLITE:
+            return Ledger.temporary(), True
+        raise AssertionError(f"unsupported ledger backend: {configured!r}")
 
     @property
     def step_history(self) -> tuple[WorldStep, ...]:
@@ -250,6 +306,53 @@ class World:
         """Return the number of audit resolutions across all completed steps."""
 
         return self._audit_count
+
+    @property
+    def poisoned(self) -> bool:
+        """Whether a failed tick made this mutable world unsafe to resume."""
+
+        return self._poisoned
+
+    @property
+    def closed(self) -> bool:
+        """Whether this world has been retired from further execution."""
+
+        return self._closed
+
+    @property
+    def owns_ledger(self) -> bool:
+        """Whether closing this world also closes its ledger resource."""
+
+        return self._owns_ledger
+
+    def _require_runnable(self) -> None:
+        if self._closed:
+            raise RuntimeError("world is closed")
+        if self._poisoned:
+            raise RuntimeError(
+                "world is poisoned after a failed step and cannot be resumed"
+            )
+        if self.ledger.closed:
+            raise RuntimeError("world ledger is closed")
+
+    def _mark_poisoned(self) -> None:
+        self._poisoned = True
+
+    def close(self) -> None:
+        """Retire the world and release only resources it created itself."""
+
+        if self._closed:
+            return
+        if self._owns_ledger:
+            self.ledger.close()
+        self._closed = True
+
+    def __enter__(self) -> "World":
+        self._require_runnable()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
 
     def _record_completed_step(self, step: WorldStep) -> None:
         """Retain a completed step without changing simulation semantics."""
@@ -361,5 +464,6 @@ class World:
         return advance_day(self)
 
     def run(self, cycles: int | None = None) -> OutcomeSnapshot:
+        self._require_runnable()
         count = self.config.run.cycles if cycles is None else cycles
         return advance_cycles(self, count)

@@ -4,12 +4,14 @@ import argparse
 from hashlib import sha256
 import json
 from pathlib import Path
+import sqlite3
 import sys
 from typing import Sequence
 
 from .analysis import run_sensitivity_analysis
 from .causal.batch import run_policy_batch
 from .config import ConfigurationError, load_config
+from .core.ledger import LedgerStorageError
 from .core.world import World
 from .data.profiles import ProfileBundle, ProfileValidationError, load_profile_bundle
 from .outputs import export_policy_batch
@@ -87,21 +89,22 @@ def _validate(config_path: Path) -> dict[str, object]:
 
 def _smoke(config_path: Path) -> dict[str, object]:
     config = load_config(config_path, campaign=False)
-    world = World.create(config, campaign=False)
-    result = SimulationOrchestrator.run(world, campaign=False)
-    return {
-        "status": "ok",
-        "mode": "smoke_only",
-        "scenario": config.meta.name,
-        "seed": config.run.seed,
-        "seed_decimal": str(config.run.seed),
-        "cycles": result.cycles,
-        "elapsed_seconds": round(result.elapsed_seconds, 6),
-        "step_history_retention": config.run.step_history_retention.value,
-        "summary": result.summary,
-        "audit_count": world.audit_count,
-        "ledger_entries": len(world.ledger.entries),
-    }
+    with World.create(config, campaign=False) as world:
+        result = SimulationOrchestrator.run(world, campaign=False)
+        return {
+            "status": "ok",
+            "mode": "smoke_only",
+            "scenario": config.meta.name,
+            "seed": config.run.seed,
+            "seed_decimal": str(config.run.seed),
+            "cycles": result.cycles,
+            "elapsed_seconds": round(result.elapsed_seconds, 6),
+            "step_history_retention": config.run.step_history_retention.value,
+            "ledger_backend": config.run.ledger_backend.value,
+            "summary": result.summary,
+            "audit_count": world.audit_count,
+            "ledger_entries": world.ledger.entry_count(),
+        }
 
 
 def _policy_validate(config_path: Path) -> dict[str, object]:
@@ -296,6 +299,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ConfigurationError,
         PolicyConfigurationError,
         ProfileValidationError,
+        LedgerStorageError,
+        sqlite3.DatabaseError,
         OSError,
         ValueError,
     ) as exc:

@@ -21,6 +21,7 @@ from ..metrics.outcomes import (
     _immutable_array_copy,
 )
 from ..config import SimulationConfig
+from ..core.ledger import Ledger
 from ..core.world import World
 from ..simulation import RunResult, SimulationOrchestrator
 from ..data.profiles import ProfileBundle
@@ -333,6 +334,8 @@ def run_paired_worlds(
     cycles: int | None = None,
     campaign: bool = False,
     profiles: ProfileBundle | None = None,
+    treated_ledger: Ledger | None = None,
+    control_ledger: Ledger | None = None,
 ) -> PairedWorldRun:
     """Run an explicit treated/control pair with common random numbers.
 
@@ -343,46 +346,64 @@ def run_paired_worlds(
 
     if not config.causal.common_random_numbers:
         raise ValueError("paired worlds require common_random_numbers=true")
+    if (treated_ledger is None) != (control_ledger is None):
+        raise ValueError("paired worlds require both branch ledgers or neither")
+    if (
+        treated_ledger is not None
+        and control_ledger is not None
+        and treated_ledger.shares_storage_with(control_ledger)
+    ):
+        raise ValueError("paired worlds require physically distinct ledger storage")
     control_intervention = control or NullIntervention()
     treated_profiles = _detached_profile_bundle(profiles)
     control_profiles = _detached_profile_bundle(profiles)
-    treated_world = World.create(
-        config,
-        profiles=treated_profiles,
-        campaign=campaign,
-    )
-    control_world = World.create(
-        config,
-        profiles=control_profiles,
-        campaign=campaign,
-    )
-    pre_treatment_balance = assess_pre_treatment_balance(
-        treated_world,
-        control_world,
-    )
-    pre_treatment_balance.require_balanced()
+    treated_world: World | None = None
+    control_world: World | None = None
+    try:
+        treated_world = World.create(
+            config,
+            profiles=treated_profiles,
+            campaign=campaign,
+            ledger=treated_ledger,
+        )
+        control_world = World.create(
+            config,
+            profiles=control_profiles,
+            campaign=campaign,
+            ledger=control_ledger,
+        )
+        pre_treatment_balance = assess_pre_treatment_balance(
+            treated_world,
+            control_world,
+        )
+        pre_treatment_balance.require_balanced()
 
-    treated.apply(treated_world)
-    control_intervention.apply(control_world)
-    treated_run = SimulationOrchestrator.run(
-        treated_world, cycles=cycles, campaign=campaign
-    )
-    control_run = SimulationOrchestrator.run(
-        control_world, cycles=cycles, campaign=campaign
-    )
-    paired, effect = compare_outcomes(
-        treated_run.final_outcome,
-        control_run.final_outcome,
-        estimand=config.causal.estimand,
-    )
-    paired.require_negative_controls()
-    return PairedWorldRun(
-        treated_run=treated_run,
-        control_run=control_run,
-        pre_treatment_balance=pre_treatment_balance,
-        paired_outcome=paired,
-        effect=effect,
-    )
+        treated.apply(treated_world)
+        control_intervention.apply(control_world)
+        treated_run = SimulationOrchestrator.run(
+            treated_world, cycles=cycles, campaign=campaign
+        )
+        control_run = SimulationOrchestrator.run(
+            control_world, cycles=cycles, campaign=campaign
+        )
+        paired, effect = compare_outcomes(
+            treated_run.final_outcome,
+            control_run.final_outcome,
+            estimand=config.causal.estimand,
+        )
+        paired.require_negative_controls()
+        return PairedWorldRun(
+            treated_run=treated_run,
+            control_run=control_run,
+            pre_treatment_balance=pre_treatment_balance,
+            paired_outcome=paired,
+            effect=effect,
+        )
+    finally:
+        if control_world is not None:
+            control_world.close()
+        if treated_world is not None:
+            treated_world.close()
 
 
 def assess_pre_treatment_balance(
@@ -688,6 +709,27 @@ def _compare_balance_values(
         )
         return
     traversal.visited.add(pair)
+
+    if isinstance(treated, Ledger):
+        _record_balance_check(
+            f"{path}.storage",
+            (
+                BalanceMismatchKind.SHARED_MUTABLE
+                if treated.shares_storage_with(control)
+                else None
+            ),
+            checked_paths=checked_paths,
+            mismatches=mismatches,
+        )
+        _compare_balance_values(
+            treated.balance_snapshot(),
+            control.balance_snapshot(),
+            path=f"{path}.logical_state",
+            checked_paths=checked_paths,
+            mismatches=mismatches,
+            traversal=traversal,
+        )
+        return
 
     if isinstance(treated, np.ndarray):
         kind: BalanceMismatchKind | None = None

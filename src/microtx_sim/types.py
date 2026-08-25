@@ -10,6 +10,13 @@ class ProvenanceStatus(str, Enum):
     SYNTHETIC = "SYNTHETIC"
 
 
+class LedgerBackend(str, Enum):
+    """Authoritative storage used for double-entry accounting records."""
+
+    MEMORY = "memory"
+    SQLITE = "sqlite"
+
+
 class Motive(IntEnum):
     COMPETITION = 0
     COLLECTION = 1
@@ -76,4 +83,3 @@ class InformationSource(str, Enum):
     COMPLAINT = "complaint"
     AUDIT_EVIDENCE = "audit_evidence"
     DISCLOSURE = "disclosure"
-

@@ -151,9 +151,9 @@ python -m microtx_sim smoke configs/smoke.toml
 ```
 
 The supplied smoke scenario runs 384 players for three one-day cycles. The
-command prints JSON containing timing, an outcome summary, audit count, and
-ledger-entry count. These numbers are software diagnostics, not empirical
-results.
+command prints JSON containing timing, the effective ledger backend, an outcome
+summary, audit count, and ledger-entry count. These numbers are software
+diagnostics, not empirical results.
 
 There is intentionally no unrestricted scientific-campaign command.
 Non-campaign market orchestration rejects more than 32 cycles or 5,000 players;
@@ -169,13 +169,14 @@ from microtx_sim.core.world import World
 from microtx_sim.simulation import SimulationOrchestrator
 
 config = load_config("configs/smoke.toml", campaign=False)
-world = World.create(config, campaign=False)
-run = SimulationOrchestrator.run(world, campaign=False)
-
-print(run.summary)
-print(world.step_history)
-print(world.audit_count)
-print(world.ledger.entries)
+with World.create(config, campaign=False) as world:
+    run = SimulationOrchestrator.run(world, campaign=False)
+    print(run.summary)
+    print(world.step_history)
+    print(world.audit_count)
+    print(world.ledger.entry_count())
+    for entry in world.ledger.iter_entries():
+        print(entry)
 ```
 
 `World.step()` advances one tick and returns a `WorldStep`.
@@ -188,7 +189,47 @@ successfully completed step. With `"final_only"`, it is empty before the first
 step and thereafter contains exactly the latest successfully completed step,
 including across repeated calls. The returned `WorldStep` is complete in both
 modes. `world.audit_count` always covers the whole run; it must not be
-reconstructed from compact history. Neither mode bounds `world.ledger.entries`.
+reconstructed from compact history. Ledger retention is controlled separately by
+`run.ledger_backend`: `memory` keeps SQLite pages in memory, while `sqlite`
+streams them to a file. The compatibility `world.ledger.entries` property still
+materialises the complete history and should not be used in campaign-scale code.
+
+For a small persistent structural run, select the SQLite backend and provide a
+fresh path explicitly:
+
+```python
+from dataclasses import replace
+
+from microtx_sim.config import load_config
+from microtx_sim.core.ledger import Ledger
+from microtx_sim.core.world import World
+from microtx_sim.simulation import SimulationOrchestrator
+from microtx_sim.types import LedgerBackend
+
+config = load_config("configs/smoke.toml", campaign=False)
+config = replace(
+    config,
+    run=replace(config.run, ledger_backend=LedgerBackend.SQLITE),
+)
+world = World.create(
+    config,
+    campaign=False,
+    ledger_path="smoke-ledger.sqlite3",
+)
+SimulationOrchestrator.run(world, campaign=False)
+seal = world.ledger.seal(metadata={"scope": "synthetic smoke only"})
+world.close()
+verified = Ledger.verify(seal.database_path)
+print(verified.logical_sha256)
+```
+
+`Ledger.create` and `World.create(ledger_path=...)` refuse existing database,
+seal, or SQLite sidecar artifacts. Sealing performs full verification, closes
+the database, and writes `<database>.seal.json`. The logical digest identifies the ordered ledger
+across backends; the raw file digest checks the SQLite bytes against a trusted
+manifest. The unsigned pair does not prove run completion or authenticate
+provenance. A database without both its internal finalization row and sidecar is
+incomplete. This mechanism is an audit-artifact contract, not restart support.
 
 ## Python API: paired counterfactuals
 
@@ -215,6 +256,13 @@ print(paired.effect)
 The pair shares pre-treatment state and semantic random coordinates but owns
 separate mutable objects. Current inputs remain synthetic/illustrative, so this
 example demonstrates the causal machinery only.
+
+When `ledger_backend` is `sqlite`, the default non-campaign pair uses two owned
+temporary databases and deletes them after producing immutable outcomes. To
+retain ledger artifacts, create two distinct persistent `Ledger` objects and
+pass them as `treated_ledger=` and `control_ledger=`. The paired runner leaves
+injected ledgers open for the caller to seal; supplying only one ledger or
+sharing one store between branches is rejected.
 
 ## Compose policy regimes
 

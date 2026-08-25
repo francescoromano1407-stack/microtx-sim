@@ -7,7 +7,7 @@ from pathlib import Path
 import tomllib
 
 from .rng import validate_seed
-from .types import ProvenanceStatus
+from .types import LedgerBackend, ProvenanceStatus
 
 
 class ConfigurationError(ValueError):
@@ -30,6 +30,7 @@ class RunConfig:
     chunk_size: int
     allow_synthetic: bool
     step_history_retention: StepHistoryRetention = StepHistoryRetention.FULL
+    ledger_backend: LedgerBackend = LedgerBackend.MEMORY
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,8 @@ class SimulationConfig:
             raise ConfigurationError(
                 "step_history_retention must be 'full' or 'final_only'"
             )
+        if type(self.run.ledger_backend) is not LedgerBackend:
+            raise ConfigurationError("ledger_backend must be 'memory' or 'sqlite'")
         positive = {
             "cycles": self.run.cycles,
             "tick_days": self.run.tick_days,
@@ -188,6 +191,10 @@ class SimulationConfig:
                 raise ConfigurationError(
                     "Scientific campaigns require allow_synthetic=false"
                 )
+            if self.run.ledger_backend is not LedgerBackend.SQLITE:
+                raise ConfigurationError(
+                    "Scientific campaigns require ledger_backend='sqlite'"
+                )
 
 
 def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig:
@@ -207,6 +214,14 @@ def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig
         except ValueError as exc:
             raise ValueError(
                 "step_history_retention must be 'full' or 'final_only'"
+            ) from exc
+        try:
+            run_values["ledger_backend"] = LedgerBackend(
+                run_values.get("ledger_backend", LedgerBackend.MEMORY)
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "ledger_backend must be 'memory' or 'sqlite'"
             ) from exc
         config = SimulationConfig(
             meta=MetaConfig(

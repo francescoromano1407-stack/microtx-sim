@@ -23,7 +23,7 @@ import numpy.typing as npt
 
 from ..agents.companies import CompanyObservation, FirmAgent, FirmIntent, FirmPrivateState
 from ..agents.jurisdictions import SubsidyApplicationView
-from ..core.ledger import Ledger
+from ..core.ledger import Ledger, LedgerEntry
 from ..domain.games import ContentCandidate, ContentPlanner, GameTable, OwnGameSnapshot
 from ..rng import CounterRNG
 from ..types import FirmAction, MonetisationMechanism
@@ -1319,22 +1319,38 @@ class FirmStrategySystem:
             if first_intent.action is FirmAction.PROPOSE_COLLABORATION
             else "sector:agreement-coordination"
         )
-        first_reference = self._charge(
-            tick=tick,
-            firm=first,
-            action=first_intent.action,
-            amount_cents=first_cost,
-            destination=destination,
-            ledger=ledger,
-        )
-        second_reference = self._charge(
-            tick=tick,
-            firm=second,
-            action=second_intent.action,
-            amount_cents=second_cost,
-            destination=destination,
-            ledger=ledger,
-        )
+        serial_before = self._ledger_serial
+        planned_charges: list[LedgerEntry] = []
+        references: list[str | None] = []
+        try:
+            for firm, intent, cost in (
+                (first, first_intent, first_cost),
+                (second, second_intent, second_cost),
+            ):
+                reference = (
+                    self._reference(tick, firm.firm_id, intent.action)
+                    if cost > 0
+                    else None
+                )
+                references.append(reference)
+                if reference is not None:
+                    planned_charges.append(
+                        LedgerEntry(
+                            tick=tick,
+                            debit_account=f"firm:{firm.firm_id}:cash",
+                            credit_account=destination,
+                            amount_cents=int(cost),
+                            kind=intent.action.value,
+                            reference=reference,
+                        )
+                    )
+            ledger.append_many(planned_charges)
+        except BaseException:
+            self._ledger_serial = serial_before
+            raise
+        first_reference, second_reference = references
+        first.state.cash_cents -= first_cost
+        second.state.cash_cents -= second_cost
         first_rows = np.asarray([game_rows[game] for game in first.state.game_ids], dtype=np.int64)
         second_rows = np.asarray([game_rows[game] for game in second.state.game_ids], dtype=np.int64)
         capability = 0.5 * (first.analytics_capability + second.analytics_capability)

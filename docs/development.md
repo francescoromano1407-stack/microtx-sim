@@ -153,6 +153,12 @@ choice sets and accounting, not to the truth of behavioural equations.
 - Store money in signed 64-bit integer simulation cents and check overflow before
   cumulative mutation.
 - Use integer aggregation for financial flows and keep ledger references unique.
+- Build ledger rows before mutating operational balances, append complete batches
+  atomically, and never reconstruct the historical reference set in Python.
+- Let the day kernel own the ledger root transaction; do not wrap `World.step()`
+  in another ledger transaction.
+- Treat a failed world tick as poisoned and non-resumable; do not add retry until
+  a byte-exact whole-world checkpoint contract exists.
 - Do not pass money through floating point except for an explicitly bounded rate
   calculation followed by documented rounding.
 - Do not aggregate nominal source currencies until a conversion contract has
@@ -208,6 +214,9 @@ The suite is organised by contract:
   provenance gates;
 - `test_causal.py`: paired differences and composable interventions;
 - `test_world_integration.py`: scheduling and end-to-end system connections;
+- `test_ledger_backends.py`: memory/SQLite equality, strict domains, atomic
+  failures, nested transactions, exact large aggregates, lifecycle, sealing,
+  tamper detection, and bounded Python retention;
 - `test_config_domain.py`: configuration safeguards, ledger balance, and exact
   content search;
 - `test_player_life.py` and `test_policy_decision.py`: heterogeneous life state,
@@ -329,6 +338,7 @@ Before authorising a substantive run:
 - output storage and privacy controls are configured;
 - null paired worlds are exactly identical;
 - replicated small runs are deterministic;
-- ledger balance, overflow, and disk-space checks pass;
+- ledger balance, overflow, distinct paired storage, seal verification, and
+  disk-space checks pass;
 - runtime and memory have been benchmarked at a representative scale;
 - the code revision and environment are recorded in a run manifest.

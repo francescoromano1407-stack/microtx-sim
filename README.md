@@ -30,9 +30,9 @@ optimal funding policy.
   identical seeded synthetic cohorts and is the supported reproducible
   prototype workflow.
 - `configs/base.toml` describes a future 50,000-player, five-company, eight-game
-  scale and uses final-step-only history retention, but campaign validation
-  deliberately rejects its uncalibrated inputs and its ledger remains
-  append-only.
+  scale and selects final-step-only history plus a file-backed SQLite ledger,
+  but campaign validation deliberately rejects its uncalibrated inputs. That
+  future scale has not been run or benchmarked.
 - No empirical or scientific campaign has been run or authorised for this
   release.
 
@@ -58,7 +58,9 @@ See [Limitations](docs/limitations.md) before interpreting any output.
   and content planning enumerates the complete configured finite candidate set.
   Blocking limits memory without sampling alternatives.
 - **Exact-cent accounting:** financial state uses integer simulation cents,
-  overflow checks, exact aggregation, and an append-only balanced ledger.
+  overflow checks, exact aggregation, and atomic append-only ledger batches.
+  The ledger can stream to SQLite without retaining every transfer as a Python
+  object.
 - **Provenance gates:** scientific campaign mode rejects synthetic,
   illustrative, or merely anchored dependencies.
 

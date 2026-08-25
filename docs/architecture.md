@@ -149,7 +149,7 @@ from accumulating in one monolithic class.
 | `core/world.py` | Latent mutable state, construction, event queue, intervention state, and compatibility entry points. |
 | `core/events.py` | Deterministic priority queue with stable order, immutable payloads, cancellation, and rescheduling. |
 | `core/observations.py` | Generic immutable signals, observations, and signal-only belief updates. |
-| `core/ledger.py` | Append-only balanced integer-cent transfer log. |
+| `core/ledger.py` | Exact append-only SQLite ledger facade, batching, streaming, and finalization seals. |
 | `simulation/accounting.py` | Income, exact revenue aggregation, interest, overflow checks, and outcome construction. |
 | `simulation/company_phase.py` | Kernel coordination of one periodic company decision. |
 | `simulation/market_phase.py` | Kernel coordination of latent popularity and public publication. |
@@ -332,6 +332,28 @@ The ledger records positive transfers between named source and destination
 accounts with unique references. External income still names an external
 counter-account, so the sum of all account changes is zero. Operational balances
 remain in the world; the ledger is an independently recomputable audit trail.
+Each entry requires built-in signed-64-bit tick and cent values plus non-empty
+binary-collated text fields. Entry amounts are bounded to signed `int64`, while
+streamed account nets and total flows accumulate in Python integers and can
+therefore exceed `int64` without wrapping.
+
+One public `Ledger` facade uses SQLite for both backends. `memory` selects an
+in-memory database for small compatibility runs; `sqlite` selects a file-backed
+database. Kernel consumers construct complete batches and rely on the database
+unique index rather than retaining every historical reference in Python. One
+outer transaction covers a simulated tick and nested batches use savepoints.
+The database commits before recorder history or the calendar advances. A failed
+tick permanently poisons its `World`: uncommitted ledger rows roll back, but
+mutable NumPy, agent, and event state is not advertised as a restart checkpoint.
+
+A caller can seal a non-temporary persistent ledger when it chooses to finalize
+that accounting artifact. Sealing performs full integrity, schema, and
+logical-history checks, closes the database, and writes a sidecar containing a
+canonical logical SHA-256 and the final raw database SHA-256. The logical digest
+identifies ordered entries across backends; the raw digest checks the file
+against a trusted manifest. The unsigned pair does not authenticate run
+provenance or prove that every intended simulation tick ran. An unsealed
+database is an incomplete ledger artifact, not a resumable checkpoint.
 
 Revenue aggregation uses integer scatter-add. Interest is calculated from
 outstanding principal, bounded to the exactly representable floating range,
@@ -382,24 +404,27 @@ actions, and `Q = 1440 / step_minutes` welfare decisions per day.
 | Regulatory observation and truth | `O(S·P·F + S·F·G)` as currently scanned | `O(P + F)` per state | Complaints and breaches remain exact; grouping can reduce repeated masks. |
 | Audit target selection | `O(S·F log F)` | `O(F)` per state | Risk and random-floor targets are sorted. |
 | Content candidate search | `O(K·D·2^D)` per search | `O(K·D·2^D)` currently materialised | Exact within the finite grid; `D` is limited to 12. |
-| Accounting | `O(P + G + F + entries)` | `O(P + F)` | All monetary aggregation preserves integer cents. |
+| Accounting aggregation and current-tick ledger append | `O(P + G + F + N_tick log E)` | `O(P + F + N_tick)` Python state | `N_tick` new transfers use an indexed uniqueness check and one transaction; file storage remains `O(E)`. |
+| Full ledger verification or sealing | `O(E)` | bounded streaming buffers plus account map when requested | Not performed on every tick. |
 
 The block size changes memory use, not the mathematical choice set. Persistent
 population state is linear in `P`; game state is linear in `G·D`. With
 `step_history_retention = "full"`, the research prototype retains every
-`WorldStep`, and long-run storage grows approximately as `O(T·P + E)` for `T`
-ticks and `E` financial transfers. `final_only` retains the latest successfully
-completed step and therefore removes the `T·P` term without changing the
-returned steps or final estimand. Aggregate summaries and small game-level
-histories still grow with `T`, and the ledger remains append-only at `O(E)`.
+`WorldStep`, and long-run Python retention grows approximately as `O(T·P)` for
+`T` ticks. `final_only` retains the latest successfully completed step and
+therefore removes that term without changing the returned steps or final
+estimand. With `ledger_backend = "sqlite"`, transfers use `O(E)` disk while
+Python-retained ledger history stays bounded apart from the current batch and
+explicit compatibility snapshots. Aggregate summaries and small game-level
+histories still grow with `T`.
 
 The retained NumPy payload in one full step is at least
 `162P + 16G + 32F + 16S` bytes. At the future baseline of 50,000 players, eight
 games, five firms, four jurisdictions, and 365 ticks, full history alone is
 about 2.754 GiB per world or 5.507 GiB for paired worlds, before Python objects,
-ledger entries, live state, and working arrays. The baseline now selects
-`final_only`, but campaign-scale execution still requires a measured resource
-benchmark and an exact streaming ledger policy.
+ledger storage, live state, and working arrays. The baseline now selects
+`final_only` and file-backed SQLite, but campaign-scale execution still requires
+a measured resource benchmark, storage-capacity plan, and all empirical gates.
 
 ## Structural safeguards
 
@@ -417,6 +442,9 @@ benchmark and an exact streaming ledger policy.
   cumulative addition.
 - Public ranks are a complete permutation with stable game-ID tie-breaking.
 - Event order is stable by tick, priority, insertion sequence, and event ID.
+- Ledger references are binary-unique, each tick commits as one ledger
+  transaction, and a failed tick cannot be retried on the same world.
+- Paired worlds use physically distinct ledger stores.
 - A scientific campaign rejects every non-calibrated evidence dependency.
 - A non-campaign execution is limited to 32 cycles and 5,000 players.
 - Null paired worlds are expected to be exactly identical.

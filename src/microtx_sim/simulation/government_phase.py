@@ -359,11 +359,11 @@ def run_audits(
                 )
         all_resolutions.extend(resolutions)
 
-    _validate_new_ledger_references(world, planned_entries)
+    world.ledger.append_many(planned_entries)
 
     # Resolution ran only on detached StateAgent copies. All arithmetic and
-    # ledger validation has now succeeded, so these assignments cannot expose a
-    # partially applied audit when a late boundary check fails.
+    # the atomic ledger append have now succeeded, so these assignments cannot
+    # expose a partially applied audit when a late boundary check fails.
     for target, source in zip(world.states, planned_states):
         _commit_regulator_private_state(target, source)
     for firm, cash in zip(world.firms, planned_firm_cash):
@@ -371,7 +371,6 @@ def run_audits(
     world.firm_fine_assessed_cents[:] = planned_assessed
     world.firm_fine_paid_cents[:] = planned_paid
     world._public_detections[:] = planned_detections
-    world.ledger.extend(planned_entries)
     return tuple(all_resolutions)
 
 
@@ -479,7 +478,7 @@ def review_subsidies(world: "World", *, tick: int) -> int:
                 )
             )
 
-    _validate_new_ledger_references(world, planned_entries)
+    world.ledger.append_many(planned_entries)
 
     for state, treasury, budget in zip(
         world.states,
@@ -492,7 +491,6 @@ def review_subsidies(world: "World", *, tick: int) -> int:
         firm.state.cash_cents = cash
     world.firm_subsidy_cents[:] = planned_firm_subsidies
     world.state_subsidy_outlay_cents[:] = planned_state_outlays
-    world.ledger.extend(planned_entries)
     world._pending_subsidies[:] = future
     return total
 
@@ -530,18 +528,6 @@ def _checked_add_int64(current: object, increment: object, *, label: str) -> int
     if left > INT64_MAX - right:
         raise OverflowError(f"{label} would overflow int64")
     return left + right
-
-
-def _validate_new_ledger_references(
-    world: "World",
-    entries: list[LedgerEntry],
-) -> None:
-    existing = {entry.reference for entry in world.ledger.entries}
-    planned: set[str] = set()
-    for entry in entries:
-        if entry.reference in existing or entry.reference in planned:
-            raise ValueError(f"duplicate ledger reference: {entry.reference}")
-        planned.add(entry.reference)
 
 
 def _commit_regulator_private_state(target: StateAgent, source: StateAgent) -> None:
