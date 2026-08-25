@@ -21,6 +21,11 @@ from microtx_sim.simulation.accounting import (
     _checked_grouped_money,
     credit_firm_revenue,
 )
+from microtx_sim.simulation.policy_day import PURCHASE_REVENUE_SOURCES
+from microtx_sim.simulation.policy_orchestrator import (
+    ProducerAssumptions,
+    _conventional_revenue,
+)
 from microtx_sim.states.logic import (
     AuditResolution,
     ObservableFirmMetrics,
@@ -74,6 +79,40 @@ def _revenue_result(
         game_unsafe_revenue_cents=(
             np.zeros(game_count, dtype=np.int64) if unsafe is None else unsafe
         ),
+    )
+
+
+def _policy_revenue_state(
+    values: tuple[int, ...],
+    *,
+    channel: str,
+) -> SimpleNamespace:
+    cents = np.asarray(values, dtype=np.int64)
+    purchase = np.zeros(
+        (len(cents), len(PURCHASE_REVENUE_SOURCES)),
+        dtype=np.int64,
+    )
+    fixed = np.zeros(len(cents), dtype=np.int64)
+    subscription = np.zeros(len(cents), dtype=np.int64)
+    if channel == "direct_purchase":
+        purchase[:, 0] = cents
+    elif channel == "fixed_price":
+        fixed[:] = cents
+    elif channel == "subscription":
+        subscription[:] = cents
+    else:
+        raise AssertionError(channel)
+    return SimpleNamespace(
+        player_spend_by_source_cents=purchase,
+        access_fixed_cents=fixed,
+        access_subscription_cents=subscription,
+    )
+
+
+def _policy_scenario_without_access_revenue() -> SimpleNamespace:
+    return SimpleNamespace(
+        fixed_access_price_cents=0,
+        subscription_price_cents=0,
     )
 
 
@@ -279,6 +318,61 @@ class FirmRevenueBoundaryTests(unittest.TestCase):
                 np.asarray([0.0], dtype=np.float64),
                 1,
                 label="test grouping",
+            )
+
+
+class PolicyRevenueBoundaryTests(unittest.TestCase):
+    def test_each_policy_revenue_channel_accepts_exact_int64_maximum(self) -> None:
+        for channel in ("direct_purchase", "fixed_price", "subscription"):
+            with self.subTest(channel=channel):
+                revenue = _conventional_revenue(
+                    _policy_revenue_state(
+                        (INT64_MAX - 1, 1),
+                        channel=channel,
+                    ),
+                    _policy_scenario_without_access_revenue(),
+                    ProducerAssumptions(),
+                )
+
+                self.assertEqual(revenue[channel], INT64_MAX)
+
+    def test_each_policy_revenue_channel_rejects_int64_maximum_plus_one(
+        self,
+    ) -> None:
+        for channel in ("direct_purchase", "fixed_price", "subscription"):
+            with self.subTest(channel=channel):
+                with self.assertRaisesRegex(OverflowError, "outside int64"):
+                    _conventional_revenue(
+                        _policy_revenue_state(
+                            (INT64_MAX, 1),
+                            channel=channel,
+                        ),
+                        _policy_scenario_without_access_revenue(),
+                        ProducerAssumptions(),
+                    )
+
+    def test_policy_revenue_rejects_vector_that_would_wrap_to_zero(self) -> None:
+        with self.assertRaisesRegex(OverflowError, "outside int64"):
+            _conventional_revenue(
+                _policy_revenue_state(
+                    (INT64_MAX, INT64_MAX, 2),
+                    channel="direct_purchase",
+                ),
+                _policy_scenario_without_access_revenue(),
+                ProducerAssumptions(),
+            )
+
+    def test_policy_revenue_rejects_negative_component_even_if_net_is_zero(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(OverflowError, "outside int64"):
+            _conventional_revenue(
+                _policy_revenue_state(
+                    (-1, 1),
+                    channel="direct_purchase",
+                ),
+                _policy_scenario_without_access_revenue(),
+                ProducerAssumptions(),
             )
 
 

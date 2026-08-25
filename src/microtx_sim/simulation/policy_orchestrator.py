@@ -395,12 +395,19 @@ def _conventional_revenue(
     producer: ProducerAssumptions,
 ) -> dict[str, int]:
     values = {
-        source: int(state.player_spend_by_source_cents[:, index].sum(dtype=np.int64))
+        source: _checked_money_total(
+            state.player_spend_by_source_cents[:, index],
+            label=f"{source} revenue",
+        )
         for index, source in enumerate(PURCHASE_REVENUE_SOURCES)
     }
-    values["fixed_price"] = int(state.access_fixed_cents.sum(dtype=np.int64))
-    values["subscription"] = int(
-        state.access_subscription_cents.sum(dtype=np.int64)
+    values["fixed_price"] = _checked_money_total(
+        state.access_fixed_cents,
+        label="fixed-price revenue",
+    )
+    values["subscription"] = _checked_money_total(
+        state.access_subscription_cents,
+        label="subscription revenue",
     )
     alternative_model = bool(
         scenario.fixed_access_price_cents or scenario.subscription_price_cents
@@ -417,6 +424,23 @@ def _conventional_revenue(
         else 0
     )
     return values
+
+
+def _checked_money_total(
+    values: npt.NDArray[np.int64],
+    *,
+    label: str,
+) -> int:
+    """Aggregate non-negative cents exactly before enforcing int64 storage."""
+
+    total = 0
+    maximum = np.iinfo(np.int64).max
+    for raw_value in values:
+        value = int(raw_value)
+        if value < 0 or total > maximum - value:
+            raise OverflowError(f"{label} is outside int64")
+        total += value
+    return total
 
 
 def _has_prohibited_mechanics(scenario: ScenarioSpec) -> bool:
