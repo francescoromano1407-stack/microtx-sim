@@ -19,6 +19,7 @@ from ..causal.batch import (
     PolicyRunInputs,
     resolve_policy_run_inputs,
 )
+from ..causal.design import assess_causal_design
 from ..policy_config import PolicyPrototypeConfig
 from .metric_contracts import build_metric_contract_manifest_payload
 
@@ -70,6 +71,9 @@ def build_run_manifest(
         profile_inputs = profile_lineage.manifest_payload()
     run_input_snapshot = batch.run_input_snapshot()
     run_input_sha256 = batch.run_input_sha256()
+    causal_design = assess_causal_design(
+        batch.spec.scenarios
+    ).manifest_payload(run_input_sha256=run_input_sha256)
     effective_config_snapshot = _effective_config_snapshot(
         config,
         configured_run_inputs,
@@ -128,6 +132,7 @@ def build_run_manifest(
             "retrieved_on"
         ),
         "profile_inputs": profile_inputs,
+        "causal_design": causal_design,
         "output_metric_contracts": output_metric_contracts,
         "repository": {
             "root": str(repository),

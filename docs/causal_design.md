@@ -87,6 +87,32 @@ Personalised offers are disabled in every catalogue scenario. Scenario IDs,
 the safe reference, mechanics, prices, horizon, and seed list are stored in the
 manifest so a label alone never determines treatment.
 
+The causal-design registry freezes the catalogue as a 7-by-17 atomic-factor
+matrix and records all 49 directed pairwise contrasts. Each contrast carries
+its exact factor differences, an identity/single-factor/bundle classification,
+and descriptive roles for the catalogue checks and reported
+`*_effect_vs_safe` outputs. These roles are retrospective diagnostics, not
+planned estimands: the registry status is `RETROSPECTIVE_SYNTHETIC`, it is not
+preregistered, and it always fails the campaign gate pending preregistration
+and empirical calibration.
+
+Every manifest embeds the observed matrix and contrast snapshots, their
+SHA-256 digests, the overall design digest, and the exact `run_input_sha256`
+used for execution. A batch whose named scenarios contain custom factor values
+may still be exported for descriptive work, but it is marked
+`canonical_match=false`, records the exact factor mismatches, and adds the
+`scenario_factor_matrix_not_canonical` campaign blocker. It is never silently
+presented as the canonical design.
+
+Only two catalogue comparisons are genuinely single-factor:
+`baseline_f2p` to `no_random_rewards` changes paid randomness, and
+`baseline_f2p` to `no_time_limited_pressure` changes time-limited offers. The
+transparent-price comparison changes three mechanics, while the cap/cooling
+comparison changes four. Relative to the safe reference, baseline differs on
+15 factors and EPGC differs on three financing/access factors (fixed access
+price, subscription price, and EPGC enablement). The EPGC result therefore
+cannot be interpreted as an isolated EPGC-toggle effect.
+
 ## Same cohort, same initial state, and common random numbers
 
 Within each seed, `run_policy_batch()` creates the synthetic `PlayerTable` and

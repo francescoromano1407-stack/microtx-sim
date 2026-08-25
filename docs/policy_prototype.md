@@ -32,6 +32,7 @@ feedback from `microtx_sim.core.world`.
 | `microtx_sim.policy_config` | Strictly parses the synthetic prototype TOML and rejects unknown or ambiguous fields. | `PolicyPrototypeConfig`, `PolicyOutputConfig`, `load_policy_config()` |
 | `microtx_sim.domain.monetisation` | Defines the explicit intervention vector, transparency/pressure summaries, cap, and cooling-off constraints. | `MonetisationVector` |
 | `microtx_sim.causal.scenarios` | Declares exactly seven stable scenarios and the safe reference-compatible catalogue. | `ScenarioId`, `ScenarioSpec`, `required_scenarios()`, `scenario_by_id()` |
+| `microtx_sim.causal.design` | Freezes the 17-factor scenario matrix and descriptive pairwise-contrast registry, detects custom factor drift, and fails campaign use closed. | `CausalDesignRegistry`, `CausalDesignAssessment`, `build_causal_design_registry()`, `assess_causal_design()` |
 | `microtx_sim.consumers.population` | Creates the seeded heterogeneous demographic and financial cohort. | `initialize_player_table()` |
 | `microtx_sim.consumers.welfare` | Creates aligned pre-treatment commitments, obligations, enjoyment, vulnerability, habit, reinforcement, sleep, and wellbeing state. | `PlayerLifeTable`, `initialize_player_life()` |
 | `microtx_sim.consumers.decision` | Evaluates the complete life-action set with interpretable utilities and counter-based Gumbel shocks. | `LifeAction`, `DecisionParameters`, `choose_life_action()` |
@@ -310,7 +311,7 @@ parameter distributions.
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden, and monetary proxies by scenario. |
 | `epgc_financing.csv` | Public revenue, minimum contribution, cap, safe profit, feasibility, sustainability, clawback, and penalty by seed. |
 | `sensitivity.csv` | Parameter levels, uncertainty, monotonicity, and instability diagnostics. |
-| `manifest.json` | Schema and export-time file digest; effective typed-config, exact execution-input, sensitivity-design, source, and profile snapshots/digests; output-metric registry; Git/environment/command; seeds, cohorts, scenarios, equations, assumptions, and scope limits. |
+| `manifest.json` | Schema and export-time file digest; effective typed-config, exact execution-input, sensitivity-design, causal-factor matrix and contrast snapshots/digests/status/blockers, source and profile snapshots/digests; output-metric registry; Git/environment/command; seeds, cohorts, scenarios, equations, assumptions, and scope limits. |
 | `summary.md` | Concise human-readable synthetic scenario table and interpretation warning. |
 | `harm_distribution.svg` | Baseline F2P composite-harm histogram. |
 | `spending_distribution.svg` | Baseline F2P spending histogram. |
@@ -330,6 +331,12 @@ source-version and retrieval metadata, upstream lineage, and status. All remain
 `SYNTHETIC`. The manifest's `campaign_ready` flag for this registry is therefore
 false even when the software run itself succeeds. This prevents exact software
 lineage from being mistaken for calibration.
+
+The four seed-level `*_effect_vs_safe` contracts and the five exported
+repeated-seed derivatives of `mean_harm_effect_vs_safe` additionally name
+`causal_design.design_sha256` as lineage. Their values are therefore bound not
+only to the executed factor values but also to the registered contrast
+interpretation and classification.
 
 The 23 repeated-seed metric stems are one public contract shared by schema
 generation, aggregation, and provenance validation. Their variance fields use

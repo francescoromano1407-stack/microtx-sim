@@ -19,6 +19,7 @@ from microtx_sim.causal.batch import (
     PolicyBatchSpec,
     run_policy_batch,
 )
+from microtx_sim.causal.scenarios import required_scenarios
 from microtx_sim.consumers.decision import DecisionParameters
 from microtx_sim.consumers.population import CountryProfile
 from microtx_sim.data.profiles import load_profile_bundle
@@ -153,6 +154,101 @@ class PolicyExportTests(unittest.TestCase):
                 manifest["run_input_sha256"],
                 _canonical_sha256(manifest["run_input_snapshot"]),
             )
+            causal_design = manifest["causal_design"]
+            self.assertEqual(causal_design["schema_version"], "1.0")
+            self.assertEqual(
+                causal_design["status"],
+                "RETROSPECTIVE_SYNTHETIC",
+            )
+            self.assertFalse(causal_design["preregistered"])
+            self.assertFalse(causal_design["planned_estimands"])
+            self.assertFalse(causal_design["preregistered_estimands"])
+            self.assertFalse(causal_design["campaign_ready"])
+            self.assertTrue(causal_design["canonical_match"])
+            self.assertEqual(
+                causal_design["campaign_blockers"],
+                [
+                    "retrospective_synthetic_design",
+                    "causal_design_not_preregistered",
+                    "empirical_calibration_required",
+                ],
+            )
+            self.assertEqual(len(causal_design["factor_names"]), 17)
+            self.assertEqual(len(causal_design["factor_specs"]), 17)
+            self.assertEqual(len(causal_design["scenario_matrix"]), 7)
+            self.assertEqual(causal_design["contrast_count"], 49)
+            self.assertEqual(len(causal_design["contrasts"]), 49)
+            self.assertEqual(
+                causal_design["contrast_scope"],
+                "exhaustive_directed_pairwise_diagnostics",
+            )
+            self.assertEqual(causal_design["canonical_mismatches"], [])
+            self.assertEqual(
+                causal_design["scenario_matrix_sha256"],
+                _canonical_sha256(
+                    {
+                        "schema_version": causal_design["schema_version"],
+                        "factor_names": causal_design["factor_names"],
+                        "scenario_matrix": causal_design["scenario_matrix"],
+                    }
+                ),
+            )
+            self.assertEqual(
+                causal_design["scenario_matrix_sha256"],
+                causal_design["canonical_scenario_matrix_sha256"],
+            )
+            self.assertEqual(
+                causal_design["contrasts_sha256"],
+                _canonical_sha256(
+                    {
+                        "schema_version": causal_design["schema_version"],
+                        "factor_names": causal_design["factor_names"],
+                        "contrast_scope": causal_design["contrast_scope"],
+                        "contrasts": causal_design["contrasts"],
+                    }
+                ),
+            )
+            design_snapshot = {
+                key: value
+                for key, value in causal_design.items()
+                if key
+                not in {
+                    "design_sha256",
+                    "assessment_sha256",
+                    "canonical_design_sha256",
+                    "canonical_scenario_matrix_sha256",
+                    "canonical_mismatches",
+                    "run_input_sha256",
+                }
+            }
+            self.assertEqual(
+                causal_design["design_sha256"],
+                _canonical_sha256(design_snapshot),
+            )
+            assessment_snapshot = {
+                key: value
+                for key, value in causal_design.items()
+                if key
+                not in {
+                    "design_sha256",
+                    "assessment_sha256",
+                    "canonical_design_sha256",
+                    "run_input_sha256",
+                }
+            }
+            self.assertEqual(
+                causal_design["assessment_sha256"],
+                _canonical_sha256(assessment_snapshot),
+            )
+            self.assertEqual(
+                causal_design["design_sha256"],
+                causal_design["canonical_design_sha256"],
+            )
+            self.assertEqual(
+                causal_design["run_input_sha256"],
+                manifest["run_input_sha256"],
+            )
+            self.assertEqual(len(causal_design["canonical_design_sha256"]), 64)
             self.assertEqual(
                 manifest["output_metric_contracts"]["run_input_lineage"][
                     "run_input_sha256"
@@ -206,6 +302,89 @@ class PolicyExportTests(unittest.TestCase):
                     self.assertEqual(next(csv.reader(handle)), list(columns))
             for svg in output.glob("*.svg"):
                 ET.parse(svg)
+
+    def test_custom_factor_matrix_exports_descriptively_but_blocks_campaign(
+        self,
+    ) -> None:
+        base = load_policy_config(CONFIG_PATH)
+        canonical = required_scenarios()
+        custom_baseline = replace(
+            canonical[0],
+            mechanics=replace(
+                canonical[0].mechanics,
+                paid_random_rewards=0.69,
+            ),
+        )
+        spec = PolicyBatchSpec(
+            seeds=(37,),
+            days=0,
+            player_count=0,
+            scenarios=(custom_baseline, *canonical[1:]),
+            decision_parameters=DecisionParameters(step_minutes=240),
+        )
+        profile = CountryProfile(code="XX")
+        batch = run_policy_batch(
+            spec,
+            country_profiles=(profile,),
+            harm_parameters=base.harm_parameters,
+            harm_weights=base.harm_weights,
+            opportunity_valuation=base.opportunity_valuation,
+            producer_assumptions=base.producer_assumptions,
+            epgc_policy=base.epgc_policy,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "custom-bundle"
+            config = replace(
+                base,
+                batch=spec,
+                output=PolicyOutputConfig(output, 8, False, False),
+            )
+            export_policy_batch(
+                config,
+                batch,
+                None,
+                config_path=CONFIG_PATH,
+                repository_root=ROOT,
+                created_utc="2026-01-01T00:00:00+00:00",
+            )
+
+            manifest = json.loads((output / "manifest.json").read_text("utf-8"))
+            causal_design = manifest["causal_design"]
+            self.assertFalse(causal_design["canonical_match"])
+            self.assertFalse(causal_design["campaign_ready"])
+            self.assertIn(
+                "scenario_factor_matrix_not_canonical",
+                causal_design["campaign_blockers"],
+            )
+            self.assertEqual(causal_design["contrast_count"], 49)
+            self.assertEqual(len(causal_design["contrasts"]), 49)
+            self.assertNotEqual(
+                causal_design["scenario_matrix_sha256"],
+                causal_design["canonical_scenario_matrix_sha256"],
+            )
+            self.assertNotEqual(
+                causal_design["design_sha256"],
+                causal_design["canonical_design_sha256"],
+            )
+            self.assertEqual(
+                causal_design["run_input_sha256"],
+                manifest["run_input_sha256"],
+            )
+            self.assertEqual(
+                causal_design["canonical_mismatches"],
+                [
+                    {
+                        "scenario_id": "baseline_f2p",
+                        "factor_differences": [
+                            {
+                                "factor": "paid_random_rewards",
+                                "reference_value": 0.7,
+                                "comparison_value": 0.69,
+                            }
+                        ],
+                    }
+                ],
+            )
 
     def test_execution_mismatches_fail_before_any_export_mutation(self) -> None:
         base = load_policy_config(CONFIG_PATH)

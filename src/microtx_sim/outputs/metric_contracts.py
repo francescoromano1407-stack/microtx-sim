@@ -233,6 +233,7 @@ _BASE_LINEAGE = (
     "repository.git_commit",
     "random_stream_contract",
 )
+_CAUSAL_DESIGN_LINEAGE = "causal_design.design_sha256"
 
 
 def _contract(
@@ -677,6 +678,10 @@ def _build_seed_contracts() -> dict[str, OutputMetricContract]:
                     else "microtx_sim.causal.batch._seed_row"
                 )
             ),
+            lineage_ids=(
+                _BASE_LINEAGE
+                + ((_CAUSAL_DESIGN_LINEAGE,) if effect else ())
+            ),
             range_semantics=(
                 "[0, 1]"
                 if column in {"high_risk_share", "high_risk_minor_share"}
@@ -817,7 +822,15 @@ def _build_summary_contracts(
             formula=formula,
             inputs=(f"seed_results.csv:{stem}", "seed_results.csv:scenario_id"),
             implementation="microtx_sim.causal.batch._uncertainty",
-            lineage_ids=_BASE_LINEAGE + (f"seed_results.csv:{stem}",),
+            lineage_ids=(
+                _BASE_LINEAGE
+                + (
+                    (_CAUSAL_DESIGN_LINEAGE,)
+                    if "effect_vs_safe" in stem
+                    else ()
+                )
+                + (f"seed_results.csv:{stem}",)
+            ),
             range_semantics=(
                 "non-negative"
                 if suffix in {"variance", "sd"}

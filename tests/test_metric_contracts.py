@@ -111,12 +111,37 @@ class OutputMetricContractTests(unittest.TestCase):
                         contract.lineage_ids,
                     )
 
+    def test_only_safe_reference_effects_link_the_causal_design_digest(
+        self,
+    ) -> None:
+        seed_effects = {
+            key
+            for key in OUTPUT_METRIC_CONTRACTS
+            if key[0] == "seed_results.csv"
+            and "_effect_vs_safe" in key[1]
+        }
+        summary_derivatives = {
+            key
+            for key in OUTPUT_METRIC_CONTRACTS
+            if key[0] == "scenario_summary.csv"
+            and key[1].startswith("mean_harm_effect_vs_safe_")
+        }
+        self.assertEqual(len(seed_effects), 4)
+        self.assertEqual(len(summary_derivatives), 5)
+        expected = seed_effects | summary_derivatives
+        for key, contract in OUTPUT_METRIC_CONTRACTS.items():
+            with self.subTest(contract=contract.contract_id):
+                self.assertEqual(
+                    "causal_design.design_sha256" in contract.lineage_ids,
+                    key in expected,
+                )
+
     def test_registry_digest_and_snapshot_are_frozen(self) -> None:
         self.assertEqual(METRIC_CONTRACT_SCHEMA_VERSION, "1.0")
         self.assertEqual(OUTPUT_SCHEMA_VERSION, "2.0")
         self.assertEqual(
             metric_contract_registry_sha256(),
-            "ddda63b154eddc572213ee0da76303de972a26fed7b8e348b395831bdc56975a",
+            "1b700ad15e299a77ae7da94f5fe79e0dba36e3f4b35f312fa0eb028416f9eeef",
         )
         snapshot = metric_contract_registry_snapshot()
         self.assertEqual(len(snapshot), 220)

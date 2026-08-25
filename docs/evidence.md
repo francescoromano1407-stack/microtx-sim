@@ -152,6 +152,14 @@ missing metric-level empirical retrieval dates, so the policy prototype cannot
 be promoted merely because its files, configuration, and Git revision are
 reproducible.
 
+Causal-design validation is also independently fail-closed. The current
+seven-scenario matrix and its 49 directed contrasts were registered
+retrospectively inside a synthetic structural model, not preregistered as an
+empirical design. The manifest therefore records explicit retrospective,
+preregistration, and empirical-calibration blockers even when the canonical
+matrix is used. Custom factor values remain descriptively exportable, but add a
+canonical-matrix mismatch blocker and can never inherit the canonical claim.
+
 Passing this software gate will be necessary but not sufficient. The policy
 prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,
 and a versioned run manifest, but those are structural diagnostics. A scientific
