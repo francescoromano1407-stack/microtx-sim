@@ -66,8 +66,9 @@ underlying parameters describe any observed game or jurisdiction.
 
 The supplied file uses seeds `101`, `202`, and `303`, 14 days, and 1,000
 players. Changing these values changes the synthetic experiment and therefore
-the configuration hash recorded in the manifest. Duplicate seeds are rejected;
-input order is not experiment semantics and cannot change aggregate results.
+the effective-config and run-input hashes recorded in the manifest. Duplicate
+seeds are rejected; input order is not experiment semantics and cannot change
+aggregate results.
 Manifests retain both JSON integer seeds and canonical decimal strings. Consumers
 whose JSON number implementation cannot exactly represent integers above
 `2^53 - 1` must use `batch.seed_decimal_strings`.
@@ -152,7 +153,15 @@ existing programme, legal entitlement, or subsidy application.
 
 A complete `reproduce` run writes the 13 artifacts documented in
 [Usage](usage.md). `--output` changes only the destination; it does not change
-the model or configuration hash.
+the model or execution-input hash.
+
+The manifest preserves the released `config_sha256` meaning: it is the digest
+of the file bytes observed when export builds the manifest, not proof of the
+bytes parsed earlier. `effective_config_sha256` hashes the normalized typed
+configuration object, and `run_input_sha256` hashes the exact batch design,
+resolved model inputs, and profile fingerprint that produced the result. Export
+fails before touching its destination if the supplied configuration differs
+from the retained execution inputs.
 
 ### Policy validation and execution
 

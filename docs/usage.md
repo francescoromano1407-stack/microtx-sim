@@ -71,7 +71,9 @@ python -m microtx_sim policy-sensitivity configs/policy_prototype.toml
 This writes `sensitivity.csv` and `sensitivity_metadata.json` to the configured
 output directory, or to the directory supplied with `--output`. It is useful
 for focused monotonicity and stability checks; it does not write the full batch
-artifact set.
+artifact set. Its metadata resolves both the sensitivity-design digest and the
+canonical batch/model/profile `run_input_sha256` cited by the CSV contracts,
+and records the output-schema version, row count, and exact CSV digest.
 
 ## Reproduce the complete synthetic result set
 
@@ -90,7 +92,7 @@ analysis, then writes these 13 files:
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden scores, and monetary proxies. |
 | `epgc_financing.csv` | Auditable public-contract components, costs, minimum contribution, and safe profit. |
 | `sensitivity.csv` | One-at-a-time sensitivity results and expected-direction checks. |
-| `manifest.json` | Configuration/source/profile-input hashes, exact profile snapshot, source retrieval date, contract summaries, actual profile codes, Git state, environment, seeds, cohort digests, equations, and scope limits. |
+| `manifest.json` | Export-time config-file observation, effective typed-config and exact execution-input snapshots/hashes, sensitivity design snapshot/hash, source/profile lineage, Git state, seeds, cohort digests, equations, and scope limits. |
 | `summary.md` | Human-readable synthetic scenario comparison. |
 | `harm_distribution.svg` | Player harm distribution. |
 | `spending_distribution.svg` | Player spending distribution. |
@@ -105,6 +107,11 @@ row keys. `manifest.json` intentionally records
 the run timestamp, absolute paths, environment, Git revision, and dirty state,
 so the manifest itself is an audit record rather than a promise of identical
 bytes across machines or invocation times.
+
+Before any file is created or replaced, export requires the configuration,
+batch, and optional sensitivity result to agree on the batch specification,
+five resolved model-input groups, and profile fingerprint. Preflight mismatches
+leave a new destination absent and an existing destination unchanged.
 
 The CLI uses one validated profile bundle for both the policy batch and its
 sensitivity analysis. Python callers can instead pass `country_profiles=...`;

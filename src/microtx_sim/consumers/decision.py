@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 from math import isfinite
+from numbers import Real
 
 import numpy as np
 import numpy.typing as npt
@@ -55,6 +56,7 @@ class DecisionParameters:
             raise TypeError("step_minutes must be an integer")
         if self.step_minutes <= 0 or 1_440 % self.step_minutes:
             raise ValueError("step_minutes must be a positive divisor of 1440")
+        object.__setattr__(self, "step_minutes", int(self.step_minutes))
         for name in (
             "temperature",
             "habit_persistence",
@@ -62,8 +64,12 @@ class DecisionParameters:
             "reinforcement_learning_rate",
         ):
             value = getattr(self, name)
-            if not isfinite(value) or value <= 0.0:
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError(f"{name} must be a real number")
+            normalized = float(value)
+            if not isfinite(normalized) or normalized <= 0.0:
                 raise ValueError(f"{name} must be finite and positive")
+            object.__setattr__(self, name, normalized)
         if self.temperature > 5.0:
             raise ValueError("temperature must not exceed 5")
         if self.habit_persistence > 1.0:

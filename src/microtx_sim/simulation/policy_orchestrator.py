@@ -57,6 +57,15 @@ class ProducerAssumptions:
                 raise TypeError(f"{name} must be an integer")
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")
+            object.__setattr__(self, name, int(value))
+        for name in (
+            "accessibility_eligible",
+            "multilingual_support_eligible",
+            "cultural_value_eligible",
+            "safety_certified",
+        ):
+            if not isinstance(getattr(self, name), bool):
+                raise TypeError(f"{name} must be a boolean")
 
 
 def default_epgc_policy() -> EPGCPolicy:

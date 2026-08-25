@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 import unittest
 
@@ -34,7 +35,7 @@ CONFIG_PATH = ROOT / "configs" / "policy_prototype.toml"
 class OutputMetricContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.config = load_policy_config(CONFIG_PATH)
+        base_config = load_policy_config(CONFIG_PATH)
         cls.bundle = load_profile_bundle()
         cls.spec = PolicyBatchSpec(
             seeds=(73,),
@@ -42,7 +43,16 @@ class OutputMetricContractTests(unittest.TestCase):
             player_count=0,
             decision_parameters=DecisionParameters(step_minutes=240),
         )
-        cls.batch = run_policy_batch(cls.spec, profile_bundle=cls.bundle)
+        cls.config = replace(base_config, batch=cls.spec)
+        cls.batch = run_policy_batch(
+            cls.spec,
+            profile_bundle=cls.bundle,
+            harm_parameters=cls.config.harm_parameters,
+            harm_weights=cls.config.harm_weights,
+            opportunity_valuation=cls.config.opportunity_valuation,
+            producer_assumptions=cls.config.producer_assumptions,
+            epgc_policy=cls.config.epgc_policy,
+        )
 
     def test_registry_exhaustively_matches_all_six_table_schemas(self) -> None:
         expected = tuple(
@@ -80,12 +90,33 @@ class OutputMetricContractTests(unittest.TestCase):
                 self.assertIs(contract.status, ProvenanceStatus.SYNTHETIC)
                 self.assertIsNone(contract.source_retrieved_on)
 
+    def test_every_contract_links_the_authoritative_run_input_digest(self) -> None:
+        for contract in OUTPUT_METRIC_CONTRACTS.values():
+            with self.subTest(contract=contract.contract_id):
+                self.assertIn("run_input_sha256", contract.lineage_ids)
+
+    def test_only_sensitivity_contracts_link_the_sensitivity_execution_digest(
+        self,
+    ) -> None:
+        for contract in OUTPUT_METRIC_CONTRACTS.values():
+            with self.subTest(contract=contract.contract_id):
+                if contract.artifact == "sensitivity.csv":
+                    self.assertIn(
+                        "sensitivity.execution_sha256",
+                        contract.lineage_ids,
+                    )
+                else:
+                    self.assertNotIn(
+                        "sensitivity.execution_sha256",
+                        contract.lineage_ids,
+                    )
+
     def test_registry_digest_and_snapshot_are_frozen(self) -> None:
         self.assertEqual(METRIC_CONTRACT_SCHEMA_VERSION, "1.0")
         self.assertEqual(OUTPUT_SCHEMA_VERSION, "2.0")
         self.assertEqual(
             metric_contract_registry_sha256(),
-            "13778cfe136d5800333ce5ec3797195d7e33d98c71499060702c39af333cbe64",
+            "ddda63b154eddc572213ee0da76303de972a26fed7b8e348b395831bdc56975a",
         )
         snapshot = metric_contract_registry_snapshot()
         self.assertEqual(len(snapshot), 220)

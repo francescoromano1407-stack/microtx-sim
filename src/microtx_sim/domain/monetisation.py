@@ -43,10 +43,22 @@ class MonetisationVector:
     personalized_offers: bool = False
 
     def __post_init__(self) -> None:
-        _nonnegative_int(self.direct_price_cents, "direct_price_cents")
+        object.__setattr__(
+            self,
+            "direct_price_cents",
+            _nonnegative_int(self.direct_price_cents, "direct_price_cents"),
+        )
         if self.spending_cap_cents is not None:
-            _nonnegative_int(self.spending_cap_cents, "spending_cap_cents")
-        _nonnegative_int(self.cooling_off_hours, "cooling_off_hours")
+            object.__setattr__(
+                self,
+                "spending_cap_cents",
+                _nonnegative_int(self.spending_cap_cents, "spending_cap_cents"),
+            )
+        object.__setattr__(
+            self,
+            "cooling_off_hours",
+            _nonnegative_int(self.cooling_off_hours, "cooling_off_hours"),
+        )
         for name in (
             "opaque_virtual_currency",
             "paid_random_rewards",
@@ -61,8 +73,10 @@ class MonetisationVector:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, Real):
                 raise TypeError(f"{name} must be a real number")
-            if not isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
+            normalized = float(value)
+            if not isfinite(normalized) or not 0.0 <= normalized <= 1.0:
                 raise ValueError(f"{name} must be finite and in [0, 1]")
+            object.__setattr__(self, name, normalized)
         if not isinstance(self.real_currency_price_display, bool):
             raise TypeError("real_currency_price_display must be boolean")
         if not isinstance(self.personalized_offers, bool):

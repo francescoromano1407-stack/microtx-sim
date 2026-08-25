@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from hashlib import sha256
+from json import dumps
 from math import sqrt
 from types import MappingProxyType
 from typing import Mapping, Sequence
@@ -30,6 +31,7 @@ from ..rng import CounterRNG, validate_seed
 from ..simulation.policy_orchestrator import (
     PolicyScenarioResult,
     ProducerAssumptions,
+    default_epgc_policy,
     run_policy_scenario,
 )
 from .scenarios import ScenarioId, ScenarioSpec, required_scenarios
@@ -57,13 +59,19 @@ class PolicyBatchSpec:
         if len(set(validated_seeds)) != len(validated_seeds):
             raise ValueError("seeds must be unique")
         object.__setattr__(self, "seeds", tuple(sorted(validated_seeds)))
+        scenarios = tuple(self.scenarios)
+        for index, scenario in enumerate(scenarios):
+            if type(scenario) is not ScenarioSpec:
+                raise TypeError(f"scenarios[{index}] must be a ScenarioSpec")
+        object.__setattr__(self, "scenarios", scenarios)
         for name in ("days", "player_count"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):
                 raise TypeError(f"{name} must be an integer")
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")
-        ids = tuple(scenario.scenario_id for scenario in self.scenarios)
+            object.__setattr__(self, name, int(value))
+        ids = tuple(scenario.scenario_id for scenario in scenarios)
         if len(set(ids)) != len(ids):
             raise ValueError("scenario ids must be unique")
         if set(ids) != set(ScenarioId):
@@ -80,6 +88,147 @@ class PolicyBatchSpec:
                 "the effect_vs_safe output contract requires "
                 "safe_fixed_price_subscription as its reference scenario"
             )
+        if type(self.decision_parameters) is not DecisionParameters:
+            raise TypeError("decision_parameters must be DecisionParameters")
+
+    def snapshot(self) -> dict[str, object]:
+        """Return the exact normalized batch design as JSON-compatible values."""
+
+        snapshot = _primitive_snapshot(asdict(self))
+        if not isinstance(snapshot, dict):
+            raise AssertionError("PolicyBatchSpec snapshot must be a dictionary")
+        return snapshot
+
+    def snapshot_sha256(self) -> str:
+        """Return the canonical SHA-256 digest of :meth:`snapshot`."""
+
+        return _snapshot_sha256(self.snapshot())
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyRunInputs:
+    """Fully materialized model inputs shared by every scenario execution."""
+
+    harm_parameters: HarmModelParameters
+    harm_weights: WelfareHarmWeights
+    opportunity_valuation: OpportunityCostValuation
+    producer_assumptions: ProducerAssumptions
+    epgc_policy: EPGCPolicy
+
+    def __post_init__(self) -> None:
+        expected_types = {
+            "harm_parameters": HarmModelParameters,
+            "harm_weights": WelfareHarmWeights,
+            "opportunity_valuation": OpportunityCostValuation,
+            "producer_assumptions": ProducerAssumptions,
+            "epgc_policy": EPGCPolicy,
+        }
+        for name, expected_type in expected_types.items():
+            if type(getattr(self, name)) is not expected_type:
+                raise TypeError(f"{name} must be {expected_type.__name__}")
+        self.harm_weights.as_array()
+
+    def snapshot(self) -> dict[str, object]:
+        """Return a detached primitive snapshot for manifests and comparisons."""
+
+        snapshot = _primitive_snapshot(asdict(self))
+        if not isinstance(snapshot, dict):
+            raise AssertionError("PolicyRunInputs snapshot must be a dictionary")
+        return snapshot
+
+    def snapshot_sha256(self) -> str:
+        """Return the canonical SHA-256 digest of :meth:`snapshot`."""
+
+        return _snapshot_sha256(self.snapshot())
+
+
+def resolve_policy_run_inputs(
+    *,
+    harm_parameters: HarmModelParameters | None = None,
+    harm_weights: WelfareHarmWeights | None = None,
+    opportunity_valuation: OpportunityCostValuation | None = None,
+    producer_assumptions: ProducerAssumptions | None = None,
+    epgc_policy: EPGCPolicy | None = None,
+) -> PolicyRunInputs:
+    """Resolve every optional policy input exactly once at the run boundary."""
+
+    return PolicyRunInputs(
+        harm_parameters=(
+            harm_parameters
+            if harm_parameters is not None
+            else HarmModelParameters()
+        ),
+        harm_weights=(
+            harm_weights
+            if harm_weights is not None
+            else WelfareHarmWeights()
+        ),
+        opportunity_valuation=(
+            opportunity_valuation
+            if opportunity_valuation is not None
+            else OpportunityCostValuation()
+        ),
+        producer_assumptions=(
+            producer_assumptions
+            if producer_assumptions is not None
+            else ProducerAssumptions()
+        ),
+        epgc_policy=(
+            epgc_policy
+            if epgc_policy is not None
+            else default_epgc_policy()
+        ),
+    )
+
+
+def build_policy_run_input_snapshot(
+    *,
+    batch_spec: PolicyBatchSpec,
+    run_inputs: PolicyRunInputs,
+    profile_input_fingerprint_sha256: str | None,
+) -> dict[str, object]:
+    """Build the canonical execution-input payload shared by all exports."""
+
+    if type(batch_spec) is not PolicyBatchSpec:
+        raise TypeError("batch_spec must be PolicyBatchSpec")
+    if type(run_inputs) is not PolicyRunInputs:
+        raise TypeError("run_inputs must be PolicyRunInputs")
+    fingerprint = profile_input_fingerprint_sha256
+    if fingerprint is not None:
+        if not isinstance(fingerprint, str):
+            raise TypeError(
+                "profile_input_fingerprint_sha256 must be a string or None"
+            )
+        if len(fingerprint) != 64 or any(
+            character not in "0123456789abcdef" for character in fingerprint
+        ):
+            raise ValueError(
+                "profile_input_fingerprint_sha256 must be lowercase SHA-256 hex"
+            )
+    return {
+        "batch_spec": batch_spec.snapshot(),
+        "model_inputs": run_inputs.snapshot(),
+        "profile_input_fingerprint_sha256": fingerprint,
+    }
+
+
+def policy_run_input_sha256(
+    *,
+    batch_spec: PolicyBatchSpec,
+    run_inputs: PolicyRunInputs,
+    profile_input_fingerprint_sha256: str | None,
+) -> str:
+    """Hash the canonical execution-input payload shared by all exports."""
+
+    return _snapshot_sha256(
+        build_policy_run_input_snapshot(
+            batch_spec=batch_spec,
+            run_inputs=run_inputs,
+            profile_input_fingerprint_sha256=(
+                profile_input_fingerprint_sha256
+            ),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +250,15 @@ class PolicyBatchResult:
     spec: PolicyBatchSpec
     records: tuple[SeedScenarioRecord, ...]
     cohort_digest_by_seed: Mapping[int, str]
+    run_inputs: PolicyRunInputs
     country_profiles: tuple[CountryProfile, ...] = ()
     profile_input_lineage: ProfileInputLineage | None = None
 
     def __post_init__(self) -> None:
+        if type(self.spec) is not PolicyBatchSpec:
+            raise TypeError("spec must be PolicyBatchSpec")
+        if type(self.run_inputs) is not PolicyRunInputs:
+            raise TypeError("run_inputs must be PolicyRunInputs")
         expected = len(self.spec.seeds) * len(self.spec.scenarios)
         if len(self.records) != expected:
             raise ValueError(f"expected {expected} seed-scenario records")
@@ -151,6 +305,24 @@ class PolicyBatchResult:
             if not isinstance(self.profile_input_lineage, ProfileInputLineage):
                 raise TypeError("profile_input_lineage must be ProfileInputLineage")
             self.profile_input_lineage.validate_country_profiles(profiles)
+
+    def run_input_snapshot(self) -> dict[str, object]:
+        """Return the canonical design, model inputs, and profile locator."""
+
+        return build_policy_run_input_snapshot(
+            batch_spec=self.spec,
+            run_inputs=self.run_inputs,
+            profile_input_fingerprint_sha256=(
+                self.profile_input_lineage.fingerprint_sha256
+                if self.profile_input_lineage is not None
+                else None
+            ),
+        )
+
+    def run_input_sha256(self) -> str:
+        """Hash :meth:`run_input_snapshot` canonically."""
+
+        return _snapshot_sha256(self.run_input_snapshot())
 
     def seed_rows(self) -> list[dict[str, object]]:
         """Return one machine-readable aggregate row per seed and scenario."""
@@ -357,8 +529,15 @@ def run_policy_batch(
 ) -> PolicyBatchResult:
     """Run all scenarios on the same seeded cohort within each replication."""
 
-    if not isinstance(spec, PolicyBatchSpec):
+    if type(spec) is not PolicyBatchSpec:
         raise TypeError("spec must be PolicyBatchSpec")
+    run_inputs = resolve_policy_run_inputs(
+        harm_parameters=harm_parameters,
+        harm_weights=harm_weights,
+        opportunity_valuation=opportunity_valuation,
+        producer_assumptions=producer_assumptions,
+        epgc_policy=epgc_policy,
+    )
     profiles, profile_lineage = resolve_profile_inputs(
         country_profiles=country_profiles,
         profile_bundle=profile_bundle,
@@ -380,11 +559,11 @@ def run_policy_batch(
                 seed=seed,
                 days=spec.days,
                 decision_parameters=spec.decision_parameters,
-                harm_parameters=harm_parameters,
-                harm_weights=harm_weights,
-                opportunity_valuation=opportunity_valuation,
-                producer_assumptions=producer_assumptions,
-                epgc_policy=epgc_policy,
+                harm_parameters=run_inputs.harm_parameters,
+                harm_weights=run_inputs.harm_weights,
+                opportunity_valuation=run_inputs.opportunity_valuation,
+                producer_assumptions=run_inputs.producer_assumptions,
+                epgc_policy=run_inputs.epgc_policy,
             )
         reference = scenario_results[spec.reference_scenario]
         for scenario in spec.scenarios:
@@ -416,6 +595,7 @@ def run_policy_batch(
         spec=spec,
         records=tuple(records),
         cohort_digest_by_seed=digests,
+        run_inputs=run_inputs,
         country_profiles=profiles,
         profile_input_lineage=profile_lineage,
     )
@@ -535,10 +715,40 @@ def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float:
     return float(np.mean(values[mask])) if np.any(mask) else 0.0
 
 
+def _primitive_snapshot(value: object) -> object:
+    if isinstance(value, ScenarioId):
+        return value.value
+    if isinstance(value, dict):
+        return {
+            str(key): _primitive_snapshot(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (tuple, list)):
+        return [_primitive_snapshot(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def _snapshot_sha256(snapshot: dict[str, object]) -> str:
+    encoded = dumps(
+        snapshot,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
 __all__ = [
     "PolicyBatchResult",
     "PolicyBatchSpec",
+    "PolicyRunInputs",
     "REPEATED_SEED_METRIC_STEMS",
     "SeedScenarioRecord",
+    "build_policy_run_input_snapshot",
+    "policy_run_input_sha256",
     "run_policy_batch",
+    "resolve_policy_run_inputs",
 ]

@@ -252,6 +252,16 @@ random coordinates within each seed. It records harm, revenue, opportunity
 cost, EPGC contribution, Monte Carlo dispersion, expected monotonic direction,
 observed monotonicity, and an instability flag.
 
+Each sensitivity result retains its exact batch specification, ordered cases,
+normalized levels, instability threshold, fixed numerical tolerances, resolved
+model inputs, and profile fingerprint. Rows are copied, validated against those
+inputs, required to match the exhaustive output columns, checked for internal
+variance/standard-deviation/interval/CV identities, canonically ordered, and
+made immutable. Mechanic and affordability levels must lie in `[0, 1]`;
+decision temperature must lie in `(0, 5]`. Combined export rejects a sensitivity
+result produced from a different batch design or resolved input bundle before
+writing any artifact.
+
 One-at-a-time analysis does not identify interactions or provide a posterior
 distribution. The configured grids and monotonic expectations are face-validity
 checks over synthetic assumptions. Global, joint, and empirically informed

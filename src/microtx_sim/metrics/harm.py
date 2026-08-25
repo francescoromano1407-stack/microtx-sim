@@ -53,6 +53,20 @@ class WelfareHarmWeights:
     family_social: float = 1.0
     wellbeing: float = 1.0
 
+    def __post_init__(self) -> None:
+        values: list[float] = []
+        for name in self.__dataclass_fields__:
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError(f"{name} must be a real number")
+            normalized = float(value)
+            if not isfinite(normalized) or normalized < 0.0:
+                raise ValueError("harm weights must be finite and non-negative")
+            object.__setattr__(self, name, normalized)
+            values.append(normalized)
+        if sum(values) <= 0.0:
+            raise ValueError("at least one harm weight must be positive")
+
     def as_array(self) -> FloatArray:
         values = np.asarray(
             (
@@ -65,10 +79,6 @@ class WelfareHarmWeights:
             ),
             dtype=np.float64,
         )
-        if not np.all(np.isfinite(values)) or np.any(values < 0.0):
-            raise ValueError("harm weights must be finite and non-negative")
-        if values.sum() <= 0.0:
-            raise ValueError("at least one harm weight must be positive")
         return values
 
 
@@ -92,7 +102,11 @@ class OpportunityCostValuation:
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
-            _scalar_nonnegative_int(getattr(self, name), name)
+            object.__setattr__(
+                self,
+                name,
+                _scalar_nonnegative_int(getattr(self, name), name),
+            )
 
     def adult_rates(self) -> FloatArray:
         return np.asarray(
@@ -132,8 +146,10 @@ class HarmModelParameters:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, Real):
                 raise TypeError(f"{name} must be a real number")
-            if not isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
+            normalized = float(value)
+            if not isfinite(normalized) or not 0.0 <= normalized <= 1.0:
                 raise ValueError(f"{name} must be finite and in [0, 1]")
+            object.__setattr__(self, name, normalized)
 
 
 @dataclass(frozen=True, slots=True)

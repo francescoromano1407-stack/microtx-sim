@@ -310,7 +310,7 @@ parameter distributions.
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden, and monetary proxies by scenario. |
 | `epgc_financing.csv` | Public revenue, minimum contribution, cap, safe profit, feasibility, sustainability, clawback, and penalty by seed. |
 | `sensitivity.csv` | Parameter levels, uncertainty, monotonicity, and instability diagnostics. |
-| `manifest.json` | Schema/config/source and profile-input digests, exact profile snapshot, input metric/money summaries, the exhaustive output-metric registry snapshot and digest, source retrieval date, actual profile codes, Git state, environment, command, seeds, cohort digests, scenario vectors, equations, assumptions, and scope limits. |
+| `manifest.json` | Schema and export-time file digest; effective typed-config, exact execution-input, sensitivity-design, source, and profile snapshots/digests; output-metric registry; Git/environment/command; seeds, cohorts, scenarios, equations, assumptions, and scope limits. |
 | `summary.md` | Concise human-readable synthetic scenario table and interpretation warning. |
 | `harm_distribution.svg` | Baseline F2P composite-harm histogram. |
 | `spending_distribution.svg` | Baseline F2P spending histogram. |

@@ -89,10 +89,18 @@ class EPGCPolicy:
             "prohibited_mechanics_penalty_cents",
             "maximum_budget_cents",
         ):
-            _validate_nonnegative_int(getattr(self, name), name=name)
+            value = getattr(self, name)
+            _validate_nonnegative_int(value, name=name)
+            object.__setattr__(self, name, int(value))
+        clawback_basis_points = self.prohibited_mechanics_clawback_basis_points
         _validate_nonnegative_int(
-            self.prohibited_mechanics_clawback_basis_points,
+            clawback_basis_points,
             name="prohibited_mechanics_clawback_basis_points",
+        )
+        object.__setattr__(
+            self,
+            "prohibited_mechanics_clawback_basis_points",
+            int(clawback_basis_points),
         )
         if not 1 <= self.prohibited_mechanics_clawback_basis_points <= _BASIS_POINTS:
             raise ValueError(

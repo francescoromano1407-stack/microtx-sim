@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from hashlib import sha256
 import json
 from pathlib import Path
 import sys
@@ -12,7 +13,7 @@ from .config import ConfigurationError, load_config
 from .core.world import World
 from .data.profiles import ProfileBundle, ProfileValidationError, load_profile_bundle
 from .outputs import export_policy_batch
-from .outputs.schema import SENSITIVITY_COLUMNS
+from .outputs.schema import OUTPUT_SCHEMA_VERSION, SENSITIVITY_COLUMNS
 from .outputs.writers import write_csv_atomic, write_json_atomic
 from .policy_config import PolicyConfigurationError, load_policy_config
 from .simulation import SimulationOrchestrator
@@ -92,6 +93,8 @@ def _smoke(config_path: Path) -> dict[str, object]:
         "status": "ok",
         "mode": "smoke_only",
         "scenario": config.meta.name,
+        "seed": config.run.seed,
+        "seed_decimal": str(config.run.seed),
         "cycles": result.cycles,
         "elapsed_seconds": round(result.elapsed_seconds, 6),
         "summary": result.summary,
@@ -125,10 +128,15 @@ def _policy_batch(
     config_path: Path,
     *,
     output: Path | None,
-    run_sensitivity: bool,
+    run_sensitivity: bool | None,
     command: Sequence[str],
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
+    sensitivity_enabled = (
+        config.output.run_sensitivity
+        if run_sensitivity is None
+        else run_sensitivity
+    )
     profiles = load_profile_bundle(campaign=False)
     batch = run_policy_batch(
         config.batch,
@@ -141,7 +149,7 @@ def _policy_batch(
     )
     sensitivity = (
         _run_configured_sensitivity(config, profile_bundle=profiles)
-        if run_sensitivity
+        if sensitivity_enabled
         else None
     )
     repository_root = Path(__file__).resolve().parents[2]
@@ -163,6 +171,8 @@ def _policy_batch(
         "mode": "synthetic_policy_batch",
         "scenario": config.name,
         "scenario_count": len(config.batch.scenarios),
+        "seeds": list(batch.spec.seeds),
+        "seed_decimal_strings": [str(seed) for seed in batch.spec.seeds],
         "seed_count": len(config.batch.seeds),
         "player_count": config.batch.player_count,
         "days": config.batch.days,
@@ -196,13 +206,29 @@ def _policy_sensitivity(
         canonical_columns=SENSITIVITY_COLUMNS,
         allow_extra_columns=False,
     )
+    csv_sha256 = sha256(csv_path.read_bytes()).hexdigest()
     metadata_path = write_json_atomic(
         destination / "sensitivity_metadata.json",
         {
             "synthetic_only": True,
             "empirical_validation_claimed": False,
+            "output_schema_version": OUTPUT_SCHEMA_VERSION,
             "config": str(config_path.resolve()),
-            "seeds": list(config.batch.seeds),
+            "seeds": list(result.batch_spec.seeds),
+            "seed_decimal_strings": [
+                str(seed) for seed in result.batch_spec.seeds
+            ],
+            "execution_sha256": result.execution_sha256(),
+            "execution_snapshot": result.execution_snapshot(),
+            "run_inputs_sha256": result.run_inputs.snapshot_sha256(),
+            "run_input_sha256": result.run_input_sha256(),
+            "run_input_snapshot": result.run_input_snapshot(),
+            "artifacts": {
+                "sensitivity.csv": {
+                    "row_count": len(result.rows),
+                    "sha256": csv_sha256,
+                }
+            },
             "unstable_parameters": list(result.unstable_parameters),
             "profile_inputs": (
                 result.profile_input_lineage.manifest_payload()
@@ -257,14 +283,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.config,
                 output=args.output,
                 run_sensitivity=(
-                    args.command == "reproduce"
-                    or (
-                        not args.skip_sensitivity
-                        and load_policy_config(args.config).output.run_sensitivity
-                    )
-                )
-                if args.command == "policy-batch"
-                else True,
+                    True
+                    if args.command == "reproduce"
+                    else False
+                    if args.skip_sensitivity
+                    else None
+                ),
                 command=("microtx-sim", *requested),
             )
         else:

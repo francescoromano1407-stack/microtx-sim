@@ -21,6 +21,10 @@ from microtx_sim.simulation.policy_day import (
 from microtx_sim.simulation.policy_orchestrator import run_policy_scenario
 
 
+class _MutableInt(int):
+    pass
+
+
 def _cohort(size: int, seed: int = 71):
     rng = CounterRNG(seed)
     players = initialize_player_table(size, (CountryProfile(code="XX"),), rng)
@@ -28,6 +32,22 @@ def _cohort(size: int, seed: int = 71):
 
 
 class PolicyDecisionTests(unittest.TestCase):
+    def test_step_minutes_is_a_detached_builtin_integer(self) -> None:
+        parameters = DecisionParameters(step_minutes=_MutableInt(60))
+        self.assertIs(type(parameters.step_minutes), int)
+
+    def test_decision_parameters_reject_non_real_and_boolean_scalars(self) -> None:
+        for name in (
+            "temperature",
+            "habit_persistence",
+            "habit_learning_rate",
+            "reinforcement_learning_rate",
+        ):
+            for value in (True, "0.5"):
+                with self.subTest(name=name, value=value):
+                    with self.assertRaisesRegex(TypeError, "real number"):
+                        DecisionParameters(**{name: value})  # type: ignore[arg-type]
+
     def test_scenario_runner_rejects_invalid_root_seeds(self) -> None:
         players, life, _ = _cohort(0)
         scenario = required_scenarios()[0]

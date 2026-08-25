@@ -48,7 +48,7 @@ def validate_seed(value: object, *, name: str = "seed") -> int:
         raise TypeError(f"{name} must be a Python integer")
     if not 0 <= value <= _UINT64_MASK:
         raise ValueError(f"{name} must be in [0, 2**64 - 1]")
-    return value
+    return int(value)
 
 
 def stable_stream_id(name: str | bytes) -> int:

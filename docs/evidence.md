@@ -68,8 +68,9 @@ registry snapshot and its SHA-256 digest are embedded in every policy manifest.
 This is a map of software transformations, not empirical validation. Every
 current output contract is `SYNTHETIC` and its empirical source retrieval date
 is intentionally unset. The manifest separately links the registry to the exact
-profile-input fingerprint and any source-register retrieval date used by that
-run. A campaign gate fails until derived contracts and their dependencies are
+resolved execution-input digest, profile-input fingerprint, and any source-
+register retrieval date used by that run. A campaign gate fails until derived
+contracts and their dependencies are
 `CALIBRATED`, retrieval dates are present, and monetary outputs have a dated
 cross-country FX or purchasing-power contract.
 

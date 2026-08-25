@@ -6,7 +6,38 @@ import unittest
 from microtx_sim.domain.monetisation import MonetisationVector
 
 
+class _MutableFloat(float):
+    def __new__(cls, value: float):
+        instance = super().__new__(cls, value)
+        instance.factor = 1.0
+        return instance
+
+    def __mul__(self, other):
+        return super().__mul__(other) * self.factor
+
+
+class _MutableInt(int):
+    pass
+
+
 class MonetisationVectorTests(unittest.TestCase):
+    def test_numeric_inputs_are_detached_builtin_scalars(self) -> None:
+        pressure = _MutableFloat(0.5)
+        vector = MonetisationVector(
+            direct_price_cents=_MutableInt(499),
+            paid_random_rewards=pressure,
+            spending_cap_cents=_MutableInt(1_000),
+            cooling_off_hours=_MutableInt(24),
+        )
+        before = vector.purchase_pressure
+        pressure.factor = 100.0
+
+        self.assertIs(type(vector.direct_price_cents), int)
+        self.assertIs(type(vector.spending_cap_cents), int)
+        self.assertIs(type(vector.cooling_off_hours), int)
+        self.assertIs(type(vector.paid_random_rewards), float)
+        self.assertEqual(vector.purchase_pressure, before)
+
     def test_safe_defaults_are_explicit_and_personalisation_is_off(self) -> None:
         vector = MonetisationVector(direct_price_cents=499)
 

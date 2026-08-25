@@ -1,22 +1,50 @@
 from __future__ import annotations
 
-from dataclasses import fields, replace
+from dataclasses import FrozenInstanceError, dataclass, field, fields, replace
 import json
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from microtx_sim.causal.batch import (
     PolicyBatchResult,
     PolicyBatchSpec,
+    PolicyRunInputs,
+    resolve_policy_run_inputs,
     run_policy_batch,
 )
-from microtx_sim.causal.scenarios import ScenarioId, required_scenarios
+from microtx_sim.causal.scenarios import ScenarioId, ScenarioSpec, required_scenarios
 from microtx_sim.consumers.decision import DecisionParameters
 from microtx_sim.consumers.population import CountryProfile
+from microtx_sim.domain.monetisation import MonetisationVector
+from microtx_sim.metrics.harm import (
+    HarmModelParameters,
+    OpportunityCostValuation,
+    WelfareHarmWeights,
+)
+from microtx_sim.simulation.policy_orchestrator import (
+    ProducerAssumptions,
+    default_epgc_policy,
+    run_policy_scenario,
+)
 
 
 PROFILE = (CountryProfile(code="XX"),)
+
+
+@dataclass(frozen=True)
+class _ExtendedMonetisationVector(MonetisationVector):
+    mutable_metadata: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _ExtendedPolicyBatchSpec(PolicyBatchSpec):
+    mutable_metadata: list[str] = field(default_factory=list)
+
+
+class _MutableInt(int):
+    pass
 
 
 def _projection_bytes(batch: PolicyBatchResult) -> bytes:
@@ -33,6 +61,107 @@ def _projection_bytes(batch: PolicyBatchResult) -> bytes:
 
 
 class PolicyBatchTests(unittest.TestCase):
+    def test_batch_retains_fully_resolved_default_and_custom_inputs(self) -> None:
+        spec = PolicyBatchSpec(seeds=(13,), days=0, player_count=0)
+        default_result = run_policy_batch(spec, country_profiles=PROFILE)
+        expected_defaults = resolve_policy_run_inputs()
+
+        self.assertEqual(spec.snapshot()["seeds"], [13])
+        self.assertEqual(len(spec.snapshot_sha256()), 64)
+        self.assertEqual(default_result.run_inputs, expected_defaults)
+        self.assertEqual(
+            default_result.run_inputs.snapshot(),
+            expected_defaults.snapshot(),
+        )
+        self.assertEqual(len(default_result.run_inputs.snapshot_sha256()), 64)
+        self.assertEqual(
+            default_result.run_input_snapshot()["batch_spec"],
+            spec.snapshot(),
+        )
+        self.assertEqual(len(default_result.run_input_sha256()), 64)
+
+        harm_parameters = HarmModelParameters(affordable_spending_share=0.2)
+        harm_weights = WelfareHarmWeights(monetary=2.0)
+        opportunity_valuation = OpportunityCostValuation(
+            adult_sleep_hour_cents=601
+        )
+        producer_assumptions = ProducerAssumptions(
+            development_cost_cents=1_200_001
+        )
+        epgc_policy = replace(
+            default_epgc_policy(),
+            maximum_budget_cents=3_000_001,
+        )
+        with patch(
+            "microtx_sim.causal.batch.run_policy_scenario",
+            wraps=run_policy_scenario,
+        ) as scenario_runner:
+            custom_result = run_policy_batch(
+                spec,
+                country_profiles=PROFILE,
+                harm_parameters=harm_parameters,
+                harm_weights=harm_weights,
+                opportunity_valuation=opportunity_valuation,
+                producer_assumptions=producer_assumptions,
+                epgc_policy=epgc_policy,
+            )
+
+        for name, value in {
+            "harm_parameters": harm_parameters,
+            "harm_weights": harm_weights,
+            "opportunity_valuation": opportunity_valuation,
+            "producer_assumptions": producer_assumptions,
+            "epgc_policy": epgc_policy,
+        }.items():
+            self.assertIs(getattr(custom_result.run_inputs, name), value)
+        self.assertEqual(scenario_runner.call_count, len(spec.scenarios))
+        for call in scenario_runner.call_args_list:
+            self.assertIs(call.kwargs["harm_parameters"], harm_parameters)
+            self.assertIs(call.kwargs["harm_weights"], harm_weights)
+            self.assertIs(
+                call.kwargs["opportunity_valuation"],
+                opportunity_valuation,
+            )
+            self.assertIs(
+                call.kwargs["producer_assumptions"],
+                producer_assumptions,
+            )
+            self.assertIs(call.kwargs["epgc_policy"], epgc_policy)
+        self.assertEqual(
+            custom_result.run_inputs,
+            PolicyRunInputs(
+                harm_parameters=harm_parameters,
+                harm_weights=harm_weights,
+                opportunity_valuation=opportunity_valuation,
+                producer_assumptions=producer_assumptions,
+                epgc_policy=epgc_policy,
+            ),
+        )
+        self.assertNotEqual(
+            default_result.run_inputs.snapshot_sha256(),
+            custom_result.run_inputs.snapshot_sha256(),
+        )
+        with self.assertRaises(FrozenInstanceError):
+            setattr(
+                custom_result.run_inputs,
+                "harm_parameters",
+                HarmModelParameters(),
+            )
+        with self.assertRaisesRegex(TypeError, "run_inputs"):
+            replace(custom_result, run_inputs=object())
+        with self.assertRaisesRegex(TypeError, "harm_parameters"):
+            run_policy_batch(
+                spec,
+                country_profiles=PROFILE,
+                harm_parameters=object(),  # type: ignore[arg-type]
+            )
+        for value in ([], 1, "true"):
+            with self.subTest(accessibility_eligible=value):
+                with self.assertRaisesRegex(TypeError, "must be a boolean"):
+                    ProducerAssumptions(  # type: ignore[arg-type]
+                        accessibility_eligible=value
+                    )
+
     def test_batch_seed_domain_is_strict_canonical_and_unique(self) -> None:
         maximum = (1 << 64) - 1
         self.assertEqual(
@@ -49,6 +178,86 @@ class PolicyBatchTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(TypeError, "Python integer"):
                     PolicyBatchSpec(seeds=(value,))  # type: ignore[arg-type]
+
+    def test_batch_materializes_and_validates_scenario_iterables(self) -> None:
+        scenario_list = list(required_scenarios())
+        expected_scenarios = tuple(scenario_list)
+        from_list = PolicyBatchSpec(scenarios=scenario_list)  # type: ignore[arg-type]
+        scenario_list.clear()
+
+        self.assertIsInstance(from_list.scenarios, tuple)
+        self.assertEqual(from_list.scenarios, expected_scenarios)
+        self.assertEqual(
+            tuple(item["scenario_id"] for item in from_list.snapshot()["scenarios"]),
+            tuple(item.scenario_id.value for item in expected_scenarios),
+        )
+
+        from_generator = PolicyBatchSpec(  # type: ignore[arg-type]
+            scenarios=(scenario for scenario in expected_scenarios)
+        )
+        self.assertEqual(from_generator.scenarios, expected_scenarios)
+        self.assertEqual(from_generator.snapshot(), from_list.snapshot())
+
+        with self.assertRaisesRegex(TypeError, r"scenarios\[1\].*ScenarioSpec"):
+            PolicyBatchSpec(  # type: ignore[arg-type]
+                scenarios=(expected_scenarios[0], object())
+            )
+
+        with self.assertRaisesRegex(TypeError, "decision_parameters"):
+            PolicyBatchSpec(decision_parameters={})  # type: ignore[arg-type]
+
+        normalized = PolicyBatchSpec(
+            seeds=(_MutableInt(4),),
+            days=_MutableInt(0),
+            player_count=_MutableInt(0),
+        )
+        self.assertIs(type(normalized.seeds[0]), int)
+        self.assertIs(type(normalized.days), int)
+        self.assertIs(type(normalized.player_count), int)
+        normalized_scenario = replace(
+            expected_scenarios[0],
+            fixed_access_price_cents=_MutableInt(7),
+        )
+        normalized_producer = ProducerAssumptions(
+            development_cost_cents=_MutableInt(1_200_000)
+        )
+        self.assertIs(type(normalized_scenario.fixed_access_price_cents), int)
+        self.assertIs(type(normalized_producer.development_cost_cents), int)
+
+        with self.assertRaisesRegex(TypeError, "spec must be PolicyBatchSpec"):
+            run_policy_batch(
+                _ExtendedPolicyBatchSpec(days=0, player_count=0),
+                country_profiles=PROFILE,
+            )
+
+    def test_scenario_specs_reject_wrong_or_mutable_nested_values(self) -> None:
+        baseline = required_scenarios()[0]
+        invalid_values = (
+            ("scenario_id", baseline.scenario_id.value, "ScenarioId"),
+            ("label", [], "string"),
+            ("mechanics", object(), "MonetisationVector"),
+            (
+                "mechanics",
+                _ExtendedMonetisationVector(),
+                "MonetisationVector",
+            ),
+            ("epgc_enabled", [], "boolean"),
+            ("description", [], "string"),
+        )
+        for field_name, value, message in invalid_values:
+            with self.subTest(field_name=field_name):
+                arguments = {
+                    "scenario_id": baseline.scenario_id,
+                    "label": baseline.label,
+                    "mechanics": baseline.mechanics,
+                    "fixed_access_price_cents": baseline.fixed_access_price_cents,
+                    "subscription_price_cents": baseline.subscription_price_cents,
+                    "epgc_enabled": baseline.epgc_enabled,
+                    "description": baseline.description,
+                    field_name: value,
+                }
+                with self.assertRaisesRegex(TypeError, message):
+                    ScenarioSpec(**arguments)  # type: ignore[arg-type]
 
     def test_seed_order_produces_identical_values_and_bytes(self) -> None:
         parameters = {

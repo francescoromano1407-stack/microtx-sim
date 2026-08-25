@@ -6,9 +6,19 @@ import numpy as np
 
 from microtx_sim.metrics.harm import (
     HarmComponent,
+    HarmModelParameters,
+    OpportunityCostValuation,
     WelfareHarmWeights,
     compute_welfare_harm,
 )
+
+
+class _MutableFloat(float):
+    pass
+
+
+class _MutableInt(int):
+    pass
 
 
 def _inputs(size: int = 1) -> dict[str, np.ndarray]:
@@ -38,6 +48,35 @@ def _inputs(size: int = 1) -> dict[str, np.ndarray]:
 
 
 class WelfareHarmTests(unittest.TestCase):
+    def test_retained_parameters_normalize_numeric_subclasses(self) -> None:
+        parameters = HarmModelParameters(
+            affordable_spending_share=_MutableFloat(0.2)
+        )
+        valuation = OpportunityCostValuation(
+            adult_sleep_hour_cents=_MutableInt(601)
+        )
+
+        self.assertIs(type(parameters.affordable_spending_share), float)
+        self.assertIs(type(valuation.adult_sleep_hour_cents), int)
+
+    def test_harm_weights_reject_non_real_and_boolean_values(self) -> None:
+        for value in (True, "1"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(TypeError, "real number"):
+                    WelfareHarmWeights(monetary=value)  # type: ignore[arg-type]
+
+        with self.assertRaisesRegex(ValueError, "finite and non-negative"):
+            WelfareHarmWeights(monetary=float("nan"))
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            WelfareHarmWeights(
+                monetary=0.0,
+                opportunity_cost=0.0,
+                sleep=0.0,
+                education_work=0.0,
+                family_social=0.0,
+                wellbeing=0.0,
+            )
+
     def test_planned_transparent_affordable_spending_is_not_harm(self) -> None:
         result = compute_welfare_harm(**_inputs())
 

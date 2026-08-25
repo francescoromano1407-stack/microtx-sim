@@ -11,6 +11,10 @@ from microtx_sim.funding import (
 from microtx_sim.funding.epgc import INT64_MAX
 
 
+class _MutableInt(int):
+    pass
+
+
 def _policy(**overrides: int) -> EPGCPolicy:
     values = {
         "access_payment_cents_per_eligible_access": 100,
@@ -49,6 +53,21 @@ def _inputs(**overrides: object) -> EPGCFirmInputs:
 
 
 class EPGCTests(unittest.TestCase):
+    def test_policy_normalizes_integer_subclasses(self) -> None:
+        policy = _policy(
+            access_payment_cents_per_eligible_access=_MutableInt(100),
+            prohibited_mechanics_clawback_basis_points=_MutableInt(5_000),
+        )
+
+        self.assertIs(
+            type(policy.access_payment_cents_per_eligible_access),
+            int,
+        )
+        self.assertIs(
+            type(policy.prohibited_mechanics_clawback_basis_points),
+            int,
+        )
+
     def test_safe_profit_uses_the_explicit_financing_equation(self) -> None:
         result = evaluate_epgc(_policy(), _inputs())
 

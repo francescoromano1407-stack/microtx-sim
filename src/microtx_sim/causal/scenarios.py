@@ -39,14 +39,25 @@ class ScenarioSpec:
     description: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.scenario_id) is not ScenarioId:
+            raise TypeError("scenario_id must be a ScenarioId")
+        if type(self.label) is not str:
+            raise TypeError("label must be a string")
         if not self.label.strip():
             raise ValueError("scenario label cannot be empty")
+        if type(self.mechanics) is not MonetisationVector:
+            raise TypeError("mechanics must be a MonetisationVector")
         for name in ("fixed_access_price_cents", "subscription_price_cents"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):
                 raise TypeError(f"{name} must be integer cents")
             if value < 0:
                 raise ValueError(f"{name} cannot be negative")
+            object.__setattr__(self, name, int(value))
+        if not isinstance(self.epgc_enabled, bool):
+            raise TypeError("epgc_enabled must be a boolean")
+        if type(self.description) is not str:
+            raise TypeError("description must be a string")
         if self.mechanics.personalized_offers:
             raise ValueError(
                 "research scenarios keep personalized offers disabled"

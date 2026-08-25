@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from ..analysis.sensitivity import SensitivityResult
-from ..causal.batch import PolicyBatchResult
+from ..causal.batch import PolicyBatchResult, resolve_policy_run_inputs
 from ..causal.scenarios import ScenarioId
 from ..policy_config import PolicyPrototypeConfig
 from .manifest import build_run_manifest
@@ -46,7 +46,12 @@ def export_policy_batch(
 ) -> dict[str, Path]:
     """Persist a complete, self-describing synthetic result bundle."""
 
-    destination = Path(output_dir) if output_dir is not None else config.output.output_dir
+    if not isinstance(config, PolicyPrototypeConfig):
+        raise TypeError("config must be PolicyPrototypeConfig")
+    if not isinstance(batch, PolicyBatchResult):
+        raise TypeError("batch must be PolicyBatchResult")
+    if sensitivity is not None and not isinstance(sensitivity, SensitivityResult):
+        raise TypeError("sensitivity must be SensitivityResult or None")
     batch_lineage = batch.profile_input_lineage
     sensitivity_lineage = (
         sensitivity.profile_input_lineage if sensitivity is not None else None
@@ -62,6 +67,35 @@ def export_policy_batch(
         raise ValueError(
             "batch and sensitivity results used different profile inputs"
         )
+    configured_run_inputs = resolve_policy_run_inputs(
+        harm_parameters=config.harm_parameters,
+        harm_weights=config.harm_weights,
+        opportunity_valuation=config.opportunity_valuation,
+        producer_assumptions=config.producer_assumptions,
+        epgc_policy=config.epgc_policy,
+    )
+    if batch.spec != config.batch:
+        raise ValueError(
+            "configuration batch specification does not match the executed batch"
+        )
+    if batch.run_inputs != configured_run_inputs:
+        raise ValueError(
+            "configuration model inputs do not match the executed batch"
+        )
+    if sensitivity is not None:
+        if sensitivity.batch_spec != batch.spec:
+            raise ValueError(
+                "batch and sensitivity used different batch specifications"
+            )
+        if sensitivity.run_inputs != batch.run_inputs:
+            raise ValueError(
+                "batch and sensitivity used different resolved model inputs"
+            )
+    destination = (
+        Path(output_dir)
+        if output_dir is not None
+        else config.output.output_dir
+    )
     manifest = build_run_manifest(
         config,
         batch,
@@ -70,8 +104,22 @@ def export_policy_batch(
         created_utc=created_utc,
         command=command,
     )
+    sensitivity_snapshot = (
+        sensitivity.execution_snapshot() if sensitivity is not None else None
+    )
     manifest["sensitivity"] = {
         "run": sensitivity is not None,
+        "execution_sha256": (
+            sensitivity.execution_sha256()
+            if sensitivity is not None
+            else None
+        ),
+        "execution_snapshot": sensitivity_snapshot,
+        "run_inputs_sha256": (
+            sensitivity.run_inputs.snapshot_sha256()
+            if sensitivity is not None
+            else None
+        ),
         "profile_input_fingerprint_sha256": (
             sensitivity_lineage.fingerprint_sha256
             if sensitivity_lineage is not None

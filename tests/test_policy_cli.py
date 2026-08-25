@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from hashlib import sha256
 import io
 import json
 from pathlib import Path
@@ -29,6 +30,7 @@ class PolicyCliTests(unittest.TestCase):
         self.assertEqual(payloads[0], payloads[1])
         self.assertEqual(payloads[0]["mode"], "smoke_only")
         self.assertEqual(payloads[0]["cycles"], 3)
+        self.assertEqual(payloads[0]["seed_decimal"], str(payloads[0]["seed"]))
         summary = payloads[0]["summary"]
         self.assertIsInstance(summary, dict)
         self.assertEqual(summary["players"], 384)
@@ -70,6 +72,8 @@ class PolicyCliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(batch_stdout.getvalue())
             self.assertEqual(payload["scenario_count"], 7)
+            self.assertEqual(payload["seeds"], [7])
+            self.assertEqual(payload["seed_decimal_strings"], ["7"])
             self.assertFalse(payload["sensitivity_run"])
             self.assertTrue((output / "manifest.json").exists())
             self.assertTrue((output / "scenario_summary.csv").exists())
@@ -90,6 +94,73 @@ class PolicyCliTests(unittest.TestCase):
             self.assertEqual(
                 manifest["batch"]["profile_input_fingerprint_sha256"],
                 manifest["profile_inputs"]["fingerprint_sha256"],
+            )
+            self.assertFalse(manifest["sensitivity"]["run"])
+            self.assertIsNone(manifest["sensitivity"]["execution_sha256"])
+            self.assertIsNone(manifest["sensitivity"]["execution_snapshot"])
+            self.assertIsNone(manifest["sensitivity"]["run_inputs_sha256"])
+
+            sensitivity_output = root / "sensitivity-only"
+            sensitivity_stdout = io.StringIO()
+            with redirect_stdout(sensitivity_stdout):
+                code = main(
+                    (
+                        "policy-sensitivity",
+                        str(config_path),
+                        "--output",
+                        str(sensitivity_output),
+                    )
+                )
+            self.assertEqual(code, 0)
+            sensitivity_metadata = json.loads(
+                (sensitivity_output / "sensitivity_metadata.json").read_text(
+                    "utf-8"
+                )
+            )
+            self.assertEqual(sensitivity_metadata["seeds"], [7])
+            self.assertEqual(
+                sensitivity_metadata["seed_decimal_strings"],
+                ["7"],
+            )
+            self.assertEqual(
+                len(sensitivity_metadata["execution_sha256"]),
+                64,
+            )
+            self.assertEqual(
+                sensitivity_metadata["execution_snapshot"]["batch_spec"][
+                    "seeds"
+                ],
+                [7],
+            )
+            run_input_snapshot = sensitivity_metadata["run_input_snapshot"]
+            self.assertEqual(
+                run_input_snapshot["batch_spec"],
+                sensitivity_metadata["execution_snapshot"]["batch_spec"],
+            )
+            self.assertEqual(
+                run_input_snapshot["model_inputs"],
+                sensitivity_metadata["execution_snapshot"]["run_inputs"],
+            )
+            self.assertEqual(
+                sensitivity_metadata["run_input_sha256"],
+                sha256(
+                    json.dumps(
+                        run_input_snapshot,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8")
+                ).hexdigest(),
+            )
+            self.assertEqual(sensitivity_metadata["output_schema_version"], "2.0")
+            sensitivity_csv = sensitivity_output / "sensitivity.csv"
+            self.assertEqual(
+                sensitivity_metadata["artifacts"]["sensitivity.csv"],
+                {
+                    "row_count": 15,
+                    "sha256": sha256(sensitivity_csv.read_bytes()).hexdigest(),
+                },
             )
 
 

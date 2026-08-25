@@ -228,6 +228,7 @@ UNIT_MONEY = OutputUnit(
 _RECIPE_VERSION = "1.0"
 _BASE_LINEAGE = (
     "config_sha256",
+    "run_input_sha256",
     "profile_inputs.fingerprint_sha256",
     "repository.git_commit",
     "random_stream_contract",
@@ -312,7 +313,11 @@ def _identifier_or_design_contracts(
             formula=formula,
             inputs=(formula,),
             implementation=implementation,
-            lineage_ids=("output_schema_version", "repository.git_commit"),
+            lineage_ids=(
+                "output_schema_version",
+                "run_input_sha256",
+                "repository.git_commit",
+            ),
             range_semantics=(
                 "strict Python integer in the inclusive range [0, 2**64 - 1]"
                 if unit is UNIT_SEED
@@ -1158,7 +1163,16 @@ def _build_sensitivity_contracts() -> dict[str, OutputMetricContract]:
                 )
             ),
         )
-    return contracts
+    return {
+        column: replace(
+            contract,
+            lineage_ids=(
+                *contract.lineage_ids,
+                "sensitivity.execution_sha256",
+            ),
+        )
+        for column, contract in contracts.items()
+    }
 
 
 def _build_player_contracts() -> dict[str, OutputMetricContract]:
@@ -1565,6 +1579,7 @@ def build_metric_contract_manifest_payload(
     profile_input_fingerprint_sha256: str | None,
     run_source_retrieved_on: date | None,
     monetary_outputs_cross_country_comparable: bool,
+    run_input_sha256: str,
 ) -> dict[str, object]:
     """Build the exact registry snapshot and run-specific lineage pointers."""
 
@@ -1592,6 +1607,7 @@ def build_metric_contract_manifest_payload(
         "role_counts": dict(sorted(role_counts.items())),
         "status_counts": dict(sorted(status_counts.items())),
         "run_input_lineage": {
+            "run_input_sha256": run_input_sha256,
             "profile_lineage_status": profile_lineage_status,
             "profile_dependencies_calibrated": profile_dependencies_calibrated,
             "profile_input_fingerprint_sha256": profile_input_fingerprint_sha256,

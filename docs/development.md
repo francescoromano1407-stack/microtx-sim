@@ -312,9 +312,11 @@ test(outputs): verify deterministic artifact contract
 
 Do not commit secrets, local environments, caches, large generated runs, or raw
 restricted microdata. Do not commit `artifacts/`; the manifest records the exact
-commit identifier, dirty state, configuration hash, source-registry hash, and
-runtime environment. A dirty manifest is useful for diagnosis but is not a
-clean archival reproduction.
+commit identifier, dirty state, export-time config-file digest, normalized
+effective-config digest, execution-input digest, source-registry digest, and
+runtime environment. The execution-input snapshot is authoritative for what
+ran; the later file observation is not a load-time attestation. A dirty manifest
+is useful for diagnosis but is not a clean archival reproduction.
 
 ## Pre-campaign checklist
 

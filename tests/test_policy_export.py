@@ -41,6 +41,28 @@ JURISDICTIONS_PATH = ROOT / "configs" / "jurisdictions.toml"
 SOURCES_PATH = ROOT / "data" / "provenance" / "sources.toml"
 
 
+def _canonical_sha256(value: object) -> str:
+    return sha256(
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _tree_snapshot(root: Path) -> tuple[tuple[str, bytes | None], ...]:
+    return tuple(
+        (
+            path.relative_to(root).as_posix(),
+            None if path.is_dir() else path.read_bytes(),
+        )
+        for path in sorted(root.rglob("*"))
+    )
+
+
 class PolicyExportTests(unittest.TestCase):
     def test_complete_export_contains_tables_metadata_summary_and_valid_svgs(self) -> None:
         base = load_policy_config(CONFIG_PATH)
@@ -50,10 +72,27 @@ class PolicyExportTests(unittest.TestCase):
             player_count=16,
             decision_parameters=DecisionParameters(step_minutes=240),
         )
+        profile = CountryProfile(code="XX")
         batch = run_policy_batch(
             spec,
-            country_profiles=(CountryProfile(code="XX"),),
+            country_profiles=(profile,),
             harm_parameters=base.harm_parameters,
+            harm_weights=base.harm_weights,
+            opportunity_valuation=base.opportunity_valuation,
+            producer_assumptions=base.producer_assumptions,
+            epgc_policy=base.epgc_policy,
+        )
+        sensitivity = run_sensitivity_analysis(
+            spec,
+            cases=(
+                SensitivityCase(
+                    "paid_random_rewards",
+                    (0.0, 0.7),
+                    expected_direction="increasing",
+                ),
+            ),
+            country_profiles=(profile,),
+            base_harm_parameters=base.harm_parameters,
             harm_weights=base.harm_weights,
             opportunity_valuation=base.opportunity_valuation,
             producer_assumptions=base.producer_assumptions,
@@ -69,7 +108,7 @@ class PolicyExportTests(unittest.TestCase):
             paths = export_policy_batch(
                 config,
                 batch,
-                None,
+                sensitivity,
                 config_path=CONFIG_PATH,
                 repository_root=ROOT,
                 created_utc="2026-01-01T00:00:00+00:00",
@@ -98,6 +137,40 @@ class PolicyExportTests(unittest.TestCase):
             )
             self.assertEqual(len(manifest["scenarios"]), 7)
             self.assertEqual(manifest["batch"]["seeds"], [5, 6])
+            self.assertEqual(
+                manifest["config_sha256"],
+                sha256(CONFIG_PATH.read_bytes()).hexdigest(),
+            )
+            self.assertEqual(
+                manifest["config_file_sha256_observed_at_export"],
+                manifest["config_sha256"],
+            )
+            self.assertEqual(
+                manifest["effective_config_sha256"],
+                _canonical_sha256(manifest["config_snapshot"]),
+            )
+            self.assertEqual(
+                manifest["run_input_sha256"],
+                _canonical_sha256(manifest["run_input_snapshot"]),
+            )
+            self.assertEqual(
+                manifest["output_metric_contracts"]["run_input_lineage"][
+                    "run_input_sha256"
+                ],
+                manifest["run_input_sha256"],
+            )
+            sensitivity_payload = manifest["sensitivity"]
+            self.assertTrue(sensitivity_payload["run"])
+            self.assertEqual(
+                sensitivity_payload["execution_sha256"],
+                _canonical_sha256(sensitivity_payload["execution_snapshot"]),
+            )
+            self.assertEqual(
+                sensitivity_payload["execution_snapshot"]["cases"][0][
+                    "parameter"
+                ],
+                "paid_random_rewards",
+            )
             self.assertEqual(manifest["batch"]["profile_codes"], ["XX"])
             self.assertEqual(
                 manifest["profile_inputs"]["lineage_status"],
@@ -133,6 +206,129 @@ class PolicyExportTests(unittest.TestCase):
                     self.assertEqual(next(csv.reader(handle)), list(columns))
             for svg in output.glob("*.svg"):
                 ET.parse(svg)
+
+    def test_execution_mismatches_fail_before_any_export_mutation(self) -> None:
+        base = load_policy_config(CONFIG_PATH)
+        spec = PolicyBatchSpec(
+            seeds=(7,),
+            days=0,
+            player_count=0,
+            decision_parameters=DecisionParameters(step_minutes=240),
+        )
+        profile = CountryProfile(code="XX")
+        run_kwargs = {
+            "harm_parameters": base.harm_parameters,
+            "harm_weights": base.harm_weights,
+            "opportunity_valuation": base.opportunity_valuation,
+            "producer_assumptions": base.producer_assumptions,
+            "epgc_policy": base.epgc_policy,
+        }
+        batch = run_policy_batch(
+            spec,
+            country_profiles=(profile,),
+            **run_kwargs,
+        )
+        sensitivity_case = SensitivityCase(
+            "paid_random_rewards",
+            (0.0, 0.7),
+        )
+        sensitivity = run_sensitivity_analysis(
+            spec,
+            cases=(sensitivity_case,),
+            country_profiles=(profile,),
+            base_harm_parameters=base.harm_parameters,
+            harm_weights=base.harm_weights,
+            opportunity_valuation=base.opportunity_valuation,
+            producer_assumptions=base.producer_assumptions,
+            epgc_policy=base.epgc_policy,
+        )
+        config = replace(
+            base,
+            batch=spec,
+            output=PolicyOutputConfig(Path("unused"), 8, True, False),
+        )
+        different_spec = replace(spec, seeds=(8,))
+        different_sensitivity_spec = run_sensitivity_analysis(
+            different_spec,
+            cases=(sensitivity_case,),
+            country_profiles=(profile,),
+            base_harm_parameters=base.harm_parameters,
+            harm_weights=base.harm_weights,
+            opportunity_valuation=base.opportunity_valuation,
+            producer_assumptions=base.producer_assumptions,
+            epgc_policy=base.epgc_policy,
+        )
+        different_harm = replace(
+            base.harm_parameters,
+            affordable_spending_share=0.2,
+        )
+        different_sensitivity_inputs = run_sensitivity_analysis(
+            spec,
+            cases=(sensitivity_case,),
+            country_profiles=(profile,),
+            base_harm_parameters=different_harm,
+            harm_weights=base.harm_weights,
+            opportunity_valuation=base.opportunity_valuation,
+            producer_assumptions=base.producer_assumptions,
+            epgc_policy=base.epgc_policy,
+        )
+        mismatches = (
+            (
+                replace(config, batch=different_spec),
+                sensitivity,
+                "configuration batch specification",
+            ),
+            (
+                replace(config, harm_parameters=different_harm),
+                sensitivity,
+                "configuration model inputs",
+            ),
+            (
+                config,
+                different_sensitivity_spec,
+                "different batch specifications",
+            ),
+            (
+                config,
+                different_sensitivity_inputs,
+                "different resolved model inputs",
+            ),
+        )
+        for candidate_config, candidate_sensitivity, message in mismatches:
+            with (
+                self.subTest(message=message),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                output = Path(directory) / "new-bundle"
+                with self.assertRaisesRegex(ValueError, message):
+                    export_policy_batch(
+                        candidate_config,
+                        batch,
+                        candidate_sensitivity,
+                        config_path=CONFIG_PATH,
+                        repository_root=ROOT,
+                        output_dir=output,
+                        created_utc="2026-01-01T00:00:00+00:00",
+                    )
+                self.assertFalse(output.exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "existing-bundle"
+            (output / "nested").mkdir(parents=True)
+            (output / "sentinel.bin").write_bytes(b"unchanged")
+            (output / "nested" / "keep.txt").write_text("keep", "utf-8")
+            before = _tree_snapshot(output)
+            with self.assertRaisesRegex(ValueError, "configuration model inputs"):
+                export_policy_batch(
+                    replace(config, harm_parameters=different_harm),
+                    batch,
+                    sensitivity,
+                    config_path=CONFIG_PATH,
+                    repository_root=ROOT,
+                    output_dir=output,
+                    created_utc="2026-01-01T00:00:00+00:00",
+                )
+            self.assertEqual(_tree_snapshot(output), before)
 
     def test_manifest_lineage_matches_injected_profile_bundle(self) -> None:
         base = load_policy_config(CONFIG_PATH)
