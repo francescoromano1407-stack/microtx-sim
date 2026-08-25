@@ -6,6 +6,7 @@ only the kernel-side audit resolver and is never passed to a StateAgent policy.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,7 @@ import numpy.typing as npt
 
 from ..agents.jurisdictions import StateAgent
 from ..consumers.logic import StepResult
+from ..core.ledger import LedgerEntry
 from ..rng import stable_stream_id
 from ..states.logic import (
     AuditResolution,
@@ -202,13 +204,45 @@ def run_audits(
 ) -> tuple[AuditResolution, ...]:
     """Run policy selection on observations, then resolve imperfect audits."""
 
+    planned_states = tuple(deepcopy(state) for state in world.states)
+    planned_firm_cash = [
+        _nonnegative_int64(firm.state.cash_cents, label="firm cash")
+        for firm in world.firms
+    ]
+    planned_assessed = _nonnegative_int64_array(
+        world.firm_fine_assessed_cents,
+        label="cumulative assessed fines",
+        expected_length=len(world.firms),
+    )
+    planned_paid = _nonnegative_int64_array(
+        world.firm_fine_paid_cents,
+        label="cumulative paid fines",
+        expected_length=len(world.firms),
+    )
+    planned_detections = _nonnegative_int64_array(
+        world._public_detections,
+        label="public detection count",
+        expected_length=len(world.firms),
+    )
+    planned_entries: list[LedgerEntry] = []
     all_resolutions: list[AuditResolution] = []
-    for state in world.states:
+    for state in planned_states:
         # Audit budget is a period appropriation, constrained by the treasury.
-        state.state.audit_budget_cents = min(
+        treasury = _nonnegative_int64(
             state.state.treasury_cents,
-            state.state.audit_capacity_per_cycle
-            * state.state.inspection_cost_cents,
+            label="state treasury",
+        )
+        capacity = _nonnegative_int64(
+            state.state.audit_capacity_per_cycle,
+            label="audit capacity",
+        )
+        inspection_cost = _nonnegative_int64(
+            state.state.inspection_cost_cents,
+            label="inspection cost",
+        )
+        state.state.audit_budget_cents = min(
+            treasury,
+            capacity * inspection_cost,
         )
         metrics = build_observable_firm_metrics(
             world,
@@ -256,45 +290,88 @@ def run_audits(
             ),
             rng=world.rng,
         )
-        audit_cost = len(resolutions) * state.state.inspection_cost_cents
+        audit_cost = _nonnegative_int64(
+            len(resolutions) * inspection_cost,
+            label="audit cost",
+        )
+        _nonnegative_int64(
+            state.state.audit_budget_cents,
+            label="remaining audit budget",
+        )
+        _nonnegative_int64(
+            state.state.treasury_cents,
+            label="state treasury",
+        )
         if audit_cost:
-            world.ledger.transfer(
-                tick=tick,
-                debit_account=f"state:{state.jurisdiction_id}:treasury",
-                credit_account="sector:audit-services",
-                amount_cents=audit_cost,
-                kind="regulatory_audit",
-                reference=f"audit:{tick}:{state.jurisdiction_id}",
+            planned_entries.append(
+                LedgerEntry(
+                    tick=tick,
+                    debit_account=f"state:{state.jurisdiction_id}:treasury",
+                    credit_account="sector:audit-services",
+                    amount_cents=audit_cost,
+                    kind="regulatory_audit",
+                    reference=f"audit:{tick}:{state.jurisdiction_id}",
+                )
             )
         for resolution in resolutions:
-            firm = world.firms[resolution.intent.firm_id]
-            firm_id = firm.firm_id
-            assessed = resolution.fine_cents
-            if world.firm_fine_assessed_cents[firm_id] > INT64_MAX - assessed:
-                raise OverflowError("cumulative assessed fines would overflow int64")
-            world.firm_fine_assessed_cents[firm_id] += assessed
-            collected = min(firm.state.cash_cents, resolution.fine_cents)
+            firm_id = int(resolution.intent.firm_id)
+            if firm_id < 0 or firm_id >= len(world.firms):
+                raise ValueError("audit resolution references an unknown firm")
+            assessed = _nonnegative_int64(
+                resolution.fine_cents,
+                label="assessed fine",
+            )
+            planned_assessed[firm_id] = _checked_add_int64(
+                int(planned_assessed[firm_id]),
+                assessed,
+                label="cumulative assessed fines",
+            )
+            collected = min(planned_firm_cash[firm_id], assessed)
             if collected:
-                firm.state.cash_cents -= collected
-                if world.firm_fine_paid_cents[firm_id] > INT64_MAX - collected:
-                    raise OverflowError("cumulative paid fines would overflow int64")
-                if state.state.treasury_cents > INT64_MAX - collected:
-                    raise OverflowError("state treasury would overflow int64")
-                world.firm_fine_paid_cents[firm_id] += collected
-                state.state.treasury_cents += collected
-                world.ledger.transfer(
-                    tick=tick,
-                    debit_account=f"firm:{firm.firm_id}:cash",
-                    credit_account=f"state:{state.jurisdiction_id}:treasury",
-                    amount_cents=collected,
-                    kind="regulatory_fine",
-                    reference=(
-                        f"fine:{tick}:{state.jurisdiction_id}:{firm.firm_id}"
-                    ),
+                planned_paid[firm_id] = _checked_add_int64(
+                    int(planned_paid[firm_id]),
+                    collected,
+                    label="cumulative paid fines",
+                )
+                state.state.treasury_cents = _checked_add_int64(
+                    int(state.state.treasury_cents),
+                    collected,
+                    label="state treasury",
+                )
+                planned_firm_cash[firm_id] -= collected
+                planned_entries.append(
+                    LedgerEntry(
+                        tick=tick,
+                        debit_account=f"firm:{firm_id}:cash",
+                        credit_account=f"state:{state.jurisdiction_id}:treasury",
+                        amount_cents=collected,
+                        kind="regulatory_fine",
+                        reference=(
+                            f"fine:{tick}:{state.jurisdiction_id}:{firm_id}"
+                        ),
+                    )
                 )
             if resolution.evidence.detected_breaches:
-                world._public_detections[firm.firm_id] += 1
+                planned_detections[firm_id] = _checked_add_int64(
+                    int(planned_detections[firm_id]),
+                    1,
+                    label="public detection count",
+                )
         all_resolutions.extend(resolutions)
+
+    _validate_new_ledger_references(world, planned_entries)
+
+    # Resolution ran only on detached StateAgent copies. All arithmetic and
+    # ledger validation has now succeeded, so these assignments cannot expose a
+    # partially applied audit when a late boundary check fails.
+    for target, source in zip(world.states, planned_states):
+        _commit_regulator_private_state(target, source)
+    for firm, cash in zip(world.firms, planned_firm_cash):
+        firm.state.cash_cents = cash
+    world.firm_fine_assessed_cents[:] = planned_assessed
+    world.firm_fine_paid_cents[:] = planned_paid
+    world._public_detections[:] = planned_detections
+    world.ledger.extend(planned_entries)
     return tuple(all_resolutions)
 
 
@@ -321,45 +398,159 @@ def review_subsidies(world: "World", *, tick: int) -> int:
     ]
     # Later submissions replace older dossiers from the same company.
     latest_by_firm = {application.firm_id: application for application in mature}
+    planned_treasury = [
+        _nonnegative_int64(state.state.treasury_cents, label="state treasury")
+        for state in world.states
+    ]
+    planned_budgets = [
+        _nonnegative_int64(
+            state.state.subsidy_budget_cents,
+            label="state subsidy budget",
+        )
+        for state in world.states
+    ]
+    planned_firm_cash = [
+        _nonnegative_int64(firm.state.cash_cents, label="firm cash")
+        for firm in world.firms
+    ]
+    planned_firm_subsidies = _nonnegative_int64_array(
+        world.firm_subsidy_cents,
+        label="cumulative firm subsidy",
+        expected_length=len(world.firms),
+    )
+    planned_state_outlays = _nonnegative_int64_array(
+        world.state_subsidy_outlay_cents,
+        label="cumulative state subsidy",
+        expected_length=len(world.states),
+    )
+    planned_entries: list[LedgerEntry] = []
     for state in world.states:
+        state_id = int(state.jurisdiction_id)
         applications = tuple(
             application
             for application in latest_by_firm.values()
-            if state.jurisdiction_id in application.eligible_jurisdictions
+            if state_id in application.eligible_jurisdictions
         )
         for award in state.award_subsidies(applications):
-            available = min(
-                state.state.treasury_cents,
-                state.state.subsidy_budget_cents,
+            firm_id = int(award.firm_id)
+            if firm_id < 0 or firm_id >= len(world.firms):
+                raise ValueError("subsidy award references an unknown firm")
+            award_cents = _nonnegative_int64(
+                award.award_cents,
+                label="subsidy award",
             )
-            paid = min(available, award.award_cents)
+            available = min(
+                planned_treasury[state_id],
+                planned_budgets[state_id],
+            )
+            paid = min(available, award_cents)
             if paid <= 0:
                 continue
-            firm = world.firms[award.firm_id]
-            if firm.state.cash_cents > INT64_MAX - paid:
-                raise OverflowError("firm cash would overflow int64")
-            state.state.treasury_cents -= paid
-            state.state.subsidy_budget_cents -= paid
-            firm.state.cash_cents += paid
-            if world.firm_subsidy_cents[award.firm_id] > INT64_MAX - paid:
-                raise OverflowError("cumulative firm subsidy would overflow int64")
-            if (
-                world.state_subsidy_outlay_cents[state.jurisdiction_id]
-                > INT64_MAX - paid
-            ):
-                raise OverflowError("cumulative state subsidy would overflow int64")
-            world.firm_subsidy_cents[award.firm_id] += paid
-            world.state_subsidy_outlay_cents[state.jurisdiction_id] += paid
-            total += paid
-            world.ledger.transfer(
-                tick=tick,
-                debit_account=f"state:{state.jurisdiction_id}:treasury",
-                credit_account=f"firm:{firm.firm_id}:cash",
-                amount_cents=paid,
-                kind="conditional_subsidy",
-                reference=(
-                    f"subsidy:{tick}:{state.jurisdiction_id}:{firm.firm_id}"
-                ),
+            planned_firm_cash[firm_id] = _checked_add_int64(
+                planned_firm_cash[firm_id],
+                paid,
+                label="firm cash",
             )
+            planned_firm_subsidies[firm_id] = _checked_add_int64(
+                int(planned_firm_subsidies[firm_id]),
+                paid,
+                label="cumulative firm subsidy",
+            )
+            planned_state_outlays[state_id] = _checked_add_int64(
+                int(planned_state_outlays[state_id]),
+                paid,
+                label="cumulative state subsidy",
+            )
+            total = _checked_add_int64(
+                total,
+                paid,
+                label="total subsidy outlay",
+            )
+            planned_treasury[state_id] -= paid
+            planned_budgets[state_id] -= paid
+            planned_entries.append(
+                LedgerEntry(
+                    tick=tick,
+                    debit_account=f"state:{state_id}:treasury",
+                    credit_account=f"firm:{firm_id}:cash",
+                    amount_cents=paid,
+                    kind="conditional_subsidy",
+                    reference=f"subsidy:{tick}:{state_id}:{firm_id}",
+                )
+            )
+
+    _validate_new_ledger_references(world, planned_entries)
+
+    for state, treasury, budget in zip(
+        world.states,
+        planned_treasury,
+        planned_budgets,
+    ):
+        state.state.treasury_cents = treasury
+        state.state.subsidy_budget_cents = budget
+    for firm, cash in zip(world.firms, planned_firm_cash):
+        firm.state.cash_cents = cash
+    world.firm_subsidy_cents[:] = planned_firm_subsidies
+    world.state_subsidy_outlay_cents[:] = planned_state_outlays
+    world.ledger.extend(planned_entries)
     world._pending_subsidies[:] = future
     return total
+
+
+def _nonnegative_int64(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{label} must be an integer")
+    integer = int(value)
+    if integer < 0:
+        raise ValueError(f"{label} cannot be negative")
+    if integer > INT64_MAX:
+        raise OverflowError(f"{label} is outside int64")
+    return integer
+
+
+def _nonnegative_int64_array(
+    values: npt.NDArray[np.int64],
+    *,
+    label: str,
+    expected_length: int,
+) -> npt.NDArray[np.int64]:
+    array = np.asarray(values)
+    if array.dtype != np.dtype(np.int64) or array.shape != (expected_length,):
+        raise TypeError(
+            f"{label} must be an int64 array of length {expected_length}"
+        )
+    if np.any(array < 0):
+        raise ValueError(f"{label} cannot be negative")
+    return array.copy()
+
+
+def _checked_add_int64(current: object, increment: object, *, label: str) -> int:
+    left = _nonnegative_int64(current, label=label)
+    right = _nonnegative_int64(increment, label=label)
+    if left > INT64_MAX - right:
+        raise OverflowError(f"{label} would overflow int64")
+    return left + right
+
+
+def _validate_new_ledger_references(
+    world: "World",
+    entries: list[LedgerEntry],
+) -> None:
+    existing = {entry.reference for entry in world.ledger.entries}
+    planned: set[str] = set()
+    for entry in entries:
+        if entry.reference in existing or entry.reference in planned:
+            raise ValueError(f"duplicate ledger reference: {entry.reference}")
+        planned.add(entry.reference)
+
+
+def _commit_regulator_private_state(target: StateAgent, source: StateAgent) -> None:
+    target.state.treasury_cents = source.state.treasury_cents
+    target.state.audit_budget_cents = source.state.audit_budget_cents
+    target.state.subsidy_budget_cents = source.state.subsidy_budget_cents
+    target.state.audit_capacity_per_cycle = source.state.audit_capacity_per_cycle
+    target.state.inspection_cost_cents = source.state.inspection_cost_cents
+    target.state.compliance_alpha.clear()
+    target.state.compliance_alpha.update(source.state.compliance_alpha)
+    target.state.compliance_beta.clear()
+    target.state.compliance_beta.update(source.state.compliance_beta)

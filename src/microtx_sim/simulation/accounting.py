@@ -70,26 +70,79 @@ def renew_income(world: "World", *, tick: int) -> None:
 def credit_firm_revenue(world: "World", result: StepResult) -> None:
     """Aggregate exact game revenue into company balances and kernel totals."""
 
-    by_firm = np.zeros(len(world.firms), dtype=np.int64)
-    unsafe = np.zeros(len(world.firms), dtype=np.int64)
-    # Integer scatter-add preserves every cent and never samples games/firms.
-    np.add.at(by_firm, world.games.company_id, result.game_revenue_cents)
-    np.add.at(unsafe, world.games.company_id, result.game_unsafe_revenue_cents)
+    company_ids = np.asarray(world.games.company_id)
+    by_firm = _checked_grouped_money(
+        result.game_revenue_cents,
+        company_ids,
+        len(world.firms),
+        label="firm revenue aggregation",
+    )
+    unsafe = _checked_grouped_money(
+        result.game_unsafe_revenue_cents,
+        company_ids,
+        len(world.firms),
+        label="unsafe firm revenue aggregation",
+    )
+    planned_cash: list[int] = []
     for firm in world.firms:
         revenue = int(by_firm[firm.firm_id])
-        if revenue > INT64_MAX - firm.state.cash_cents:
+        cash = int(firm.state.cash_cents)
+        if cash < 0 or cash > INT64_MAX or revenue > INT64_MAX - cash:
             raise OverflowError("firm cash would overflow int64")
-        firm.state.cash_cents += revenue
+        planned_cash.append(cash + revenue)
+
+    planned_revenue = world.firm_revenue_cents.copy()
     checked_accumulate(
-        world.firm_revenue_cents,
+        planned_revenue,
         by_firm,
         label="cumulative firm revenue",
     )
+    planned_unsafe_revenue = world.firm_unsafe_revenue_cents.copy()
     checked_accumulate(
-        world.firm_unsafe_revenue_cents,
+        planned_unsafe_revenue,
         unsafe,
         label="cumulative unsafe firm revenue",
     )
+
+    # Every possible failure is above this line; committing detached values is
+    # therefore one non-raising transaction from the kernel's perspective.
+    for firm, cash in zip(world.firms, planned_cash):
+        firm.state.cash_cents = cash
+    world.firm_revenue_cents[:] = planned_revenue
+    world.firm_unsafe_revenue_cents[:] = planned_unsafe_revenue
+
+
+def _checked_grouped_money(
+    values: IntArray,
+    group_ids: npt.NDArray[np.integer],
+    group_count: int,
+    *,
+    label: str,
+) -> IntArray:
+    """Return exact non-negative int64 group totals without wraparound."""
+
+    money = np.asarray(values)
+    groups = np.asarray(group_ids)
+    if (
+        money.dtype != np.dtype(np.int64)
+        or money.ndim != 1
+        or groups.ndim != 1
+        or not np.issubdtype(groups.dtype, np.integer)
+        or money.shape != groups.shape
+    ):
+        raise ValueError(f"{label} needs aligned one-dimensional int64 arrays")
+    if np.any(money < 0):
+        raise ValueError(f"{label} needs non-negative int64 values")
+    totals = [0] * group_count
+    for group_value, money_value in zip(groups, money):
+        group = int(group_value)
+        if group < 0 or group >= group_count:
+            raise ValueError(f"{label} references an unknown firm")
+        total = totals[group] + int(money_value)
+        if total > INT64_MAX:
+            raise OverflowError(f"{label} would overflow int64")
+        totals[group] = total
+    return np.asarray(totals, dtype=np.int64)
 
 
 def accrue_interest(world: "World") -> None:
