@@ -20,10 +20,12 @@ from .plots import (
 )
 from .schema import (
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
+    OUTPUT_SCHEMA_VERSION,
     PLAYER_OUTCOME_COLUMNS,
     POLICY_ARTIFACT_FILENAMES,
 )
 from .writers import (
+    preflight_csv_rows,
     write_batch_artifacts,
     write_csv_atomic,
     write_json_atomic,
@@ -54,6 +56,18 @@ def export_policy_batch(
         command=command,
     )
     sensitivity_rows = list(sensitivity.rows) if sensitivity is not None else []
+    player_rows = batch.player_rows() if config.output.include_player_rows else []
+    opportunity_rows = batch.opportunity_rows()
+    preflight_csv_rows(
+        player_rows,
+        canonical_columns=PLAYER_OUTCOME_COLUMNS,
+        allow_extra_columns=False,
+    )
+    preflight_csv_rows(
+        opportunity_rows,
+        canonical_columns=OPPORTUNITY_DECOMPOSITION_COLUMNS,
+        allow_extra_columns=False,
+    )
     paths = write_batch_artifacts(
         destination,
         batch.seed_rows(),
@@ -62,17 +76,17 @@ def export_policy_batch(
         sensitivity_rows,
         manifest,
     )
-    player_rows = batch.player_rows() if config.output.include_player_rows else []
     paths["player_outcomes"] = write_csv_atomic(
         destination / "player_outcomes.csv",
         player_rows,
         canonical_columns=PLAYER_OUTCOME_COLUMNS,
+        allow_extra_columns=False,
     )
-    opportunity_rows = batch.opportunity_rows()
     paths["opportunity_cost_decomposition"] = write_csv_atomic(
         destination / "opportunity_cost_decomposition.csv",
         opportunity_rows,
         canonical_columns=OPPORTUNITY_DECOMPOSITION_COLUMNS,
+        allow_extra_columns=False,
     )
     paths["summary"] = write_text_atomic(
         destination / "summary.md",
@@ -135,6 +149,7 @@ def export_policy_batch(
     # The initial manifest is written before charts so failures never describe
     # non-existent outputs.  Once all writes succeed, replace it with complete
     # file names, sizes, and hashes (excluding the self-referential manifest).
+    manifest["output_schema_version"] = OUTPUT_SCHEMA_VERSION
     manifest["artifact_files"] = list(POLICY_ARTIFACT_FILENAMES)
     manifest["artifacts"] = {
         path.name: {

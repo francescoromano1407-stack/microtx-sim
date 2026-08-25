@@ -220,12 +220,12 @@ campaign as routine verification.
 
 ## Reproducible artifact contract
 
-`microtx_sim.outputs` owns the versioned column prefixes, fixed filenames,
+`microtx_sim.outputs` owns the exhaustive versioned column sets, fixed filenames,
 atomic UTF-8 CSV/JSON/Markdown writes, and dependency-free SVG renderers. Keep
 these properties when changing outputs:
 
-1. preserve canonical column order and append compatible extension columns in a
-   deterministic order;
+1. preserve canonical column order and reject undeclared keys in versioned
+   tables; add fields explicitly to the schema before exporting them;
 2. write through a same-directory temporary file and atomic replacement;
 3. reject `NaN`, infinity, inconsistent reconciliations, and conflicting schema
    metadata;
@@ -234,6 +234,13 @@ these properties when changing outputs:
 6. include configuration/source hashes, seeds, cohort digests, Git state,
    environment, equations, and scope limits in `manifest.json`;
 7. never imply that deterministic synthetic output is empirically validated.
+
+Output schema `2.0` is the first exhaustive-column contract. It retains the
+released v1 prefix and non-empty header order, but empty seed, scenario-summary,
+and sensitivity tables now include every declared extension column. The named
+`*_V1_PREFIX_COLUMNS` tuples are the migration boundary for compatibility tests;
+an exact schema fingerprint forces any later column or artifact change through
+an explicit versioned migration.
 
 The six CSV files, manifest, Markdown summary, and five SVG charts form the
 13-file `reproduce` contract listed in [Usage](usage.md).

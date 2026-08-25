@@ -1,10 +1,9 @@
 """Stable, machine-readable column contracts for exported simulation results.
 
-The writers accept arbitrary string-keyed mappings.  The columns below define
-the canonical prefix for each table; additional keys are retained after that
-prefix in lexical order, while missing canonical values are written as empty
-cells.  This keeps the output layer usable while batch-domain dataclasses are
-still evolving.
+Version 2 exhaustively declares every column in a policy table and rejects
+undeclared row keys.  The named v1 prefix tuples preserve the migration
+boundary: v2 keeps the released non-empty header order while empty tables now
+expose the complete schema.  The generic CSV writer remains flexible.
 """
 
 from __future__ import annotations
@@ -12,9 +11,9 @@ from __future__ import annotations
 from typing import Final
 
 
-OUTPUT_SCHEMA_VERSION: Final[str] = "1.0"
+OUTPUT_SCHEMA_VERSION: Final[str] = "2.0"
 
-SEED_RESULT_COLUMNS: Final[tuple[str, ...]] = (
+SEED_RESULT_V1_PREFIX_COLUMNS: Final[tuple[str, ...]] = (
     "scenario_id",
     "scenario_label",
     "seed",
@@ -51,7 +50,30 @@ SEED_RESULT_COLUMNS: Final[tuple[str, ...]] = (
     "epgc_minimum_public_contribution_cents",
 )
 
-SCENARIO_SUMMARY_COLUMNS: Final[tuple[str, ...]] = (
+_SEED_RESULT_V2_EXTENSION_COLUMNS: Final[tuple[str, ...]] = (
+    "adult_opportunity_cost_proxy_cents",
+    "epgc_profit_safe_cents",
+    "harm_p10",
+    "harm_variance_players",
+    "harmful_spending_effect_vs_safe_cents",
+    "high_risk_mean_age",
+    "high_risk_mean_baseline_vulnerability",
+    "high_risk_mean_budget_cents",
+    "high_risk_minor_share",
+    "mean_monetary_harm",
+    "spend_p10_cents",
+    "spend_p50_cents",
+    "spend_p90_cents",
+    "total_revenue_effect_vs_safe_cents",
+    "total_spending_effect_vs_safe_cents",
+    "youth_opportunity_cost_proxy_cents",
+)
+
+SEED_RESULT_COLUMNS: Final[tuple[str, ...]] = (
+    SEED_RESULT_V1_PREFIX_COLUMNS + _SEED_RESULT_V2_EXTENSION_COLUMNS
+)
+
+SCENARIO_SUMMARY_V1_PREFIX_COLUMNS: Final[tuple[str, ...]] = (
     "scenario_id",
     "scenario_label",
     "seed_count",
@@ -77,6 +99,57 @@ SCENARIO_SUMMARY_COLUMNS: Final[tuple[str, ...]] = (
     "epgc_minimum_public_contribution_cents_mean",
 )
 
+_SCENARIO_SUMMARY_V1_METRICS: Final[tuple[str, ...]] = (
+    "total_revenue_cents",
+    "producer_profit_cents",
+    "total_spending_cents",
+    "harmful_spending_cents",
+    "mean_harm",
+    "mean_harm_effect_vs_safe",
+    "mean_opportunity_cost_score",
+    "mean_sleep_burden",
+    "mean_education_work_burden",
+    "mean_social_burden",
+    "mean_wellbeing_burden",
+    "mean_enjoyment",
+    "high_risk_count",
+    "total_opportunity_cost_proxy_cents",
+    "epgc_minimum_public_contribution_cents",
+    "revenue_direct_purchase_cents",
+    "revenue_fixed_price_cents",
+    "revenue_institutional_licensing_cents",
+    "revenue_non_targeted_sponsorship_cents",
+    "revenue_opaque_virtual_currency_cents",
+    "revenue_paid_random_rewards_cents",
+    "revenue_public_contract_cents",
+    "revenue_subscription_cents",
+)
+
+_UNCERTAINTY_SUFFIXES: Final[tuple[str, ...]] = (
+    "mean",
+    "variance",
+    "sd",
+    "ci95_low",
+    "ci95_high",
+)
+
+_SCENARIO_SUMMARY_V1_DERIVED: Final[frozenset[str]] = frozenset(
+    f"{metric}_{suffix}"
+    for metric in _SCENARIO_SUMMARY_V1_METRICS
+    for suffix in _UNCERTAINTY_SUFFIXES
+)
+
+SCENARIO_SUMMARY_COLUMNS: Final[tuple[str, ...]] = (
+    SCENARIO_SUMMARY_V1_PREFIX_COLUMNS
+    + tuple(
+        sorted(
+            _SCENARIO_SUMMARY_V1_DERIVED.difference(
+                SCENARIO_SUMMARY_V1_PREFIX_COLUMNS
+            )
+        )
+    )
+)
+
 EPGC_FINANCING_COLUMNS: Final[tuple[str, ...]] = (
     "scenario_id",
     "seed",
@@ -90,7 +163,7 @@ EPGC_FINANCING_COLUMNS: Final[tuple[str, ...]] = (
     "penalty_cents",
 )
 
-SENSITIVITY_COLUMNS: Final[tuple[str, ...]] = (
+SENSITIVITY_V1_PREFIX_COLUMNS: Final[tuple[str, ...]] = (
     "parameter",
     "parameter_value",
     "scenario_id",
@@ -106,6 +179,15 @@ SENSITIVITY_COLUMNS: Final[tuple[str, ...]] = (
     "expected_direction",
     "monotonic_observed",
     "unstable",
+)
+
+_SENSITIVITY_V2_EXTENSION_COLUMNS: Final[tuple[str, ...]] = (
+    "harm_coefficient_of_variation",
+    "monotonic_expected",
+)
+
+SENSITIVITY_COLUMNS: Final[tuple[str, ...]] = (
+    SENSITIVITY_V1_PREFIX_COLUMNS + _SENSITIVITY_V2_EXTENSION_COLUMNS
 )
 
 PLAYER_OUTCOME_COLUMNS: Final[tuple[str, ...]] = (
@@ -170,6 +252,9 @@ __all__ = [
     "PLAYER_OUTCOME_COLUMNS",
     "POLICY_ARTIFACT_FILENAMES",
     "SCENARIO_SUMMARY_COLUMNS",
+    "SCENARIO_SUMMARY_V1_PREFIX_COLUMNS",
     "SEED_RESULT_COLUMNS",
+    "SEED_RESULT_V1_PREFIX_COLUMNS",
     "SENSITIVITY_COLUMNS",
+    "SENSITIVITY_V1_PREFIX_COLUMNS",
 ]

@@ -41,7 +41,7 @@ feedback from `microtx_sim.core.world`.
 | `microtx_sim.simulation.policy_orchestrator` | Clones one branch, runs its days, computes welfare, revenue composition, producer viability, high-risk flags, and EPGC output. | `ProducerAssumptions`, `PolicyScenarioResult`, `run_policy_scenario()` |
 | `microtx_sim.causal.batch` | Runs all seven scenarios for every seed on the same cohort, pairs each with the safe reference, and aggregates uncertainty. | `PolicyBatchSpec`, `PolicyBatchResult`, `run_policy_batch()` |
 | `microtx_sim.analysis.sensitivity` | Runs one-at-a-time grids with common cohorts, expected-direction checks, and instability flags. | `SensitivityCase`, `SensitivityResult`, `run_sensitivity_analysis()` |
-| `microtx_sim.outputs.schema` | Fixes schema version, canonical CSV prefixes, and the complete artifact set. | `OUTPUT_SCHEMA_VERSION`, column tuples, `POLICY_ARTIFACT_FILENAMES` |
+| `microtx_sim.outputs.schema` | Fixes schema version, exhaustive CSV column contracts, and the complete artifact set. | `OUTPUT_SCHEMA_VERSION`, column tuples, `POLICY_ARTIFACT_FILENAMES` |
 | `microtx_sim.outputs.writers` | Writes deterministic UTF-8 CSV/JSON/text files through same-directory atomic replacement. | `write_csv_atomic()`, `write_json_atomic()`, `write_batch_artifacts()` |
 | `microtx_sim.outputs.manifest` | Captures configuration and source digests, Git state, environment, seeds, cohort digests, scenarios, equations, and scope limits. | `build_run_manifest()` |
 | `microtx_sim.outputs.plots` | Produces dependency-free accessible SVG charts from exported values. | Harm/spending histograms, frontier, decomposition, and EPGC chart writers |
@@ -309,10 +309,14 @@ parameter distributions.
 | `opportunity_cost_decomposition.svg` | Baseline displaced-activity decomposition. |
 | `epgc_subsidy_requirement.svg` | Minimum public contribution across EPGC seed runs. |
 
-CSV columns have a versioned canonical prefix. Extra declared columns are
-retained in deterministic lexical order. Writers reject non-finite numbers and
-replace files atomically. The final manifest records file sizes and SHA-256
-digests for every non-manifest artifact.
+Each versioned CSV has an exhaustive ordered column contract. Policy exporters
+reject undeclared row keys instead of silently extending that contract. Writers
+also reject non-finite numbers and replace files atomically. The final manifest
+records file sizes and SHA-256 digests for every non-manifest artifact.
+
+Schema `2.0` preserves the released v1 prefix and complete non-empty header
+order. Its breaking change is deliberate: empty seed, scenario-summary, and
+sensitivity files now expose the same exhaustive columns as populated files.
 
 ## Assumptions requiring calibration
 

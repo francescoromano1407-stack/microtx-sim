@@ -1,10 +1,9 @@
 """Atomic deterministic writers for batch simulation artifacts.
 
-Rows are supplied as sequences of string-keyed mappings.  Canonical keys are
-documented in :mod:`microtx_sim.outputs.schema`; callers may add extra keys,
-which are emitted in lexical order after the canonical columns.  A missing key
-produces an empty CSV cell, allowing empty and partially populated structural
-checks to use the same file schema as full batches.
+The generic CSV writer retains undeclared keys in lexical order for ad-hoc use.
+Versioned policy exports disable that extension behavior and reject undeclared
+keys against the exhaustive contracts in :mod:`microtx_sim.outputs.schema`.
+A missing declared key produces an empty cell, preserving structural checks.
 """
 
 from __future__ import annotations
@@ -66,32 +65,37 @@ def write_csv_atomic(
     rows: Sequence[Row],
     *,
     canonical_columns: Sequence[str] = (),
+    allow_extra_columns: bool = True,
 ) -> Path:
-    """Write a deterministic RFC-4180-style CSV with a stable column order."""
+    """Write deterministic CSV, optionally rejecting undeclared row keys."""
 
-    materialized = _materialize_rows(rows)
-    columns = _column_order(canonical_columns, materialized)
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, lineterminator="\n")
-    if columns:
-        writer.writerow(columns)
-        for row in materialized:
-            writer.writerow(_csv_value(row.get(column)) for column in columns)
-    return write_text_atomic(path, buffer.getvalue())
+    text = _render_csv(
+        rows,
+        canonical_columns=canonical_columns,
+        allow_extra_columns=allow_extra_columns,
+    )
+    return write_text_atomic(path, text)
+
+
+def preflight_csv_rows(
+    rows: Sequence[Row],
+    *,
+    canonical_columns: Sequence[str] = (),
+    allow_extra_columns: bool = True,
+) -> None:
+    """Validate row structure and its column contract without writing a file."""
+
+    _prepare_csv_rows(
+        rows,
+        canonical_columns=canonical_columns,
+        allow_extra_columns=allow_extra_columns,
+    )
 
 
 def write_json_atomic(path: str | Path, payload: object) -> Path:
     """Write canonical human-readable JSON, rejecting non-finite numbers."""
 
-    normalized = _json_compatible(payload)
-    text = json.dumps(
-        normalized,
-        ensure_ascii=False,
-        sort_keys=True,
-        indent=2,
-        allow_nan=False,
-    )
-    return write_text_atomic(path, text + "\n")
+    return write_text_atomic(path, _render_json(payload))
 
 
 def write_batch_artifacts(
@@ -125,32 +129,98 @@ def write_batch_artifacts(
     manifest_payload["output_schema_version"] = OUTPUT_SCHEMA_VERSION
     manifest_payload["artifact_files"] = list(ARTIFACT_FILENAMES)
 
-    paths = {
-        "seed_results": write_csv_atomic(
-            destination / "seed_results.csv",
-            seed_rows,
-            canonical_columns=SEED_RESULT_COLUMNS,
+    # Render every table and the manifest before touching the destination.  A
+    # late-table schema/value error therefore cannot leave a partial bundle or
+    # replace files in an existing bundle.
+    csv_payloads = {
+        "seed_results": (
+            "seed_results.csv",
+            _render_csv(
+                seed_rows,
+                canonical_columns=SEED_RESULT_COLUMNS,
+                allow_extra_columns=False,
+            ),
         ),
-        "scenario_summary": write_csv_atomic(
-            destination / "scenario_summary.csv",
-            summary_rows,
-            canonical_columns=SCENARIO_SUMMARY_COLUMNS,
+        "scenario_summary": (
+            "scenario_summary.csv",
+            _render_csv(
+                summary_rows,
+                canonical_columns=SCENARIO_SUMMARY_COLUMNS,
+                allow_extra_columns=False,
+            ),
         ),
-        "epgc_financing": write_csv_atomic(
-            destination / "epgc_financing.csv",
-            epgc_rows,
-            canonical_columns=EPGC_FINANCING_COLUMNS,
+        "epgc_financing": (
+            "epgc_financing.csv",
+            _render_csv(
+                epgc_rows,
+                canonical_columns=EPGC_FINANCING_COLUMNS,
+                allow_extra_columns=False,
+            ),
         ),
-        "sensitivity": write_csv_atomic(
-            destination / "sensitivity.csv",
-            sensitivity_rows,
-            canonical_columns=SENSITIVITY_COLUMNS,
+        "sensitivity": (
+            "sensitivity.csv",
+            _render_csv(
+                sensitivity_rows,
+                canonical_columns=SENSITIVITY_COLUMNS,
+                allow_extra_columns=False,
+            ),
         ),
     }
-    paths["manifest"] = write_json_atomic(
-        destination / "manifest.json", manifest_payload
-    )
+    manifest_text = _render_json(manifest_payload)
+
+    paths = {
+        name: write_text_atomic(destination / filename, text)
+        for name, (filename, text) in csv_payloads.items()
+    }
+    paths["manifest"] = write_text_atomic(destination / "manifest.json", manifest_text)
     return paths
+
+
+def _prepare_csv_rows(
+    rows: Sequence[Row],
+    *,
+    canonical_columns: Sequence[str],
+    allow_extra_columns: bool,
+) -> tuple[list[dict[str, object]], tuple[str, ...]]:
+    materialized = _materialize_rows(rows)
+    columns = _column_order(
+        canonical_columns,
+        materialized,
+        allow_extra_columns=allow_extra_columns,
+    )
+    return materialized, columns
+
+
+def _render_csv(
+    rows: Sequence[Row],
+    *,
+    canonical_columns: Sequence[str],
+    allow_extra_columns: bool,
+) -> str:
+    materialized, columns = _prepare_csv_rows(
+        rows,
+        canonical_columns=canonical_columns,
+        allow_extra_columns=allow_extra_columns,
+    )
+    buffer = io.StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\n")
+    if columns:
+        writer.writerow(columns)
+        for row in materialized:
+            writer.writerow(_csv_value(row.get(column)) for column in columns)
+    return buffer.getvalue()
+
+
+def _render_json(payload: object) -> str:
+    normalized = _json_compatible(payload)
+    text = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
+        allow_nan=False,
+    )
+    return text + "\n"
 
 
 def _materialize_rows(rows: Sequence[Row]) -> list[dict[str, object]]:
@@ -170,22 +240,31 @@ def _materialize_rows(rows: Sequence[Row]) -> list[dict[str, object]]:
 
 
 def _column_order(
-    canonical_columns: Sequence[str], rows: Sequence[Mapping[str, object]]
+    canonical_columns: Sequence[str],
+    rows: Sequence[Mapping[str, object]],
+    *,
+    allow_extra_columns: bool,
 ) -> tuple[str, ...]:
     canonical = tuple(canonical_columns)
     if len(set(canonical)) != len(canonical) or any(
         not isinstance(column, str) or not column for column in canonical
     ):
         raise ValueError("canonical CSV columns must be unique non-empty strings")
-    extra = sorted(
-        {
-            key
-            for row in rows
-            for key in row
-            if key not in canonical
-        }
+    extra = tuple(
+        sorted(
+            {
+                key
+                for row in rows
+                for key in row
+                if key not in canonical
+            }
+        )
     )
-    return canonical + tuple(extra)
+    if extra and not allow_extra_columns:
+        raise ValueError(
+            "versioned CSV rows contain undeclared columns: " + ", ".join(extra)
+        )
+    return canonical + extra
 
 
 def _csv_value(value: object) -> str:
@@ -264,6 +343,7 @@ def _scalar_item(value: object) -> object:
 
 
 __all__ = [
+    "preflight_csv_rows",
     "write_batch_artifacts",
     "write_csv_atomic",
     "write_json_atomic",

@@ -100,10 +100,15 @@ analysis, then writes these 13 files:
 
 Use `--output PATH` to select another destination. CSV, JSON, Markdown, and SVG
 files are written through atomic replacements. CSV column order and SVG geometry
-are deterministic for identical inputs. `manifest.json` intentionally records
+are deterministic for identical inputs; versioned policy CSVs reject undeclared
+row keys. `manifest.json` intentionally records
 the run timestamp, absolute paths, environment, Git revision, and dirty state,
 so the manifest itself is an audit record rather than a promise of identical
 bytes across machines or invocation times.
+
+The current output schema is `2.0`. It preserves v1 populated-table header order
+but expands empty seed, scenario-summary, and sensitivity headers to the full
+declared contracts.
 
 Use a new or empty destination when the exact directory inventory matters. The
 exporter atomically replaces its own 13 filenames but does not delete unrelated

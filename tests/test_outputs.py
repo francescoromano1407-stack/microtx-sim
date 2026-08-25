@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import csv
+from hashlib import sha256
 import json
 from pathlib import Path
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
+from microtx_sim.analysis.sensitivity import (
+    SensitivityCase,
+    run_sensitivity_analysis,
+)
+from microtx_sim.causal.batch import PolicyBatchSpec, run_policy_batch
+from microtx_sim.consumers.decision import DecisionParameters
+from microtx_sim.consumers.population import CountryProfile
 from microtx_sim.outputs.plots import (
     render_epgc_subsidy_requirement_svg,
     render_harm_distribution_svg,
@@ -18,10 +26,16 @@ from microtx_sim.outputs.plots import (
 from microtx_sim.outputs.schema import (
     ARTIFACT_FILENAMES,
     EPGC_FINANCING_COLUMNS,
+    OPPORTUNITY_DECOMPOSITION_COLUMNS,
     OUTPUT_SCHEMA_VERSION,
+    PLAYER_OUTCOME_COLUMNS,
+    POLICY_ARTIFACT_FILENAMES,
     SCENARIO_SUMMARY_COLUMNS,
+    SCENARIO_SUMMARY_V1_PREFIX_COLUMNS,
     SEED_RESULT_COLUMNS,
+    SEED_RESULT_V1_PREFIX_COLUMNS,
     SENSITIVITY_COLUMNS,
+    SENSITIVITY_V1_PREFIX_COLUMNS,
 )
 from microtx_sim.outputs.writers import (
     write_batch_artifacts,
@@ -31,8 +45,30 @@ from microtx_sim.outputs.writers import (
 
 
 class OutputSchemaTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.spec = PolicyBatchSpec(
+            seeds=(41, 42),
+            days=1,
+            player_count=4,
+            decision_parameters=DecisionParameters(step_minutes=240),
+        )
+        cls.profiles = (CountryProfile(code="XX"),)
+        cls.batch = run_policy_batch(cls.spec, country_profiles=cls.profiles)
+        cls.sensitivity = run_sensitivity_analysis(
+            cls.spec,
+            cases=(
+                SensitivityCase(
+                    "paid_random_rewards",
+                    (0.0, 0.7),
+                    expected_direction="increasing",
+                ),
+            ),
+            country_profiles=cls.profiles,
+        )
+
     def test_schema_version_columns_and_filenames_are_stable(self) -> None:
-        self.assertEqual(OUTPUT_SCHEMA_VERSION, "1.0")
+        self.assertEqual(OUTPUT_SCHEMA_VERSION, "2.0")
         self.assertEqual(
             ARTIFACT_FILENAMES,
             (
@@ -48,10 +84,120 @@ class OutputSchemaTests(unittest.TestCase):
             SCENARIO_SUMMARY_COLUMNS,
             EPGC_FINANCING_COLUMNS,
             SENSITIVITY_COLUMNS,
+            PLAYER_OUTCOME_COLUMNS,
+            OPPORTUNITY_DECOMPOSITION_COLUMNS,
         ):
             self.assertTrue(columns)
             self.assertEqual(len(columns), len(set(columns)))
             self.assertTrue(all(isinstance(column, str) and column for column in columns))
+
+    def test_v2_preserves_v1_prefix_and_released_nonempty_order(self) -> None:
+        migrations = {
+            "seed_results.csv": (
+                self.batch.seed_rows(),
+                SEED_RESULT_V1_PREFIX_COLUMNS,
+                SEED_RESULT_COLUMNS,
+            ),
+            "scenario_summary.csv": (
+                self.batch.scenario_rows(),
+                SCENARIO_SUMMARY_V1_PREFIX_COLUMNS,
+                SCENARIO_SUMMARY_COLUMNS,
+            ),
+            "sensitivity.csv": (
+                self.sensitivity.rows,
+                SENSITIVITY_V1_PREFIX_COLUMNS,
+                SENSITIVITY_COLUMNS,
+            ),
+        }
+        for filename, (rows, v1_prefix, v2_columns) in migrations.items():
+            emitted_keys = set(rows[0])
+            released_nonempty_order = v1_prefix + tuple(
+                sorted(emitted_keys.difference(v1_prefix))
+            )
+            with self.subTest(filename=filename):
+                self.assertEqual(v2_columns[: len(v1_prefix)], v1_prefix)
+                self.assertEqual(v2_columns, released_nonempty_order)
+
+    def test_v2_schema_fingerprint_is_frozen(self) -> None:
+        payload = {
+            "version": OUTPUT_SCHEMA_VERSION,
+            "artifacts": POLICY_ARTIFACT_FILENAMES,
+            "columns": {
+                "seed_results.csv": SEED_RESULT_COLUMNS,
+                "scenario_summary.csv": SCENARIO_SUMMARY_COLUMNS,
+                "epgc_financing.csv": EPGC_FINANCING_COLUMNS,
+                "sensitivity.csv": SENSITIVITY_COLUMNS,
+                "player_outcomes.csv": PLAYER_OUTCOME_COLUMNS,
+                "opportunity_cost_decomposition.csv": (
+                    OPPORTUNITY_DECOMPOSITION_COLUMNS
+                ),
+            },
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertEqual(
+            sha256(encoded).hexdigest(),
+            "439df3faab6000565ccb8a33ce81acbc69baeb6e3058cb0e67bf3fd1390ffd80",
+        )
+
+    def test_emitted_policy_keys_and_headers_exactly_match_v2_schema(self) -> None:
+        tables = {
+            "seed_results.csv": (self.batch.seed_rows(), SEED_RESULT_COLUMNS),
+            "scenario_summary.csv": (
+                self.batch.scenario_rows(),
+                SCENARIO_SUMMARY_COLUMNS,
+            ),
+            "epgc_financing.csv": (
+                self.batch.epgc_rows(),
+                EPGC_FINANCING_COLUMNS,
+            ),
+            "sensitivity.csv": (self.sensitivity.rows, SENSITIVITY_COLUMNS),
+            "player_outcomes.csv": (
+                self.batch.player_rows(),
+                PLAYER_OUTCOME_COLUMNS,
+            ),
+            "opportunity_cost_decomposition.csv": (
+                self.batch.opportunity_rows(),
+                OPPORTUNITY_DECOMPOSITION_COLUMNS,
+            ),
+        }
+        for filename, (rows, columns) in tables.items():
+            with self.subTest(filename=filename, contract="keys"):
+                self.assertTrue(rows)
+                for row in rows:
+                    self.assertEqual(set(row), set(columns))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_batch_artifacts(
+                root,
+                self.batch.seed_rows(),
+                self.batch.scenario_rows(),
+                self.batch.epgc_rows(),
+                self.sensitivity.rows,
+                {},
+            )
+            write_csv_atomic(
+                root / "player_outcomes.csv",
+                self.batch.player_rows(),
+                canonical_columns=PLAYER_OUTCOME_COLUMNS,
+                allow_extra_columns=False,
+            )
+            write_csv_atomic(
+                root / "opportunity_cost_decomposition.csv",
+                self.batch.opportunity_rows(),
+                canonical_columns=OPPORTUNITY_DECOMPOSITION_COLUMNS,
+                allow_extra_columns=False,
+            )
+            for filename, (_, columns) in tables.items():
+                with self.subTest(filename=filename, contract="header"):
+                    with (root / filename).open(
+                        encoding="utf-8", newline=""
+                    ) as handle:
+                        self.assertEqual(next(csv.reader(handle)), list(columns))
 
 
 class AtomicWriterTests(unittest.TestCase):
@@ -63,17 +209,18 @@ class AtomicWriterTests(unittest.TestCase):
                 root,
                 seed_rows=(
                     {
-                        "scenario": scenario,
+                        "scenario_id": scenario,
+                        "scenario_label": scenario,
                         "seed": 17,
-                        "players": 0,
+                        "player_count": 0,
                         "mean_harm": 0.0,
-                        "extra_payload": {"z": 1, "a": "é"},
+                        "cohort_digest": "cohort-é",
                     },
                 ),
-                summary_rows=({"scenario": scenario, "seed_count": 1},),
+                summary_rows=({"scenario_id": scenario, "seed_count": 1},),
                 epgc_rows=(
                     {
-                        "scenario": scenario,
+                        "scenario_id": scenario,
                         "minimum_public_contribution_cents": 0,
                     },
                 ),
@@ -81,7 +228,7 @@ class AtomicWriterTests(unittest.TestCase):
                     {
                         "parameter": "alpha",
                         "parameter_value": 0.0,
-                        "scenario": scenario,
+                        "scenario_id": scenario,
                     },
                 ),
                 manifest={"run_id": "batch-é", "nested": {"b": 2, "a": 1}},
@@ -95,10 +242,10 @@ class AtomicWriterTests(unittest.TestCase):
             ) as handle:
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["scenario"], scenario)
-            self.assertEqual(rows[0]["players"], "0")
+            self.assertEqual(rows[0]["scenario_id"], scenario)
+            self.assertEqual(rows[0]["player_count"], "0")
             self.assertEqual(rows[0]["mean_harm"], "0")
-            self.assertEqual(rows[0]["extra_payload"], '{"a":"é","z":1}')
+            self.assertEqual(rows[0]["cohort_digest"], "cohort-é")
 
             manifest = json.loads((root / "manifest.json").read_text("utf-8"))
             self.assertEqual(manifest["output_schema_version"], OUTPUT_SCHEMA_VERSION)
@@ -108,8 +255,8 @@ class AtomicWriterTests(unittest.TestCase):
 
     def test_identical_inputs_are_byte_deterministic(self) -> None:
         arguments = dict(
-            seed_rows=({"seed": 2, "scenario": "z", "custom_b": 2, "custom_a": 1},),
-            summary_rows=({"scenario": "z", "seed_count": 1},),
+            seed_rows=({"seed": 2, "scenario_id": "z", "mean_harm": 0.0},),
+            summary_rows=({"scenario_id": "z", "seed_count": 1},),
             epgc_rows=(),
             sensitivity_rows=(),
             manifest={"seeds": [2], "config": {"beta": 2, "alpha": 1}},
@@ -123,6 +270,103 @@ class AtomicWriterTests(unittest.TestCase):
                 self.assertEqual(
                     (first / filename).read_bytes(), (second / filename).read_bytes()
                 )
+
+    def test_versioned_batch_tables_reject_undeclared_columns(self) -> None:
+        arguments = {
+            "seed_rows": (),
+            "summary_rows": (),
+            "epgc_rows": (),
+            "sensitivity_rows": (),
+            "manifest": {},
+        }
+        for row_argument in (
+            "seed_rows",
+            "summary_rows",
+            "epgc_rows",
+            "sensitivity_rows",
+        ):
+            with (
+                self.subTest(table=row_argument),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                invalid = dict(arguments)
+                invalid[row_argument] = ({"not_in_schema": 1},)
+                destination = Path(directory) / "bundle"
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "undeclared columns: not_in_schema",
+                ):
+                    write_batch_artifacts(destination, **invalid)
+                self.assertFalse(destination.exists())
+
+    def test_batch_preflight_leaves_existing_bundle_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            destination.mkdir()
+            (destination / "sentinel.txt").write_bytes(b"keep-me")
+            (destination / "seed_results.csv").write_bytes(b"old-seed-results")
+            before = {
+                path.name: path.read_bytes()
+                for path in destination.iterdir()
+                if path.is_file()
+            }
+            with self.assertRaisesRegex(
+                ValueError,
+                "undeclared columns: not_in_schema",
+            ):
+                write_batch_artifacts(
+                    destination,
+                    seed_rows=({"scenario_id": "valid"},),
+                    summary_rows=({"scenario_id": "valid"},),
+                    epgc_rows=({"scenario_id": "valid"},),
+                    sensitivity_rows=({"not_in_schema": 1},),
+                    manifest={},
+                )
+            after = {
+                path.name: path.read_bytes()
+                for path in destination.iterdir()
+                if path.is_file()
+            }
+            self.assertEqual(after, before)
+
+    def test_v1_manifest_cannot_describe_a_v2_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "bundle"
+            with self.assertRaisesRegex(
+                ValueError,
+                "output_schema_version conflicts",
+            ):
+                write_batch_artifacts(
+                    destination,
+                    (),
+                    (),
+                    (),
+                    (),
+                    {"output_schema_version": "1.0"},
+                )
+            self.assertFalse(destination.exists())
+
+    def test_generic_writer_retains_ad_hoc_extra_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ad_hoc.csv"
+            write_csv_atomic(
+                path,
+                (
+                    {
+                        "seed": 2,
+                        "custom_b": 2,
+                        "custom_a": {"z": 1, "a": "é"},
+                    },
+                ),
+                canonical_columns=("seed",),
+            )
+            with path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(
+                tuple(rows[0]),
+                ("seed", "custom_a", "custom_b"),
+            )
+            self.assertEqual(rows[0]["custom_a"], '{"a":"é","z":1}')
 
     def test_empty_rows_have_headers_and_zero_values_remain_valid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -189,6 +189,7 @@ def _policy_sensitivity(
         destination / "sensitivity.csv",
         result.rows,
         canonical_columns=SENSITIVITY_COLUMNS,
+        allow_extra_columns=False,
     )
     metadata_path = write_json_atomic(
         destination / "sensitivity_metadata.json",
