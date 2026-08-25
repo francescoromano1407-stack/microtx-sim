@@ -469,7 +469,7 @@ size, `D` content-stat dimensions, and `K` boost rates.
 
 | Operation | Time | Temporary memory |
 | --- | ---: | ---: |
-| Household peer indexing and exact consumer game evaluation | `O(P log P + P·G)` | `O(B·G + P)` |
+| Household peer indexing and exact consumer game evaluation | `O(P log P + P·G·log K_peer)`, with `K_peer <= P` observed household/game pairs | `O(B·G + P)` |
 | Welfare activity allocation | `O(P·A·T)` | `O(P·A)` |
 | Welfare harm decomposition | `O(P)` | `O(P)` |
 | Popularity and public ranking | `O(P + G log G)` | `O(P + G)` |

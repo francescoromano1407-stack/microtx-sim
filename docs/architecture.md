@@ -374,7 +374,7 @@ actions, and `Q = 1440 / step_minutes` welfare decisions per day.
 
 | Operation | Time | Temporary memory | Notes |
 | --- | ---: | ---: | --- |
-| Household peer indexing and exact consumer game choice | `O(P log P + P·G)` | `O(B·G + P)` | Sparse household/game pairs are indexed once per tick; every known alternative is evaluated. |
+| Household peer indexing and exact consumer game choice | `O(P log P + P·G·log K_peer)`, with `K_peer <= P` observed household/game pairs | `O(B·G + P)` | Sparse household/game pairs are indexed once per tick and queried by binary search; every known alternative is evaluated. |
 | Activity, purchase, harm, aggregation | `O(P·G + Σ n_g log n_g)` as currently grouped | `O(P + G)` | Repeated per-game masks are exact but leave room for exact grouped optimisation. |
 | Welfare daily action process | `O(P·A·Q)` | `O(P·A)` | Every action is evaluated at every time step. |
 | Welfare harm decomposition | `O(P)` | `O(P)` | Six scores plus displaced-time and monetary-proxy columns. |
