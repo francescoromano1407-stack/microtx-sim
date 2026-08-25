@@ -113,6 +113,7 @@ def build_run_manifest(
         "command": list(command) if command is not None else None,
         "batch": {
             "seeds": list(config.batch.seeds),
+            "seed_decimal_strings": [str(seed) for seed in config.batch.seeds],
             "days": config.batch.days,
             "player_count": config.batch.player_count,
             "step_minutes": config.batch.decision_parameters.step_minutes,
@@ -150,6 +151,14 @@ def build_run_manifest(
         "random_stream_contract": {
             "generator": "CounterRNG/SplitMix64",
             "coordinates": ["seed", "player_id", "tick", "stream", "draw_index"],
+            "root_seed": {
+                "accepted_runtime_type": "strict Python int (bool excluded)",
+                "minimum_decimal": "0",
+                "maximum_decimal": "18446744073709551615",
+                "normalization": "none; out-of-range values are rejected",
+                "json_exact_encoding": "batch.seed_decimal_strings",
+            },
+            "batch_seed_order": "unique ascending numeric order",
             "named_streams": [
                 "player-life:*",
                 "policy:life-action-gumbel",

@@ -41,6 +41,16 @@ _NORMAL_FIRST_LANE = np.uint64(0xBE5466CF34E90C6C)
 _NORMAL_SECOND_LANE = np.uint64(0xC0AC29B7C97C50DD)
 
 
+def validate_seed(value: object, *, name: str = "seed") -> int:
+    """Return a strict Python integer seed in the unsigned 64-bit domain."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be a Python integer")
+    if not 0 <= value <= _UINT64_MASK:
+        raise ValueError(f"{name} must be in [0, 2**64 - 1]")
+    return value
+
+
 def stable_stream_id(name: str | bytes) -> int:
     """Return a stable unsigned 64-bit ID for a named random stream.
 
@@ -108,9 +118,7 @@ class CounterRNG:
     seed: int
 
     def __post_init__(self) -> None:
-        if isinstance(self.seed, bool) or not isinstance(self.seed, (int, np.integer)):
-            raise TypeError("seed must be an integer")
-        object.__setattr__(self, "seed", int(self.seed) & _UINT64_MASK)
+        object.__setattr__(self, "seed", validate_seed(self.seed))
 
     def _words(
         self,
@@ -247,4 +255,4 @@ class CounterRNG:
         return np.asarray(unit < probability_array, dtype=np.bool_)
 
 
-__all__ = ["CounterRNG", "stable_stream_id"]
+__all__ = ["CounterRNG", "stable_stream_id", "validate_seed"]

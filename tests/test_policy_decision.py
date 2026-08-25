@@ -4,6 +4,7 @@ import unittest
 
 import numpy as np
 
+from microtx_sim.causal.scenarios import required_scenarios
 from microtx_sim.consumers.decision import (
     DecisionParameters,
     LifeAction,
@@ -17,6 +18,7 @@ from microtx_sim.simulation.policy_day import (
     advance_policy_day,
     create_policy_state,
 )
+from microtx_sim.simulation.policy_orchestrator import run_policy_scenario
 
 
 def _cohort(size: int, seed: int = 71):
@@ -26,6 +28,30 @@ def _cohort(size: int, seed: int = 71):
 
 
 class PolicyDecisionTests(unittest.TestCase):
+    def test_scenario_runner_rejects_invalid_root_seeds(self) -> None:
+        players, life, _ = _cohort(0)
+        scenario = required_scenarios()[0]
+
+        for value in (-1, 1 << 64):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, r"\[0, 2\*\*64 - 1\]"):
+                    run_policy_scenario(
+                        players,
+                        life,
+                        scenario,
+                        seed=value,
+                        days=0,
+                    )
+        for value in (True, 1.0, np.int64(1)):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(TypeError, "Python integer"):
+                    run_policy_scenario(
+                        players,
+                        life,
+                        scenario,
+                        seed=value,  # type: ignore[arg-type]
+                        days=0,
+                    )
     def test_purchase_alternative_obeys_cap_and_cooling_off(self) -> None:
         players, life, rng = _cohort(20)
         params = DecisionParameters(step_minutes=60)

@@ -5,6 +5,7 @@ from math import isfinite
 from pathlib import Path
 import tomllib
 
+from .rng import validate_seed
 from .types import ProvenanceStatus
 
 
@@ -85,6 +86,10 @@ class SimulationConfig:
     causal: CausalConfig
 
     def validate(self, *, campaign: bool = False) -> None:
+        try:
+            validate_seed(self.run.seed, name="run.seed")
+        except (TypeError, ValueError) as exc:
+            raise ConfigurationError(str(exc)) from exc
         positive = {
             "cycles": self.run.cycles,
             "tick_days": self.run.tick_days,

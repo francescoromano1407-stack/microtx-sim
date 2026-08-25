@@ -17,6 +17,28 @@ class TestStream(IntEnum):
 
 
 class CounterRNGTests(unittest.TestCase):
+    def test_seed_domain_rejects_aliases_and_non_python_integers(self) -> None:
+        self.assertEqual(CounterRNG(0).seed, 0)
+        for value in (-1, 1 << 64):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, r"\[0, 2\*\*64 - 1\]"):
+                    CounterRNG(value)
+        for value in (True, 1.0, "1", np.int64(1)):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(TypeError, "Python integer"):
+                    CounterRNG(value)  # type: ignore[arg-type]
+
+    def test_maximum_seed_is_accepted_and_reproducible(self) -> None:
+        maximum = (1 << 64) - 1
+        first = CounterRNG(maximum)
+        second = CounterRNG(maximum)
+
+        self.assertEqual(first.seed, maximum)
+        np.testing.assert_array_equal(
+            first.uint64(np.arange(8), 3, "maximum-seed", 2),
+            second.uint64(np.arange(8), 3, "maximum-seed", 2),
+        )
+
     def test_reproducible_and_stable_named_streams(self) -> None:
         entity_ids = np.arange(1_000, dtype=np.int64)
         first = CounterRNG(20260824).uniform(

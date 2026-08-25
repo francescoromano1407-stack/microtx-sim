@@ -111,6 +111,8 @@ All branches for one seed query the same semantic random coordinates. A choice
 or purchase that occurs only in one branch cannot consume a mutable generator
 cursor and shift later shocks in another branch. Stream names and draw-index
 meanings are part of the model version. Scenario order must not alter results.
+Scenarios deliberately receive the same root seed; scenario-specific sub-seeds
+would break this common-random-number pairing and are not derived.
 
 The strategic paired-world runner applies the same principle independently: it
 constructs two worlds, checks equality of causally relevant player, game, firm,
@@ -120,10 +122,16 @@ software invariant.
 
 ## Repeated seeds and uncertainty summaries
 
-`PolicyBatchSpec` requires unique integer seeds and all seven scenarios. Each
-seed creates a new independent synthetic cohort; within that seed, all
-scenarios remain paired. For a scalar outcome with replication values `x_r`,
-the batch reports:
+`PolicyBatchSpec` requires unique strict Python integer seeds in the unsigned
+64-bit range `[0, 2^64 - 1]` and all seven scenarios. It rejects duplicates and
+canonicalises accepted seeds into ascending order before execution, so caller
+ordering cannot change floating-point aggregation order or serialized batch-table
+bytes. Scenario results and cohort-digest metadata revalidate the same seed
+domain rather than coercing foreign key types. Result containers require the
+exact seed-by-scenario cross-product and canonicalise records by ascending seed
+then declared scenario order. Each seed creates a new independent synthetic
+cohort; within that seed, all scenarios remain paired. For a scalar outcome with
+replication values `x_r`, the batch reports:
 
 ```text
 mean = sum_r x_r / R

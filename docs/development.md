@@ -121,6 +121,12 @@ All stochastic mechanisms must use `CounterRNG`. A draw is a pure function of:
 (seed, entity_id, tick, stream, draw_index)
 ```
 
+Root seeds are strict Python integers in `[0, 2^64 - 1]`. They are rejected
+when negative, out of range, boolean, floating-point, or foreign integer scalar
+types; they are never reduced modulo `2^64`. Repeated-seed batch specs also
+reject duplicates and sort seeds before execution so aggregation order is
+canonical.
+
 Use `stable_stream_id()` for a named stream. Do not use Python's salted `hash`,
 the global NumPy random state, a mutable generator cursor, or iteration position
 as an implicit random coordinate. Stream names and draw-index meanings are part

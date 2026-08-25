@@ -313,7 +313,17 @@ def _identifier_or_design_contracts(
             inputs=(formula,),
             implementation=implementation,
             lineage_ids=("output_schema_version", "repository.git_commit"),
-            range_semantics="value belongs to the declared run design domain",
+            range_semantics=(
+                "strict Python integer in the inclusive range [0, 2**64 - 1]"
+                if unit is UNIT_SEED
+                else "value belongs to the declared run design domain"
+            ),
+            missing_value_semantics=(
+                "Not nullable; booleans, foreign integer scalars, floating-point "
+                "values, and modulo-wrapped aliases are rejected."
+                if unit is UNIT_SEED
+                else "not nullable"
+            ),
         )
     return contracts
 

@@ -85,7 +85,7 @@ class OutputMetricContractTests(unittest.TestCase):
         self.assertEqual(OUTPUT_SCHEMA_VERSION, "2.0")
         self.assertEqual(
             metric_contract_registry_sha256(),
-            "128e7bf2e684e12aac9ab04d07aed8165253fa53fbccfc6751ab6d27cc3e8b39",
+            "13778cfe136d5800333ce5ec3797195d7e33d98c71499060702c39af333cbe64",
         )
         snapshot = metric_contract_registry_snapshot()
         self.assertEqual(len(snapshot), 220)
@@ -115,6 +115,21 @@ class OutputMetricContractTests(unittest.TestCase):
                     ("scenario_summary.csv", f"{stem}_{suffix}")
                 ]
                 self.assertEqual(contract.unit, base)
+
+    def test_seed_contracts_publish_the_strict_unsigned_64_bit_domain(self) -> None:
+        for artifact in (
+            "seed_results.csv",
+            "epgc_financing.csv",
+            "player_outcomes.csv",
+        ):
+            with self.subTest(artifact=artifact):
+                contract = OUTPUT_METRIC_CONTRACTS[(artifact, "seed")]
+                self.assertIn("[0, 2**64 - 1]", contract.range_semantics)
+                self.assertIn("booleans", contract.missing_value_semantics)
+                self.assertIn(
+                    "modulo-wrapped aliases",
+                    contract.missing_value_semantics,
+                )
 
     def test_one_seed_summary_has_declared_zero_width_monte_carlo_interval(self) -> None:
         row = self.batch.scenario_rows()[0]
@@ -311,6 +326,19 @@ class OutputMetricContractTests(unittest.TestCase):
         self.assertEqual(lineage["profile_source_retrieved_on"], "2026-08-24")
         self.assertFalse(lineage["profile_dependencies_calibrated"])
         self.assertFalse(lineage["monetary_outputs_cross_country_comparable"])
+        seed_contract = manifest["random_stream_contract"]
+        self.assertEqual(
+            seed_contract["root_seed"]["maximum_decimal"],
+            "18446744073709551615",
+        )
+        self.assertEqual(
+            seed_contract["batch_seed_order"],
+            "unique ascending numeric order",
+        )
+        self.assertEqual(
+            manifest["batch"]["seed_decimal_strings"],
+            [str(seed) for seed in self.config.batch.seeds],
+        )
 
 
 if __name__ == "__main__":

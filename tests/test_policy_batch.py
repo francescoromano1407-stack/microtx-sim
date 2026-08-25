@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+import json
 import unittest
 
 import numpy as np
 
-from microtx_sim.causal.batch import PolicyBatchSpec, run_policy_batch
+from microtx_sim.causal.batch import (
+    PolicyBatchResult,
+    PolicyBatchSpec,
+    run_policy_batch,
+)
 from microtx_sim.causal.scenarios import ScenarioId, required_scenarios
 from microtx_sim.consumers.decision import DecisionParameters
 from microtx_sim.consumers.population import CountryProfile
@@ -14,7 +19,105 @@ from microtx_sim.consumers.population import CountryProfile
 PROFILE = (CountryProfile(code="XX"),)
 
 
+def _projection_bytes(batch: PolicyBatchResult) -> bytes:
+    return json.dumps(
+        {
+            "seed_rows": batch.seed_rows(),
+            "scenario_rows": batch.scenario_rows(),
+        },
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 class PolicyBatchTests(unittest.TestCase):
+    def test_batch_seed_domain_is_strict_canonical_and_unique(self) -> None:
+        maximum = (1 << 64) - 1
+        self.assertEqual(
+            PolicyBatchSpec(seeds=(maximum, 0, 7)).seeds,
+            (0, 7, maximum),
+        )
+        with self.assertRaisesRegex(ValueError, "unique"):
+            PolicyBatchSpec(seeds=(7, 1, 7))
+        for value in (-1, 1 << 64):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, r"\[0, 2\*\*64 - 1\]"):
+                    PolicyBatchSpec(seeds=(value,))
+        for value in (True, 1.0, np.int64(1)):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(TypeError, "Python integer"):
+                    PolicyBatchSpec(seeds=(value,))  # type: ignore[arg-type]
+
+    def test_seed_order_produces_identical_values_and_bytes(self) -> None:
+        parameters = {
+            "days": 1,
+            "player_count": 12,
+            "decision_parameters": DecisionParameters(step_minutes=240),
+        }
+        forward = run_policy_batch(
+            PolicyBatchSpec(seeds=(17, 3, 11), **parameters),
+            country_profiles=PROFILE,
+        )
+        reverse = run_policy_batch(
+            PolicyBatchSpec(seeds=(11, 3, 17), **parameters),
+            country_profiles=PROFILE,
+        )
+
+        self.assertEqual(forward.spec.seeds, (3, 11, 17))
+        reordered_digests = replace(
+            forward,
+            cohort_digest_by_seed=dict(
+                reversed(tuple(forward.cohort_digest_by_seed.items()))
+            ),
+        )
+        self.assertEqual(
+            tuple(reordered_digests.cohort_digest_by_seed),
+            forward.spec.seeds,
+        )
+        reordered_records = replace(
+            forward,
+            records=tuple(reversed(forward.records)),
+        )
+        self.assertEqual(forward.seed_rows(), reverse.seed_rows())
+        self.assertEqual(forward.scenario_rows(), reverse.scenario_rows())
+        self.assertEqual(forward.seed_rows(), reordered_records.seed_rows())
+        self.assertEqual(forward.scenario_rows(), reordered_records.scenario_rows())
+        self.assertEqual(_projection_bytes(forward), _projection_bytes(reverse))
+        self.assertEqual(
+            _projection_bytes(forward),
+            _projection_bytes(reordered_records),
+        )
+
+    def test_result_and_digest_metadata_reject_invalid_seeds(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(seeds=(1,), days=0, player_count=0),
+            country_profiles=PROFILE,
+        )
+        result = batch.records[0].result
+        digest = batch.cohort_digest_by_seed[1]
+
+        wrong_result = replace(result, seed=2)
+        wrong_record = replace(batch.records[0], result=wrong_result)
+        with self.assertRaisesRegex(ValueError, "match the batch spec"):
+            replace(batch, records=(wrong_record, *batch.records[1:]))
+
+        for value in (-1, 1 << 64):
+            with self.subTest(boundary="result", value=value):
+                with self.assertRaisesRegex(ValueError, r"\[0, 2\*\*64 - 1\]"):
+                    replace(result, seed=value)
+            with self.subTest(boundary="digest", value=value):
+                with self.assertRaisesRegex(ValueError, r"\[0, 2\*\*64 - 1\]"):
+                    replace(batch, cohort_digest_by_seed={value: digest})
+        for value in (True, 1.0, np.int64(1)):
+            with self.subTest(boundary="result", value=value):
+                with self.assertRaisesRegex(TypeError, "Python integer"):
+                    replace(result, seed=value)
+            with self.subTest(boundary="digest", value=value):
+                with self.assertRaisesRegex(TypeError, "Python integer"):
+                    replace(batch, cohort_digest_by_seed={value: digest})
+
     def test_effect_vs_safe_schema_rejects_a_different_reference(self) -> None:
         with self.assertRaisesRegex(ValueError, "effect_vs_safe"):
             PolicyBatchSpec(reference_scenario=ScenarioId.BASELINE_F2P)

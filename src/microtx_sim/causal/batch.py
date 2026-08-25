@@ -26,7 +26,7 @@ from ..metrics.harm import (
     WelfareHarmWeights,
 )
 from ..metrics.reporting import REPEATED_SEED_METRIC_STEMS
-from ..rng import CounterRNG
+from ..rng import CounterRNG, validate_seed
 from ..simulation.policy_orchestrator import (
     PolicyScenarioResult,
     ProducerAssumptions,
@@ -47,13 +47,16 @@ class PolicyBatchSpec:
     decision_parameters: DecisionParameters = field(default_factory=DecisionParameters)
 
     def __post_init__(self) -> None:
-        if not self.seeds:
+        seeds = tuple(self.seeds)
+        if not seeds:
             raise ValueError("at least one seed is required")
-        if len(set(self.seeds)) != len(self.seeds):
+        validated_seeds = tuple(
+            validate_seed(seed, name=f"seeds[{index}]")
+            for index, seed in enumerate(seeds)
+        )
+        if len(set(validated_seeds)) != len(validated_seeds):
             raise ValueError("seeds must be unique")
-        for seed in self.seeds:
-            if isinstance(seed, bool) or not isinstance(seed, int):
-                raise TypeError("seeds must contain integers")
+        object.__setattr__(self, "seeds", tuple(sorted(validated_seeds)))
         for name in ("days", "player_count"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):
@@ -105,16 +108,38 @@ class PolicyBatchResult:
         expected = len(self.spec.seeds) * len(self.spec.scenarios)
         if len(self.records) != expected:
             raise ValueError(f"expected {expected} seed-scenario records")
-        keys = {
-            (record.result.seed, record.result.scenario.scenario_id)
+        record_by_key = {
+            (record.result.seed, record.result.scenario.scenario_id): record
             for record in self.records
         }
-        if len(keys) != expected:
-            raise ValueError("duplicate or missing seed-scenario result")
-        digests = {int(seed): str(value) for seed, value in self.cohort_digest_by_seed.items()}
-        if set(digests) != set(self.spec.seeds):
+        if len(record_by_key) != expected:
+            raise ValueError("duplicate seed-scenario result")
+        expected_keys = {
+            (seed, scenario.scenario_id)
+            for seed in self.spec.seeds
+            for scenario in self.spec.scenarios
+        }
+        if set(record_by_key) != expected_keys:
+            raise ValueError("seed-scenario records do not match the batch spec")
+        records = tuple(
+            record_by_key[(seed, scenario.scenario_id)]
+            for seed in self.spec.seeds
+            for scenario in self.spec.scenarios
+        )
+        object.__setattr__(self, "records", records)
+        provided_digests: dict[int, str] = {}
+        for raw_seed, value in self.cohort_digest_by_seed.items():
+            seed = validate_seed(raw_seed, name="cohort_digest_by_seed key")
+            if seed in provided_digests:
+                raise ValueError("cohort digest metadata contain duplicate seeds")
+            provided_digests[seed] = str(value)
+        if set(provided_digests) != set(self.spec.seeds):
             raise ValueError("cohort digest metadata do not match seeds")
-        for record in self.records:
+        digests = {
+            seed: provided_digests[seed]
+            for seed in self.spec.seeds
+        }
+        for record in records:
             if digests[record.result.seed] != record.cohort_digest:
                 raise ValueError("record cohort digest is inconsistent")
         object.__setattr__(self, "cohort_digest_by_seed", MappingProxyType(digests))

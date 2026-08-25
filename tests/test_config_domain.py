@@ -16,6 +16,28 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigAndDomainTests(unittest.TestCase):
+    def test_simulation_config_validates_the_root_seed_domain(self) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        maximum = (1 << 64) - 1
+        replace(config, run=replace(config.run, seed=maximum)).validate()
+
+        for value in (-1, 1 << 64):
+            with self.subTest(value=value):
+                invalid = replace(config, run=replace(config.run, seed=value))
+                with self.assertRaisesRegex(
+                    ConfigurationError,
+                    r"run.seed must be in \[0, 2\*\*64 - 1\]",
+                ):
+                    invalid.validate()
+        for value in (True, 1.0, np.int64(1)):
+            with self.subTest(value=value):
+                invalid = replace(config, run=replace(config.run, seed=value))
+                with self.assertRaisesRegex(
+                    ConfigurationError,
+                    "run.seed must be a Python integer",
+                ):
+                    invalid.validate()
+
     def test_synthetic_smoke_is_valid_but_not_a_campaign(self) -> None:
         config = load_config(ROOT / "configs" / "smoke.toml")
         self.assertEqual(config.run.player_count, 384)

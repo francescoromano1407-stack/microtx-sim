@@ -60,13 +60,17 @@ underlying parameters describe any observed game or jurisdiction.
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
-| `seeds` | non-empty list of unique integers | Independent replications. A cohort is reused across scenarios within each seed. |
+| `seeds` | non-empty list of unique integers in `[0, 2^64 - 1]` | Independent replications. Seeds are canonicalised into ascending order; a cohort is reused across scenarios within each seed. |
 | `days` | non-negative integer days | Evaluation horizon; zero is available for structural edge tests. |
 | `player_count` | non-negative integer | Synthetic cohort size; zero-player structural runs are supported. |
 
 The supplied file uses seeds `101`, `202`, and `303`, 14 days, and 1,000
 players. Changing these values changes the synthetic experiment and therefore
-the configuration hash recorded in the manifest.
+the configuration hash recorded in the manifest. Duplicate seeds are rejected;
+input order is not experiment semantics and cannot change aggregate results.
+Manifests retain both JSON integer seeds and canonical decimal strings. Consumers
+whose JSON number implementation cannot exactly represent integers above
+`2^53 - 1` must use `batch.seed_decimal_strings`.
 
 ### `[decision]`
 
@@ -180,7 +184,7 @@ requires `run.allow_synthetic = true`.
 
 | Field | Type/unit | Meaning |
 | --- | --- | --- |
-| `seed` | integer | Root coordinate for deterministic counter-based randomness. |
+| `seed` | integer in `[0, 2^64 - 1]` | Root coordinate for deterministic counter-based randomness. Negative, boolean, floating-point, and out-of-range values are rejected rather than wrapped. |
 | `cycles` | positive integer | Number of ticks requested by the scenario. |
 | `tick_days` | positive integer days | Calendar days advanced by one tick. |
 | `player_count` | positive integer | Number of consumer rows. |

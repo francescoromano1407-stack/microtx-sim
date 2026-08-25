@@ -21,7 +21,7 @@ from ..metrics.harm import (
     WelfareHarmWeights,
     compute_welfare_harm,
 )
-from ..rng import CounterRNG
+from ..rng import CounterRNG, validate_seed
 from .policy_day import (
     PURCHASE_REVENUE_SOURCES,
     PolicyState,
@@ -102,6 +102,7 @@ class PolicyScenarioResult:
     epgc: EPGCResult | None
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "seed", validate_seed(self.seed))
         size = self.player_ids.size
         for name in (
             "is_minor",
@@ -154,8 +155,7 @@ def run_policy_scenario(
 ) -> PolicyScenarioResult:
     """Run one branch from an immutable shared pre-treatment cohort."""
 
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise TypeError("seed must be an integer")
+    seed = validate_seed(seed)
     if isinstance(days, bool) or not isinstance(days, int):
         raise TypeError("days must be an integer")
     if days < 0:
