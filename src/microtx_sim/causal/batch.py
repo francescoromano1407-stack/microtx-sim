@@ -25,6 +25,7 @@ from ..metrics.harm import (
     OpportunityCostValuation,
     WelfareHarmWeights,
 )
+from ..metrics.reporting import REPEATED_SEED_METRIC_STEMS
 from ..rng import CounterRNG
 from ..simulation.policy_orchestrator import (
     PolicyScenarioResult,
@@ -69,8 +70,13 @@ class PolicyBatchSpec:
                 f"batch must contain exactly the seven required scenarios; "
                 f"missing={missing}, extra={extra}"
             )
-        if self.reference_scenario not in ids:
-            raise ValueError("reference scenario is not present in the batch")
+        if not isinstance(self.reference_scenario, ScenarioId):
+            raise TypeError("reference_scenario must be a ScenarioId")
+        if self.reference_scenario is not ScenarioId.SAFE_FIXED_PRICE_SUBSCRIPTION:
+            raise ValueError(
+                "the effect_vs_safe output contract requires "
+                "safe_fixed_price_subscription as its reference scenario"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,24 +150,7 @@ class PolicyBatchResult:
                 "player_count": self.spec.player_count,
                 "days": self.spec.days,
             }
-            metrics = (
-                "total_revenue_cents",
-                "producer_profit_cents",
-                "total_spending_cents",
-                "harmful_spending_cents",
-                "mean_harm",
-                "mean_harm_effect_vs_safe",
-                "mean_opportunity_cost_score",
-                "mean_sleep_burden",
-                "mean_education_work_burden",
-                "mean_social_burden",
-                "mean_wellbeing_burden",
-                "mean_enjoyment",
-                "high_risk_count",
-                "total_opportunity_cost_proxy_cents",
-                "epgc_minimum_public_contribution_cents",
-            )
-            for metric in metrics:
+            for metric in REPEATED_SEED_METRIC_STEMS:
                 values = np.asarray([float(row[metric]) for row in rows])
                 mean, variance, standard_deviation, low, high = _uncertainty(values)
                 result[f"{metric}_mean"] = mean
@@ -169,17 +158,6 @@ class PolicyBatchResult:
                 result[f"{metric}_sd"] = standard_deviation
                 result[f"{metric}_ci95_low"] = low
                 result[f"{metric}_ci95_high"] = high
-            for key in sorted(rows[0]):
-                if key.startswith("revenue_") and key.endswith("_cents"):
-                    values = np.asarray([float(row[key]) for row in rows])
-                    mean, variance, standard_deviation, low, high = _uncertainty(
-                        values
-                    )
-                    result[f"{key}_mean"] = mean
-                    result[f"{key}_variance"] = variance
-                    result[f"{key}_sd"] = standard_deviation
-                    result[f"{key}_ci95_low"] = low
-                    result[f"{key}_ci95_high"] = high
             output.append(result)
         return output
 
@@ -535,6 +513,7 @@ def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float:
 __all__ = [
     "PolicyBatchResult",
     "PolicyBatchSpec",
+    "REPEATED_SEED_METRIC_STEMS",
     "SeedScenarioRecord",
     "run_policy_batch",
 ]

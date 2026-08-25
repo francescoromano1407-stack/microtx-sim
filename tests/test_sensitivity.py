@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 import unittest
 
+import numpy as np
+
 from microtx_sim.analysis.sensitivity import (
     SensitivityCase,
     default_sensitivity_cases,
@@ -80,6 +82,41 @@ class SensitivityTests(unittest.TestCase):
             SensitivityCase("paid_random_rewards", (0.7, 0.0))
         with self.assertRaises(ValueError):
             SensitivityCase("paid_random_rewards", (0.0,))
+        with self.assertRaises(TypeError):
+            SensitivityCase("paid_random_rewards", (False, 0.7))
+
+    def test_duplicate_parameter_cases_are_rejected_without_case_id_leakage(self) -> None:
+        duplicate_cases = (
+            SensitivityCase(
+                "paid_random_rewards",
+                (0.0, 0.7),
+                expected_direction="increasing",
+            ),
+            SensitivityCase(
+                "paid_random_rewards",
+                (0.1, 0.6),
+                expected_direction="none",
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "unique parameter names"):
+            run_sensitivity_analysis(
+                PolicyBatchSpec(
+                    seeds=(3,),
+                    days=0,
+                    player_count=0,
+                    decision_parameters=DecisionParameters(step_minutes=240),
+                ),
+                cases=duplicate_cases,
+                country_profiles=(CountryProfile(code="XX"),),
+            )
+
+    def test_levels_are_normalized_to_python_floats(self) -> None:
+        case = SensitivityCase(
+            "paid_random_rewards",
+            (np.int64(0), np.float32(0.7)),
+        )
+        self.assertEqual(case.values, (0.0, float(np.float32(0.7))))
+        self.assertTrue(all(type(value) is float for value in case.values))
 
     def test_result_rejects_lineage_for_different_same_code_profile(self) -> None:
         profile = CountryProfile(code="XX")

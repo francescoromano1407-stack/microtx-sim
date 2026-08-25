@@ -13,12 +13,17 @@ from .plots import (
     write_spending_distribution_svg,
 )
 from .schema import OUTPUT_SCHEMA_VERSION
+from .metric_contracts import (
+    OUTPUT_METRIC_CONTRACTS,
+    metric_contract_registry_sha256,
+)
 from .export import export_policy_batch, render_human_summary
 from .manifest import build_run_manifest
 from .writers import write_batch_artifacts, write_csv_atomic, write_json_atomic
 
 __all__ = [
     "OUTPUT_SCHEMA_VERSION",
+    "OUTPUT_METRIC_CONTRACTS",
     "build_run_manifest",
     "export_policy_batch",
     "render_epgc_subsidy_requirement_svg",
@@ -27,6 +32,7 @@ __all__ = [
     "render_human_summary",
     "render_opportunity_cost_decomposition_svg",
     "render_spending_distribution_svg",
+    "metric_contract_registry_sha256",
     "write_batch_artifacts",
     "write_csv_atomic",
     "write_epgc_subsidy_requirement_svg",

@@ -281,6 +281,14 @@ date, and compact contract-status summaries. A caller-supplied bare profile
 tuple is fingerprinted but marked `unregistered_custom_profiles`; it is never
 attributed to the repository's default evidence files.
 
+Output transformations have their own exhaustive registry. This keeps an input
+contract such as an age or income anchor distinct from a derived table measure
+such as a repeated-seed variance or confidence bound. The registry snapshot is
+content-addressed in the run manifest and links back to the exact profile-input
+fingerprint. Its current `SYNTHETIC` statuses and absent metric-level empirical
+retrieval dates are explicit campaign blockers; a source-register date alone
+does not promote an output transformation.
+
 ## Reproducibility gaps
 
 The source register records publisher, title, URL, period, geography, declared

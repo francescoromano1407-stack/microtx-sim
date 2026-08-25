@@ -34,6 +34,8 @@ _SUPPORTED_PARAMETERS = frozenset(
         "decision_temperature",
     }
 )
+_CV_ZERO_MEAN_TOLERANCE = 1e-12
+_MONOTONIC_TOLERANCE = 1e-12
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,14 +50,23 @@ class SensitivityCase:
     def __post_init__(self) -> None:
         if self.parameter not in _SUPPORTED_PARAMETERS:
             raise ValueError(f"unsupported sensitivity parameter: {self.parameter}")
-        if len(self.values) < 2:
+        raw_values = tuple(self.values)
+        if len(raw_values) < 2:
             raise ValueError("a sensitivity case needs at least two levels")
-        if len(set(self.values)) != len(self.values):
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, float, np.integer, np.floating))
+            for value in raw_values
+        ):
+            raise TypeError("sensitivity levels must be numeric")
+        values = tuple(float(value) for value in raw_values)
+        if len(set(values)) != len(values):
             raise ValueError("sensitivity levels must be unique")
-        if tuple(sorted(self.values)) != self.values:
+        if tuple(sorted(values)) != values:
             raise ValueError("sensitivity levels must be strictly increasing")
-        if not all(np.isfinite(value) for value in self.values):
+        if not all(np.isfinite(value) for value in values):
             raise ValueError("sensitivity levels must be finite")
+        object.__setattr__(self, "values", values)
         if self.expected_direction not in ("increasing", "decreasing", "none"):
             raise ValueError("unknown expected direction")
 
@@ -127,6 +138,12 @@ def run_sensitivity_analysis(
     selected = tuple(cases) if cases is not None else default_sensitivity_cases()
     if not selected:
         raise ValueError("at least one sensitivity case is required")
+    parameters = tuple(case.parameter for case in selected)
+    if len(set(parameters)) != len(parameters):
+        raise ValueError(
+            "sensitivity cases must use unique parameter names because the "
+            "output schema has no case identifier"
+        )
     if not np.isfinite(instability_cv_threshold) or instability_cv_threshold < 0:
         raise ValueError("instability_cv_threshold must be finite and non-negative")
     profiles, profile_lineage = resolve_profile_inputs(
@@ -193,7 +210,7 @@ def run_sensitivity_analysis(
             level_metrics.append((value, harm_stats[0]))
             coefficient_of_variation = (
                 harm_stats[2] / abs(harm_stats[0])
-                if abs(harm_stats[0]) > 1e-12
+                if abs(harm_stats[0]) > _CV_ZERO_MEAN_TOLERANCE
                 else (0.0 if harm_stats[2] == 0.0 else float("inf"))
             )
             level_row: dict[str, object] = {
@@ -266,10 +283,15 @@ def _monotonic(
     if direction == "none":
         return True
     values = [metric for _, metric in sorted(level_metrics)]
-    tolerance = 1e-12
     if direction == "increasing":
-        return all(right + tolerance >= left for left, right in zip(values, values[1:]))
-    return all(right <= left + tolerance for left, right in zip(values, values[1:]))
+        return all(
+            right + _MONOTONIC_TOLERANCE >= left
+            for left, right in zip(values, values[1:])
+        )
+    return all(
+        right <= left + _MONOTONIC_TOLERANCE
+        for left, right in zip(values, values[1:])
+    )
 
 
 def _stats(values: Sequence[float]) -> tuple[float, float, float, float, float]:

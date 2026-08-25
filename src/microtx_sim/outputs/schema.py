@@ -8,7 +8,10 @@ expose the complete schema.  The generic CSV writer remains flexible.
 
 from __future__ import annotations
 
-from typing import Final
+from types import MappingProxyType
+from typing import Final, Mapping
+
+from ..metrics.reporting import REPEATED_SEED_METRIC_STEMS
 
 
 OUTPUT_SCHEMA_VERSION: Final[str] = "2.0"
@@ -99,32 +102,6 @@ SCENARIO_SUMMARY_V1_PREFIX_COLUMNS: Final[tuple[str, ...]] = (
     "epgc_minimum_public_contribution_cents_mean",
 )
 
-_SCENARIO_SUMMARY_V1_METRICS: Final[tuple[str, ...]] = (
-    "total_revenue_cents",
-    "producer_profit_cents",
-    "total_spending_cents",
-    "harmful_spending_cents",
-    "mean_harm",
-    "mean_harm_effect_vs_safe",
-    "mean_opportunity_cost_score",
-    "mean_sleep_burden",
-    "mean_education_work_burden",
-    "mean_social_burden",
-    "mean_wellbeing_burden",
-    "mean_enjoyment",
-    "high_risk_count",
-    "total_opportunity_cost_proxy_cents",
-    "epgc_minimum_public_contribution_cents",
-    "revenue_direct_purchase_cents",
-    "revenue_fixed_price_cents",
-    "revenue_institutional_licensing_cents",
-    "revenue_non_targeted_sponsorship_cents",
-    "revenue_opaque_virtual_currency_cents",
-    "revenue_paid_random_rewards_cents",
-    "revenue_public_contract_cents",
-    "revenue_subscription_cents",
-)
-
 _UNCERTAINTY_SUFFIXES: Final[tuple[str, ...]] = (
     "mean",
     "variance",
@@ -135,7 +112,7 @@ _UNCERTAINTY_SUFFIXES: Final[tuple[str, ...]] = (
 
 _SCENARIO_SUMMARY_V1_DERIVED: Final[frozenset[str]] = frozenset(
     f"{metric}_{suffix}"
-    for metric in _SCENARIO_SUMMARY_V1_METRICS
+    for metric in REPEATED_SEED_METRIC_STEMS
     for suffix in _UNCERTAINTY_SUFFIXES
 )
 
@@ -219,6 +196,19 @@ OPPORTUNITY_DECOMPOSITION_COLUMNS: Final[tuple[str, ...]] = (
     "monetary_proxy_cents",
 )
 
+TABLE_COLUMNS: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        "seed_results.csv": SEED_RESULT_COLUMNS,
+        "scenario_summary.csv": SCENARIO_SUMMARY_COLUMNS,
+        "epgc_financing.csv": EPGC_FINANCING_COLUMNS,
+        "sensitivity.csv": SENSITIVITY_COLUMNS,
+        "player_outcomes.csv": PLAYER_OUTCOME_COLUMNS,
+        "opportunity_cost_decomposition.csv": (
+            OPPORTUNITY_DECOMPOSITION_COLUMNS
+        ),
+    }
+)
+
 ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
     "seed_results.csv",
     "scenario_summary.csv",
@@ -251,10 +241,12 @@ __all__ = [
     "OPPORTUNITY_DECOMPOSITION_COLUMNS",
     "PLAYER_OUTCOME_COLUMNS",
     "POLICY_ARTIFACT_FILENAMES",
+    "REPEATED_SEED_METRIC_STEMS",
     "SCENARIO_SUMMARY_COLUMNS",
     "SCENARIO_SUMMARY_V1_PREFIX_COLUMNS",
     "SEED_RESULT_COLUMNS",
     "SEED_RESULT_V1_PREFIX_COLUMNS",
     "SENSITIVITY_COLUMNS",
     "SENSITIVITY_V1_PREFIX_COLUMNS",
+    "TABLE_COLUMNS",
 ]

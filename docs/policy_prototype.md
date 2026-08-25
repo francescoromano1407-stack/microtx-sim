@@ -310,7 +310,7 @@ parameter distributions.
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden, and monetary proxies by scenario. |
 | `epgc_financing.csv` | Public revenue, minimum contribution, cap, safe profit, feasibility, sustainability, clawback, and penalty by seed. |
 | `sensitivity.csv` | Parameter levels, uncertainty, monotonicity, and instability diagnostics. |
-| `manifest.json` | Schema/config/source and profile-input digests, exact profile snapshot, metric/money contract summaries, source retrieval date, actual profile codes, Git state, environment, command, seeds, cohort digests, scenario vectors, equations, assumptions, and scope limits. |
+| `manifest.json` | Schema/config/source and profile-input digests, exact profile snapshot, input metric/money summaries, the exhaustive output-metric registry snapshot and digest, source retrieval date, actual profile codes, Git state, environment, command, seeds, cohort digests, scenario vectors, equations, assumptions, and scope limits. |
 | `summary.md` | Concise human-readable synthetic scenario table and interpretation warning. |
 | `harm_distribution.svg` | Baseline F2P composite-harm histogram. |
 | `spending_distribution.svg` | Baseline F2P spending histogram. |
@@ -322,6 +322,21 @@ Each versioned CSV has an exhaustive ordered column contract. Policy exporters
 reject undeclared row keys instead of silently extending that contract. Writers
 also reject non-finite numbers and replace files atomically. The final manifest
 records file sizes and SHA-256 digests for every non-manifest artifact.
+
+The output-metric registry is keyed by artifact and column and covers all 220
+CSV fields. Its 196 derived contracts record recipes, ordered inputs, units and
+unit powers, periods, population bases, conditions, missing-value conventions,
+source-version and retrieval metadata, upstream lineage, and status. All remain
+`SYNTHETIC`. The manifest's `campaign_ready` flag for this registry is therefore
+false even when the software run itself succeeds. This prevents exact software
+lineage from being mistaken for calibration.
+
+The 23 repeated-seed metric stems are one public contract shared by schema
+generation, aggregation, and provenance validation. Their variance fields use
+sample variance (`ddof=1`), SD and CI fields retain the base metric unit, and
+variance fields use the squared base unit. The 95% bounds are normal Monte Carlo
+intervals for a simulation mean and are zero-width with one seed. In contrast,
+`harm_variance_players` is a within-cohort population variance (`ddof=0`).
 
 Schema `2.0` preserves the released v1 prefix and complete non-empty header
 order. Its breaking change is deliberate: empty seed, scenario-summary, and

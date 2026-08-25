@@ -15,6 +15,7 @@ import numpy as np
 
 from ..causal.batch import PolicyBatchResult
 from ..policy_config import PolicyPrototypeConfig
+from .metric_contracts import build_metric_contract_manifest_payload
 
 
 def build_run_manifest(
@@ -60,6 +61,26 @@ def build_run_manifest(
         source_registry_metadata, dict
     ):
         raise ValueError("profile input file lineage is malformed")
+    output_metric_contracts = build_metric_contract_manifest_payload(
+        configuration_status=config.provenance_status,
+        profile_lineage_status=str(profile_inputs["lineage_status"]),
+        profile_dependencies_calibrated=(
+            _profile_dependencies_calibrated(profile_inputs)
+        ),
+        profile_input_fingerprint_sha256=(
+            str(profile_inputs["fingerprint_sha256"])
+            if profile_inputs["fingerprint_sha256"] is not None
+            else None
+        ),
+        run_source_retrieved_on=(
+            profile_lineage.source_retrieved_on
+            if profile_lineage is not None
+            else None
+        ),
+        monetary_outputs_cross_country_comparable=(
+            _money_outputs_cross_country_comparable(profile_inputs)
+        ),
+    )
     return {
         "run_name": config.name,
         "created_utc": created_utc
@@ -76,6 +97,7 @@ def build_run_manifest(
             "retrieved_on"
         ),
         "profile_inputs": profile_inputs,
+        "output_metric_contracts": output_metric_contracts,
         "repository": {
             "root": str(repository),
             "git_commit": git_commit,
@@ -144,6 +166,83 @@ def build_run_manifest(
             "Public financing is a policy simulation, not a legal conclusion or subsidy application.",
         ],
     }
+
+
+def _money_outputs_cross_country_comparable(
+    profile_inputs: dict[str, object],
+) -> bool:
+    """Require an explicit true claim on every retained money-scale contract."""
+
+    snapshot = profile_inputs.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    bundle = snapshot.get("profile_bundle")
+    if not isinstance(bundle, dict):
+        return False
+    scales = bundle.get("money_scales")
+    return bool(scales) and isinstance(scales, list) and all(
+        isinstance(scale, dict)
+        and scale.get("cross_country_comparable") is True
+        for scale in scales
+    )
+
+
+def _profile_dependencies_calibrated(
+    profile_inputs: dict[str, object],
+) -> bool:
+    """Mirror the transitive profile campaign gate from fingerprinted values."""
+
+    if profile_inputs.get("lineage_status") != "registered_profile_bundle":
+        return False
+    snapshot = profile_inputs.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return False
+    bundle = snapshot.get("profile_bundle")
+    profiles = snapshot.get("country_profiles")
+    if not isinstance(bundle, dict) or not isinstance(profiles, list):
+        return False
+    if bundle.get("profile_status") != "CALIBRATED":
+        return False
+    sources = bundle.get("sources")
+    contracts = bundle.get("metric_contracts")
+    scales = bundle.get("money_scales")
+    if not all(isinstance(rows, list) and rows for rows in (sources, contracts, scales)):
+        return False
+    assert isinstance(sources, list)
+    assert isinstance(contracts, list)
+    assert isinstance(scales, list)
+    if any(
+        not isinstance(contract, dict) or contract.get("status") != "CALIBRATED"
+        for contract in contracts
+    ):
+        return False
+    if any(
+        not isinstance(scale, dict)
+        or scale.get("anchor_status") != "CALIBRATED"
+        or scale.get("scale_status") != "CALIBRATED"
+        for scale in scales
+    ):
+        return False
+
+    referenced_source_ids: set[str] = set()
+    for row in (*profiles, *contracts, *scales):
+        if not isinstance(row, dict):
+            return False
+        source_ids = row.get("source_ids")
+        if not isinstance(source_ids, list) or any(
+            not isinstance(source_id, str) for source_id in source_ids
+        ):
+            return False
+        referenced_source_ids.update(source_ids)
+    source_statuses = {
+        source.get("id"): source.get("calibration_status")
+        for source in sources
+        if isinstance(source, dict)
+    }
+    return bool(referenced_source_ids) and all(
+        source_statuses.get(source_id) == "CALIBRATED"
+        for source_id in referenced_source_ids
+    )
 
 
 def _file_digest(path: Path) -> str:

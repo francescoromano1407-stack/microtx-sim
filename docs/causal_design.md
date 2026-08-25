@@ -80,7 +80,7 @@ coordinates, not estimates or commercial recommendations.
 | `no_random_rewards` | Sets paid random rewards to zero and otherwise retains the baseline vector. | No purchase revenue is attributed to paid random rewards. |
 | `no_time_limited_pressure` | Sets time-limited offers to zero and otherwise retains the baseline vector. | Purchase deadlines are removed in isolation. |
 | `spending_cap_cooling_off` | Applies a rolling spending cap, a 24-hour cooling-off period, real-currency display, and greater purchase friction. | Purchases are rejected when the cap or cooling rule binds. |
-| `safe_fixed_price_subscription` | Uses the low-pressure safe vector with transparent fixed-price and subscription access. This is the default causal reference. | Revenue is assigned to fixed-price and subscription access rather than pressure-linked purchases. |
+| `safe_fixed_price_subscription` | Uses the low-pressure safe vector with transparent fixed-price and subscription access. It is the fixed reference for schema-2 `*_effect_vs_safe` fields. | Revenue is assigned to fixed-price and subscription access rather than pressure-linked purchases. |
 | `epgc` | Uses the low-pressure safe vector, a small transparent access price, and enables the EPGC calculation. | Safe conventional revenue may be supplemented by capped public-contract revenue. |
 
 Personalised offers are disabled in every catalogue scenario. Scenario IDs,

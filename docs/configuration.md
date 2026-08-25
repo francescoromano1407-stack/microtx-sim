@@ -43,8 +43,9 @@ The required scenarios are:
 7. `epgc`.
 
 Within each seed, all seven scenarios start from the same synthetic cohort and
-semantic random coordinates. The default reference for reported contrasts is
-`safe_fixed_price_subscription`. Scenario names do not assert that the
+semantic random coordinates. Schema-2 fields named `*_effect_vs_safe` require
+`safe_fixed_price_subscription` as their fixed reference; a future generic
+contrast table will need a separately versioned contract. Scenario names do not assert that the
 underlying parameters describe any observed game or jurisdiction.
 
 ### Policy `[meta]`

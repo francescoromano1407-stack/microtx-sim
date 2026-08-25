@@ -15,6 +15,10 @@ PROFILE = (CountryProfile(code="XX"),)
 
 
 class PolicyBatchTests(unittest.TestCase):
+    def test_effect_vs_safe_schema_rejects_a_different_reference(self) -> None:
+        with self.assertRaisesRegex(ValueError, "effect_vs_safe"):
+            PolicyBatchSpec(reference_scenario=ScenarioId.BASELINE_F2P)
+
     def test_catalogue_contains_exactly_seven_explicit_scenarios(self) -> None:
         scenarios = required_scenarios()
         self.assertEqual(tuple(item.scenario_id for item in scenarios), tuple(ScenarioId))

@@ -54,6 +54,33 @@ register hash to that fingerprinted snapshot. These are software-lineage
 controls, not evidence promotion: all current illustrative and synthetic
 statuses remain unchanged.
 
+## Output transformation registry
+
+Versioned policy outputs have a separate column-level registry in
+`microtx_sim.outputs.metric_contracts`. It covers all 220 columns across the
+six CSV tables: 15 identifiers, 9 run-design fields, and 196 derived metrics.
+Each contract records a structured unit, period, population base, eligibility
+condition, storage and missing-value semantics, versioned transformation
+recipe, implementation location, ordered inputs, upstream lineage identifiers,
+source version, retrieval-date field, and provenance status. The canonical
+registry snapshot and its SHA-256 digest are embedded in every policy manifest.
+
+This is a map of software transformations, not empirical validation. Every
+current output contract is `SYNTHETIC` and its empirical source retrieval date
+is intentionally unset. The manifest separately links the registry to the exact
+profile-input fingerprint and any source-register retrieval date used by that
+run. A campaign gate fails until derived contracts and their dependencies are
+`CALIBRATED`, retrieval dates are present, and monetary outputs have a dated
+cross-country FX or purchasing-power contract.
+
+The registry also makes important reduction conventions explicit. Player-level
+harm variance uses population variance (`ddof=0`), while repeated-seed variance
+uses sample variance (`ddof=1`). Normal intervals are Monte Carlo intervals for
+the simulated mean, not empirical outcome intervals, and collapse to zero width
+for one seed. Empty high-risk subsets and empty player arrays are encoded as
+zero. Activity-level monetary opportunity proxies remain blank because the
+model only computes an aggregate proxy.
+
 ## Runtime lineage categories
 
 Every documented input belongs to one of three categories:
@@ -117,6 +144,12 @@ cross-country-comparable monetary contract. The present local-currency anchor
 scales cannot make that declaration: a dated FX or purchasing-power contract
 must be implemented first. A campaign fails if a required dependency is
 synthetic, illustrative, merely anchored, or not monetarily comparable.
+
+Policy-output campaign validation is independently fail-closed. The output
+registry currently reports all 196 derived measures as non-calibrated and
+missing metric-level empirical retrieval dates, so the policy prototype cannot
+be promoted merely because its files, configuration, and Git revision are
+reproducible.
 
 Passing this software gate will be necessary but not sufficient. The policy
 prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,
