@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from math import isfinite
 from pathlib import Path
 import tomllib
@@ -13,6 +14,13 @@ class ConfigurationError(ValueError):
     """Raised when a scenario would violate a structural safeguard."""
 
 
+class StepHistoryRetention(str, Enum):
+    """In-memory retention policy for completed market steps."""
+
+    FULL = "full"
+    FINAL_ONLY = "final_only"
+
+
 @dataclass(frozen=True, slots=True)
 class RunConfig:
     seed: int
@@ -21,6 +29,7 @@ class RunConfig:
     player_count: int
     chunk_size: int
     allow_synthetic: bool
+    step_history_retention: StepHistoryRetention = StepHistoryRetention.FULL
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +100,10 @@ class SimulationConfig:
             validate_seed(self.run.seed, name="run.seed")
         except (TypeError, ValueError) as exc:
             raise ConfigurationError(str(exc)) from exc
+        if type(self.run.step_history_retention) is not StepHistoryRetention:
+            raise ConfigurationError(
+                "step_history_retention must be 'full' or 'final_only'"
+            )
         positive = {
             "cycles": self.run.cycles,
             "tick_days": self.run.tick_days,
@@ -183,13 +196,25 @@ def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig
         raw = tomllib.load(handle)
 
     try:
+        run_values = dict(raw["run"])
+        try:
+            run_values["step_history_retention"] = StepHistoryRetention(
+                run_values.get(
+                    "step_history_retention",
+                    StepHistoryRetention.FULL,
+                )
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "step_history_retention must be 'full' or 'final_only'"
+            ) from exc
         config = SimulationConfig(
             meta=MetaConfig(
                 name=str(raw["meta"]["name"]),
                 provenance_status=ProvenanceStatus(raw["meta"]["provenance_status"]),
                 notes=str(raw["meta"].get("notes", "")),
             ),
-            run=RunConfig(**raw["run"]),
+            run=RunConfig(**run_values),
             market=MarketConfig(**raw["market"]),
             information=InformationConfig(**raw["information"]),
             behavior=BehaviorConfig(**raw["behavior"]),

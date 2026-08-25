@@ -97,10 +97,9 @@ def _smoke(config_path: Path) -> dict[str, object]:
         "seed_decimal": str(config.run.seed),
         "cycles": result.cycles,
         "elapsed_seconds": round(result.elapsed_seconds, 6),
+        "step_history_retention": config.run.step_history_retention.value,
         "summary": result.summary,
-        "audit_count": sum(
-            len(step.audit_resolutions) for step in world.step_history
-        ),
+        "audit_count": world.audit_count,
         "ledger_entries": len(world.ledger.entries),
     }
 

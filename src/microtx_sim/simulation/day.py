@@ -150,6 +150,6 @@ def advance_day(world: "World") -> WorldStep:
         subsidies_paid_cents=subsidies_paid,
         outcome=outcome,
     )
-    world._step_history.append(step)
+    world._record_completed_step(step)
     world.tick += world.config.run.tick_days
     return step

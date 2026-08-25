@@ -7,7 +7,11 @@ import numpy as np
 from ..agents.companies import FirmAgent
 from ..agents.jurisdictions import StateAgent, SubsidyApplicationView
 from ..agents.players import PlayerTable
-from ..config import ConfigurationError, SimulationConfig
+from ..config import (
+    ConfigurationError,
+    SimulationConfig,
+    StepHistoryRetention,
+)
 from ..data.profiles import ProfileBundle, load_profile_bundle
 from ..domain.games import GameTable
 from ..metrics.outcomes import OutcomeRecorder, OutcomeSnapshot
@@ -52,6 +56,10 @@ class World:
         firms: tuple[FirmAgent, ...],
         states: tuple[StateAgent, ...],
     ) -> None:
+        # ``World.create`` performs campaign-aware validation, but the public
+        # constructor must still reject malformed execution contracts before
+        # any mutable world state is installed.
+        config.validate(campaign=False)
         self.config = config
         self.profiles = profiles
         self.rng = rng
@@ -147,6 +155,7 @@ class World:
         self._last_firm_resolution: FirmResolution | None = None
         self._last_published_ranking: PublishedRanking | None = None
         self._step_history: list[WorldStep] = []
+        self._audit_count = 0
 
         schedule_initial_events(self)
 
@@ -232,7 +241,31 @@ class World:
 
     @property
     def step_history(self) -> tuple[WorldStep, ...]:
+        """Return retained completed steps under the configured policy."""
+
         return tuple(self._step_history)
+
+    @property
+    def audit_count(self) -> int:
+        """Return the number of audit resolutions across all completed steps."""
+
+        return self._audit_count
+
+    def _record_completed_step(self, step: WorldStep) -> None:
+        """Retain a completed step without changing simulation semantics."""
+
+        retention = self.config.run.step_history_retention
+        if retention is StepHistoryRetention.FULL:
+            self._step_history.append(step)
+        elif retention is StepHistoryRetention.FINAL_ONLY:
+            if self._step_history:
+                self._step_history[0] = step
+            else:
+                self._step_history.append(step)
+        else:  # Configuration validation makes this unreachable.
+            raise AssertionError(f"unsupported step history retention: {retention!r}")
+        self._audit_count += len(step.audit_resolutions)
+
     def cap_mechanism(
         self,
         *,

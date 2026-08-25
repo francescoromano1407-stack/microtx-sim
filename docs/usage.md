@@ -174,6 +174,7 @@ run = SimulationOrchestrator.run(world, campaign=False)
 
 print(run.summary)
 print(world.step_history)
+print(world.audit_count)
 print(world.ledger.entries)
 ```
 
@@ -181,6 +182,13 @@ print(world.ledger.entries)
 `World.run(cycles)` is a low-level convenience loop; prefer
 `SimulationOrchestrator.run()` for experiment-level use because it enforces
 validation and non-campaign size guards.
+
+With `run.step_history_retention = "full"`, `step_history` contains every
+successfully completed step. With `"final_only"`, it is empty before the first
+step and thereafter contains exactly the latest successfully completed step,
+including across repeated calls. The returned `WorldStep` is complete in both
+modes. `world.audit_count` always covers the whole run; it must not be
+reconstructed from compact history. Neither mode bounds `world.ledger.entries`.
 
 ## Python API: paired counterfactuals
 

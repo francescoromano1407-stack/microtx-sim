@@ -399,7 +399,8 @@ remain visible.
 8. decay novelty;
 9. assert ledger balance;
 10. build and record an outcome;
-11. append a `WorldStep` and advance the calendar.
+11. retain the completed `WorldStep` under the configured full or final-only
+    policy and advance the calendar.
 
 Recurring events are rescheduled by the day processor. Domain phases implement
 what an event does, not when it next occurs. All configured intervals and the
@@ -481,8 +482,12 @@ size, `D` content-stat dimensions, and `K` boost rates.
 Here `A = 8` welfare actions and `T = 1440 / step_minutes` decisions per day.
 Blocking changes memory consumption, not the declared market alternative set.
 Content search is exact only within the declared finite grid and is exponential
-in `D`; configuration restricts `D` to 2–12. Long runs also retain an append-only
-ledger and in-memory step history, so campaign-scale persistence is future work.
+in `D`; configuration restricts `D` to 2–12. For `R` simulated ticks and `E`
+retained financial transfers, full step history adds `O(R·P)` retained state.
+Final-only retention removes that term while preserving each returned step and
+the final estimand, but the append-only `O(E)` ledger and smaller `O(R)`
+summaries and market histories remain. Campaign-scale persistence is therefore
+still future work.
 
 ## Status of assumptions
 

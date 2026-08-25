@@ -385,12 +385,21 @@ actions, and `Q = 1440 / step_minutes` welfare decisions per day.
 | Accounting | `O(P + G + F + entries)` | `O(P + F)` | All monetary aggregation preserves integer cents. |
 
 The block size changes memory use, not the mathematical choice set. Persistent
-population state is linear in `P`; game state is linear in `G·D`. The current
-research prototype retains `WorldStep` results in `step_history`, and its ledger
-is append-only, so a long run can also grow approximately as `O(T·P + E)` with
-`T` ticks and `E` financial transfers. Campaign output must stream or thin this
-history and define a ledger-retention policy rather than relying on the
-prototype's in-memory retention.
+population state is linear in `P`; game state is linear in `G·D`. With
+`step_history_retention = "full"`, the research prototype retains every
+`WorldStep`, and long-run storage grows approximately as `O(T·P + E)` for `T`
+ticks and `E` financial transfers. `final_only` retains the latest successfully
+completed step and therefore removes the `T·P` term without changing the
+returned steps or final estimand. Aggregate summaries and small game-level
+histories still grow with `T`, and the ledger remains append-only at `O(E)`.
+
+The retained NumPy payload in one full step is at least
+`162P + 16G + 32F + 16S` bytes. At the future baseline of 50,000 players, eight
+games, five firms, four jurisdictions, and 365 ticks, full history alone is
+about 2.754 GiB per world or 5.507 GiB for paired worlds, before Python objects,
+ledger entries, live state, and working arrays. The baseline now selects
+`final_only`, but campaign-scale execution still requires a measured resource
+benchmark and an exact streaming ledger policy.
 
 ## Structural safeguards
 

@@ -198,13 +198,20 @@ After event phases:
 3. an immutable `OutcomeSnapshot` is built at the current tick;
 4. aggregate summary history and, when configured, the latest individual
    snapshot are recorded;
-5. a `WorldStep` containing phase results is appended to step history;
+5. a `WorldStep` containing phase results is retained in full history or
+   replaces the previously retained step under `final_only`; the cumulative
+   audit counter is updated in either mode;
 6. `world.tick` advances by `tick_days`.
 
 The outcome includes cumulative player spend, income, debt including accrued
 interest, the seven harm columns, firm cash, operating margin, safe-revenue
 share, and state subsidy outlay. Outstanding assessed fines reduce reported firm
 margin even when insufficient cash prevented collection.
+
+Only a successfully completed step changes retained history or `audit_count`.
+This is a reporting-retention guarantee, not whole-day transactionality: an
+exception earlier in a day can occur after model state or the event queue has
+already changed, and the world is not a supported restart checkpoint.
 
 ## Multi-cycle orchestration
 

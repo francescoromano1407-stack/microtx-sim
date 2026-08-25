@@ -30,10 +30,43 @@ class PolicyCliTests(unittest.TestCase):
         self.assertEqual(payloads[0], payloads[1])
         self.assertEqual(payloads[0]["mode"], "smoke_only")
         self.assertEqual(payloads[0]["cycles"], 3)
+        self.assertEqual(payloads[0]["step_history_retention"], "full")
+        self.assertEqual(payloads[0]["audit_count"], 16)
         self.assertEqual(payloads[0]["seed_decimal"], str(payloads[0]["seed"]))
         summary = payloads[0]["summary"]
         self.assertIsInstance(summary, dict)
         self.assertEqual(summary["players"], 384)
+
+    def test_smoke_audit_count_is_exact_with_final_only_history(self) -> None:
+        source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
+        bounded = source.replace(
+            'step_history_retention = "full"',
+            'step_history_retention = "final_only"',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "bounded-smoke.toml"
+            config_path.write_text(bounded, "utf-8")
+            bounded_stdout = io.StringIO()
+            with redirect_stdout(bounded_stdout):
+                code = main(("smoke", str(config_path)))
+            full_stdout = io.StringIO()
+            with redirect_stdout(full_stdout):
+                full_code = main(
+                    ("smoke", str(ROOT / "configs" / "smoke.toml"))
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(full_code, 0)
+        payload = json.loads(bounded_stdout.getvalue())
+        full_payload = json.loads(full_stdout.getvalue())
+        self.assertEqual(payload["step_history_retention"], "final_only")
+        self.assertEqual(payload["cycles"], 3)
+        self.assertEqual(payload["audit_count"], 16)
+        payload.pop("elapsed_seconds")
+        full_payload.pop("elapsed_seconds")
+        payload.pop("step_history_retention")
+        full_payload.pop("step_history_retention")
+        self.assertEqual(payload, full_payload)
 
     def test_policy_validate_and_small_batch_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

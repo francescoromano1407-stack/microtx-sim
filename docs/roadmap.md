@@ -142,6 +142,12 @@ These tasks block scientific interpretation.
 
 ## P2 — Performance without changing the estimand
 
+An explicit full/final-only `WorldStep` retention contract now removes the
+`O(T·P)` history term for the future-scale baseline with byte-exact outcome and
+paired-effect equality tests. This is a prerequisite, not the planned benchmark:
+the append-only ledger and smaller tick histories still require measured and
+tested retention policies.
+
 1. Benchmark the planned 50,000-player, 8-game scenario before optimisation and
    record peak memory, time per phase, and ledger growth.
 2. Preserve exact all-game choice evaluation. Tune block size, reuse temporary

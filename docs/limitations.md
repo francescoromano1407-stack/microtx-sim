@@ -267,9 +267,14 @@ own exact `O(P*A*T)` action engine and a checked-in 1,000-player, 14-day,
 three-seed configuration. This is a reproducibility batch, not a scientific
 campaign. `base.toml` remains a rejected future-scale market configuration.
 
-The implementation is in-memory and has no checkpoint/restart, distributed
+The implementation remains in-memory and has no checkpoint/restart, distributed
 execution, campaign scheduler, result database, schema migration, or long-run
-resource benchmark. Integer overflow checks exist at important accumulation
+resource benchmark. Final-only step retention removes the dominant `O(T·P)`
+`WorldStep` history term and is selected by the blocked future-scale baseline.
+It does not make execution campaign-scale ready: the exact-cent ledger is still
+append-only, aggregate recorder summaries grow by tick, popularity truth history
+grows with scheduled ranking observations, and callers can retain returned
+steps and run results. Integer overflow checks exist at important accumulation
 boundaries, but they are not a proof against every possible extreme custom
 configuration.
 

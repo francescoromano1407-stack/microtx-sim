@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
+import gc
 import unittest
 from unittest.mock import patch
+import weakref
 
 import numpy as np
+import microtx_sim.simulation.day as simulation_day
 
 from microtx_sim.causal import (
     BalanceMismatchKind,
@@ -15,7 +18,11 @@ from microtx_sim.causal import (
     assess_pre_treatment_balance,
     run_paired_worlds,
 )
-from microtx_sim.config import load_config
+from microtx_sim.config import (
+    ConfigurationError,
+    StepHistoryRetention,
+    load_config,
+)
 from microtx_sim.core.engine import SimulationEngine
 from microtx_sim.core.world import World
 from microtx_sim.data.profiles import ProfileValidationError
@@ -40,6 +47,23 @@ class _IncomeMutationIntervention:
 
 
 class WorldIntegrationTests(unittest.TestCase):
+    @staticmethod
+    def _assert_array_dataclass_equal(
+        case: unittest.TestCase,
+        left: object,
+        right: object,
+    ) -> None:
+        case.assertIs(type(left), type(right))
+        for field in fields(left):  # type: ignore[arg-type]
+            left_value = getattr(left, field.name)
+            right_value = getattr(right, field.name)
+            if type(left_value) is np.ndarray:
+                case.assertEqual(left_value.dtype, right_value.dtype)
+                case.assertEqual(left_value.shape, right_value.shape)
+                case.assertEqual(left_value.tobytes(), right_value.tobytes())
+            else:
+                case.assertEqual(left_value, right_value)
+
     def test_run_configuration_sets_the_firm_research_cost_scale(self) -> None:
         config = load_config("configs/smoke.toml")
         lower = replace(
@@ -65,6 +89,28 @@ class WorldIntegrationTests(unittest.TestCase):
             )
         )
 
+    def test_direct_world_construction_rejects_invalid_retention_early(self) -> None:
+        invalid = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention="invalid",  # type: ignore[arg-type]
+            ),
+        )
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "step_history_retention",
+        ):
+            World(
+                config=invalid,
+                profiles=object(),  # type: ignore[arg-type]
+                rng=object(),  # type: ignore[arg-type]
+                players=object(),  # type: ignore[arg-type]
+                games=object(),  # type: ignore[arg-type]
+                firms=(),
+                states=(),
+            )
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.config = load_config("configs/smoke.toml")
@@ -87,6 +133,223 @@ class WorldIntegrationTests(unittest.TestCase):
         )
         self.assertGreater(len(world.ledger.entries), 0)
         world.ledger.assert_balanced()
+
+    def test_final_only_history_is_bounded_without_changing_results(self) -> None:
+        bounded_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention=StepHistoryRetention.FINAL_ONLY,
+            ),
+        )
+        full_world = World.create(self.config)
+        bounded_world = World.create(bounded_config)
+
+        full_run = SimulationEngine.run(full_world)
+        bounded_run = SimulationEngine.run(bounded_world)
+
+        self.assertEqual(len(full_world.step_history), 3)
+        self.assertEqual(len(bounded_world.step_history), 1)
+        self.assertEqual(
+            bounded_world.step_history[0].tick,
+            bounded_run.final_outcome.tick,
+        )
+        self.assertIs(
+            bounded_world.step_history[0].outcome,
+            bounded_run.final_outcome,
+        )
+        self.assertEqual(
+            full_world.audit_count,
+            sum(
+                len(step.audit_resolutions)
+                for step in full_world.step_history
+            ),
+        )
+        self.assertEqual(bounded_world.audit_count, full_world.audit_count)
+        self.assertEqual(full_world.audit_count, 16)
+        self.assertEqual(full_world.ledger.entries, bounded_world.ledger.entries)
+        self.assertEqual(full_run.summary, bounded_run.summary)
+        self._assert_array_dataclass_equal(
+            self,
+            full_run.final_outcome,
+            bounded_run.final_outcome,
+        )
+
+    def test_final_only_retains_latest_successful_step_across_calls(self) -> None:
+        bounded_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention=StepHistoryRetention.FINAL_ONLY,
+            ),
+        )
+        world = World.create(bounded_config)
+        self.assertEqual(world.step_history, ())
+        self.assertEqual(world.audit_count, 0)
+
+        first = world.step()
+        self.assertEqual(len(world.step_history), 1)
+        self.assertIs(world.step_history[0], first)
+        second = world.step()
+        self.assertEqual(len(world.step_history), 1)
+        self.assertIs(world.step_history[0], second)
+
+        final_outcome = world.run(2)
+        self.assertEqual(len(world.step_history), 1)
+        self.assertEqual(world.step_history[0].tick, 3)
+        self.assertIs(world.step_history[0].outcome, final_outcome)
+
+    def test_final_only_releases_prior_player_payloads(self) -> None:
+        bounded_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention=StepHistoryRetention.FINAL_ONLY,
+            ),
+        )
+        world = World.create(bounded_config)
+        prior = world.step()
+        step_payload = weakref.ref(prior.player_result.player_spend_cents)
+        outcome_payload = weakref.ref(prior.outcome.player_harm)
+        del prior
+
+        world.step()
+        gc.collect()
+
+        self.assertIsNone(step_payload())
+        self.assertIsNone(outcome_payload())
+
+    def test_individual_recorder_flag_is_orthogonal_to_step_history(self) -> None:
+        final_outcomes = []
+        for retention, expected_steps in (
+            (StepHistoryRetention.FULL, 3),
+            (StepHistoryRetention.FINAL_ONLY, 1),
+        ):
+            with self.subTest(retention=retention.value):
+                config = replace(
+                    self.config,
+                    run=replace(
+                        self.config.run,
+                        step_history_retention=retention,
+                    ),
+                    causal=replace(
+                        self.config.causal,
+                        record_individual_outcomes=False,
+                    ),
+                )
+                world = World.create(config)
+                result = SimulationEngine.run(world)
+
+                self.assertIsNone(world.recorder.latest)
+                self.assertEqual(len(world.recorder.summaries), 3)
+                self.assertEqual(len(world.step_history), expected_steps)
+                self.assertIs(
+                    world.step_history[-1].outcome,
+                    result.final_outcome,
+                )
+                final_outcomes.append(result.final_outcome)
+
+        self._assert_array_dataclass_equal(
+            self,
+            final_outcomes[0],
+            final_outcomes[1],
+        )
+
+    def test_zero_cycle_rejections_do_not_fabricate_retained_state(self) -> None:
+        bounded_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention=StepHistoryRetention.FINAL_ONLY,
+            ),
+        )
+        world = World.create(bounded_config)
+
+        with self.assertRaisesRegex(ValueError, "positive"):
+            SimulationEngine.run(world, cycles=0)
+        with self.assertRaisesRegex(ValueError, "positive"):
+            world.run(0)
+
+        self.assertEqual(world.tick, 0)
+        self.assertEqual(world.step_history, ())
+        self.assertEqual(world.audit_count, 0)
+        self.assertEqual(world.recorder.summaries, ())
+        self.assertIsNone(world.recorder.latest)
+
+    def test_failed_late_step_does_not_replace_last_completed_history(self) -> None:
+        bounded_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention=StepHistoryRetention.FINAL_ONLY,
+            ),
+            regulation=replace(
+                self.config.regulation,
+                audit_interval=1,
+            ),
+        )
+        world = World.create(bounded_config)
+        completed = world.step()
+        audit_count = world.audit_count
+
+        with (
+            patch(
+                "microtx_sim.simulation.day.run_audits",
+                wraps=simulation_day.run_audits,
+            ) as audit_runner,
+            patch(
+                "microtx_sim.simulation.day.outcome_snapshot",
+                side_effect=RuntimeError("late outcome failure"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "late outcome failure"):
+                world.step()
+
+        audit_runner.assert_called_once()
+        self.assertEqual(world.tick, 1)
+        self.assertEqual(len(world.step_history), 1)
+        self.assertIs(world.step_history[0], completed)
+        self.assertEqual(world.audit_count, audit_count)
+        self.assertEqual(len(world.recorder.summaries), 1)
+        self.assertIs(world.recorder.latest, completed.outcome)
+
+    def test_retention_mode_does_not_change_paired_effects(self) -> None:
+        bounded_config = replace(
+            self.config,
+            run=replace(
+                self.config.run,
+                step_history_retention=StepHistoryRetention.FINAL_ONLY,
+            ),
+        )
+        intervention = MechanismCap(
+            MonetisationMechanism.RANDOM_REWARD,
+            maximum=0.0,
+        )
+
+        full = run_paired_worlds(
+            self.config,
+            treated=intervention,
+            cycles=3,
+        )
+        bounded = run_paired_worlds(
+            bounded_config,
+            treated=intervention,
+            cycles=3,
+        )
+
+        self.assertEqual(full.effect, bounded.effect)
+        for field in fields(full.effect):
+            full_value = getattr(full.effect, field.name)
+            bounded_value = getattr(bounded.effect, field.name)
+            if type(full_value) is float:
+                self.assertEqual(full_value.hex(), bounded_value.hex())
+            else:
+                self.assertEqual(full_value, bounded_value)
+        self._assert_array_dataclass_equal(
+            self,
+            full.paired_outcome,
+            bounded.paired_outcome,
+        )
 
     def test_null_paired_worlds_are_exactly_identical(self) -> None:
         result = run_paired_worlds(

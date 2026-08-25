@@ -199,10 +199,21 @@ requires `run.allow_synthetic = true`.
 | `player_count` | positive integer | Number of consumer rows. |
 | `chunk_size` | positive integer | Consumer rows processed per dense choice block; changes memory, not alternatives. |
 | `allow_synthetic` | boolean | Allows synthetic dependencies in structural, non-campaign runs. |
+| `step_history_retention` | `full` or `final_only` | Retains every completed `WorldStep`, or only the latest successfully completed step. Omission defaults to `full` for compatibility. |
 
 The non-campaign orchestrator additionally rejects more than 32 cycles or more
 than 5,000 players. This prevents an accidental large run. Campaign mode is a
 separate explicit API choice and has stricter evidence gates.
+
+`step_history_retention = "final_only"` removes the `O(T·P)` in-memory
+`WorldStep` history term without changing any simulation phase, returned step,
+final outcome, or paired estimand. It replaces the retained step after each
+successful tick, including across repeated `step()` or `run()` calls; a fresh
+world therefore has empty history. `world.audit_count` remains cumulative over
+all successfully completed steps. The setting does not bound the append-only
+ledger, aggregate recorder summaries, popularity history, caller-held results,
+or temporary arrays. Future run manifests and checkpoints must record the
+normalized effective retention mode.
 
 ### `[market]`
 
@@ -275,6 +286,9 @@ synthetic.
 
 This section declares execution behaviour; it does not create an intervention.
 Treated and control interventions are explicit Python objects.
+`record_individual_outcomes` controls only `OutcomeRecorder.latest`; it is
+independent of `[run].step_history_retention`, and every returned `WorldStep`
+still contains its immutable outcome.
 
 ### Calendar validation
 

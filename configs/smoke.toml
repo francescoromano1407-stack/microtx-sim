@@ -10,6 +10,7 @@ tick_days = 1
 player_count = 384
 chunk_size = 128
 allow_synthetic = true
+step_history_retention = "full"
 
 [market]
 company_count = 3

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
 
-from microtx_sim.config import ConfigurationError, load_config
+from microtx_sim.config import (
+    ConfigurationError,
+    StepHistoryRetention,
+    load_config,
+)
 from microtx_sim.core.ledger import Ledger
 from microtx_sim.domain.games import ContentPlanner, GameTable, OwnGameSnapshot
 from microtx_sim.types import ProvenanceStatus
@@ -16,6 +21,55 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigAndDomainTests(unittest.TestCase):
+    def test_step_history_retention_is_typed_and_backward_compatible(self) -> None:
+        source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
+        explicit = load_config(ROOT / "configs" / "smoke.toml")
+        self.assertIs(
+            explicit.run.step_history_retention,
+            StepHistoryRetention.FULL,
+        )
+
+        without_field = source.replace(
+            'step_history_retention = "full"\n',
+            "",
+        )
+        invalid_value = source.replace(
+            'step_history_retention = "full"',
+            'step_history_retention = "unbounded_magic"',
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            legacy_path = root / "legacy.toml"
+            legacy_path.write_text(without_field, "utf-8")
+            legacy = load_config(legacy_path)
+            self.assertIs(
+                legacy.run.step_history_retention,
+                StepHistoryRetention.FULL,
+            )
+
+            invalid_path = root / "invalid.toml"
+            invalid_path.write_text(invalid_value, "utf-8")
+            with self.assertRaisesRegex(
+                ConfigurationError,
+                "step_history_retention",
+            ):
+                load_config(invalid_path)
+
+        for raw_value in ("full", "bogus", None):
+            with self.subTest(raw_value=raw_value):
+                invalid_direct = replace(
+                    explicit,
+                    run=replace(
+                        explicit.run,
+                        step_history_retention=raw_value,  # type: ignore[arg-type]
+                    ),
+                )
+                with self.assertRaisesRegex(
+                    ConfigurationError,
+                    "step_history_retention",
+                ):
+                    invalid_direct.validate()
+
     def test_simulation_config_validates_the_root_seed_domain(self) -> None:
         config = load_config(ROOT / "configs" / "smoke.toml")
         maximum = (1 << 64) - 1

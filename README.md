@@ -30,7 +30,9 @@ optimal funding policy.
   identical seeded synthetic cohorts and is the supported reproducible
   prototype workflow.
 - `configs/base.toml` describes a future 50,000-player, five-company, eight-game
-  scale, but campaign validation deliberately rejects its uncalibrated inputs.
+  scale and uses final-step-only history retention, but campaign validation
+  deliberately rejects its uncalibrated inputs and its ledger remains
+  append-only.
 - No empirical or scientific campaign has been run or authorised for this
   release.
 
