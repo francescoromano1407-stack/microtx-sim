@@ -30,8 +30,36 @@ def build_run_manifest(
 
     config_file = Path(config_path).resolve()
     repository = Path(repository_root).resolve()
-    source_registry = repository / "data" / "provenance" / "sources.toml"
     git_commit, git_dirty = _git_state(repository)
+    profile_lineage = batch.profile_input_lineage
+    if profile_lineage is None:
+        profile_inputs: dict[str, object] = {
+            "lineage_status": "unavailable_legacy_result",
+            "profile_codes": [profile.code for profile in batch.country_profiles],
+            "fingerprint_sha256": None,
+            "snapshot": None,
+            "jurisdictions": {"path": None, "sha256": None},
+            "source_registry": {
+                "path": None,
+                "sha256": None,
+                "retrieved_on": None,
+            },
+            "metric_contract_summary": {"count": 0, "status_counts": {}},
+            "money_scale_summary": {
+                "count": 0,
+                "currencies": [],
+                "anchor_status_counts": {},
+                "scale_status_counts": {},
+            },
+        }
+    else:
+        profile_inputs = profile_lineage.manifest_payload()
+    jurisdictions_metadata = profile_inputs["jurisdictions"]
+    source_registry_metadata = profile_inputs["source_registry"]
+    if not isinstance(jurisdictions_metadata, dict) or not isinstance(
+        source_registry_metadata, dict
+    ):
+        raise ValueError("profile input file lineage is malformed")
     return {
         "run_name": config.name,
         "created_utc": created_utc
@@ -42,9 +70,12 @@ def build_run_manifest(
         "notes": config.notes,
         "config_path": str(config_file),
         "config_sha256": _file_digest(config_file),
-        "source_registry_sha256": (
-            _file_digest(source_registry) if source_registry.exists() else None
+        "jurisdictions_sha256": jurisdictions_metadata.get("sha256"),
+        "source_registry_sha256": source_registry_metadata.get("sha256"),
+        "source_registry_retrieved_on": source_registry_metadata.get(
+            "retrieved_on"
         ),
+        "profile_inputs": profile_inputs,
         "repository": {
             "root": str(repository),
             "git_commit": git_commit,
@@ -64,6 +95,10 @@ def build_run_manifest(
             "player_count": config.batch.player_count,
             "step_minutes": config.batch.decision_parameters.step_minutes,
             "reference_scenario": config.batch.reference_scenario.value,
+            "profile_codes": list(profile_inputs["profile_codes"]),
+            "profile_input_fingerprint_sha256": profile_inputs[
+                "fingerprint_sha256"
+            ],
             "cohort_digest_by_seed": {
                 str(seed): digest
                 for seed, digest in batch.cohort_digest_by_seed.items()

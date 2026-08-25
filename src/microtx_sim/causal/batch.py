@@ -13,7 +13,11 @@ import numpy as np
 from ..consumers.decision import DecisionParameters
 from ..consumers.population import CountryProfile, initialize_player_table
 from ..consumers.welfare import initialize_player_life
-from ..data.profiles import load_profile_bundle
+from ..data.lineage import (
+    ProfileInputLineage,
+    resolve_profile_inputs,
+)
+from ..data.profiles import ProfileBundle
 from ..funding import EPGCPolicy
 from ..metrics.harm import (
     HarmComponent,
@@ -88,6 +92,8 @@ class PolicyBatchResult:
     spec: PolicyBatchSpec
     records: tuple[SeedScenarioRecord, ...]
     cohort_digest_by_seed: Mapping[int, str]
+    country_profiles: tuple[CountryProfile, ...] = ()
+    profile_input_lineage: ProfileInputLineage | None = None
 
     def __post_init__(self) -> None:
         expected = len(self.spec.seeds) * len(self.spec.scenarios)
@@ -106,6 +112,14 @@ class PolicyBatchResult:
             if digests[record.result.seed] != record.cohort_digest:
                 raise ValueError("record cohort digest is inconsistent")
         object.__setattr__(self, "cohort_digest_by_seed", MappingProxyType(digests))
+        profiles = tuple(self.country_profiles)
+        if any(not isinstance(profile, CountryProfile) for profile in profiles):
+            raise TypeError("country_profiles must contain CountryProfile instances")
+        object.__setattr__(self, "country_profiles", profiles)
+        if self.profile_input_lineage is not None:
+            if not isinstance(self.profile_input_lineage, ProfileInputLineage):
+                raise TypeError("profile_input_lineage must be ProfileInputLineage")
+            self.profile_input_lineage.validate_country_profiles(profiles)
 
     def seed_rows(self) -> list[dict[str, object]]:
         """Return one machine-readable aggregate row per seed and scenario."""
@@ -331,6 +345,7 @@ def run_policy_batch(
     spec: PolicyBatchSpec,
     *,
     country_profiles: Sequence[CountryProfile] | None = None,
+    profile_bundle: ProfileBundle | None = None,
     harm_parameters: HarmModelParameters | None = None,
     harm_weights: WelfareHarmWeights | None = None,
     opportunity_valuation: OpportunityCostValuation | None = None,
@@ -341,11 +356,10 @@ def run_policy_batch(
 
     if not isinstance(spec, PolicyBatchSpec):
         raise TypeError("spec must be PolicyBatchSpec")
-    profiles = tuple(country_profiles) if country_profiles is not None else (
-        load_profile_bundle(campaign=False).country_profiles
+    profiles, profile_lineage = resolve_profile_inputs(
+        country_profiles=country_profiles,
+        profile_bundle=profile_bundle,
     )
-    if not profiles:
-        raise ValueError("at least one country profile is required")
     records: list[SeedScenarioRecord] = []
     digests: dict[int, str] = {}
     for seed in spec.seeds:
@@ -399,6 +413,8 @@ def run_policy_batch(
         spec=spec,
         records=tuple(records),
         cohort_digest_by_seed=digests,
+        country_profiles=profiles,
+        profile_input_lineage=profile_lineage,
     )
 
 

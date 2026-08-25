@@ -90,7 +90,7 @@ analysis, then writes these 13 files:
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden scores, and monetary proxies. |
 | `epgc_financing.csv` | Auditable public-contract components, costs, minimum contribution, and safe profit. |
 | `sensitivity.csv` | One-at-a-time sensitivity results and expected-direction checks. |
-| `manifest.json` | Configuration/source hashes, Git state, environment, seeds, cohort digests, equations, and scope limits. |
+| `manifest.json` | Configuration/source/profile-input hashes, exact profile snapshot, source retrieval date, contract summaries, actual profile codes, Git state, environment, seeds, cohort digests, equations, and scope limits. |
 | `summary.md` | Human-readable synthetic scenario comparison. |
 | `harm_distribution.svg` | Player harm distribution. |
 | `spending_distribution.svg` | Player spending distribution. |
@@ -105,6 +105,12 @@ row keys. `manifest.json` intentionally records
 the run timestamp, absolute paths, environment, Git revision, and dirty state,
 so the manifest itself is an audit record rather than a promise of identical
 bytes across machines or invocation times.
+
+The CLI uses one validated profile bundle for both the policy batch and its
+sensitivity analysis. Python callers can instead pass `country_profiles=...`;
+those values are still fingerprinted exactly, but the manifest labels their
+evidence lineage `unregistered_custom_profiles` and leaves repository input-file
+hashes unset.
 
 The current output schema is `2.0`. It preserves v1 populated-table header order
 but expands empty seed, scenario-summary, and sensitivity headers to the full

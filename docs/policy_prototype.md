@@ -39,11 +39,11 @@ feedback from `microtx_sim.core.world`.
 | `microtx_sim.metrics.harm` | Computes multidimensional harm, harmful/unplanned spending, displaced activities, and adult/youth opportunity-cost proxies. | `HarmComponent`, `WelfareHarmResult`, `compute_welfare_harm()` |
 | `microtx_sim.funding.epgc` | Evaluates the pure integer-cent EPGC payment and safe-profit equations. | `EPGCPolicy`, `EPGCFirmInputs`, `EPGCResult`, `evaluate_epgc()` |
 | `microtx_sim.simulation.policy_orchestrator` | Clones one branch, runs its days, computes welfare, revenue composition, producer viability, high-risk flags, and EPGC output. | `ProducerAssumptions`, `PolicyScenarioResult`, `run_policy_scenario()` |
-| `microtx_sim.causal.batch` | Runs all seven scenarios for every seed on the same cohort, pairs each with the safe reference, and aggregates uncertainty. | `PolicyBatchSpec`, `PolicyBatchResult`, `run_policy_batch()` |
+| `microtx_sim.causal.batch` | Runs all seven scenarios for every seed on the same cohort, pairs each with the safe reference, aggregates uncertainty, and retains the exact population profile tuple and its content fingerprint. | `PolicyBatchSpec`, `PolicyBatchResult`, `run_policy_batch()` |
 | `microtx_sim.analysis.sensitivity` | Runs one-at-a-time grids with common cohorts, expected-direction checks, and instability flags. | `SensitivityCase`, `SensitivityResult`, `run_sensitivity_analysis()` |
 | `microtx_sim.outputs.schema` | Fixes schema version, exhaustive CSV column contracts, and the complete artifact set. | `OUTPUT_SCHEMA_VERSION`, column tuples, `POLICY_ARTIFACT_FILENAMES` |
 | `microtx_sim.outputs.writers` | Writes deterministic UTF-8 CSV/JSON/text files through same-directory atomic replacement. | `write_csv_atomic()`, `write_json_atomic()`, `write_batch_artifacts()` |
-| `microtx_sim.outputs.manifest` | Captures configuration and source digests, Git state, environment, seeds, cohort digests, scenarios, equations, and scope limits. | `build_run_manifest()` |
+| `microtx_sim.outputs.manifest` | Captures configuration, profile-input and source digests, profile contracts, Git state, environment, seeds, cohort digests, scenarios, equations, and scope limits. | `build_run_manifest()` |
 | `microtx_sim.outputs.plots` | Produces dependency-free accessible SVG charts from exported values. | Harm/spending histograms, frontier, decomposition, and EPGC chart writers |
 | `microtx_sim.outputs.export` | Coordinates tables, manifest, human summary, charts, hashes, and final artifact-set verification. | `export_policy_batch()`, `render_human_summary()` |
 | `microtx_sim.cli` | Exposes validation, batch, sensitivity-only, and complete reproduction commands. | `policy-validate`, `policy-batch`, `policy-sensitivity`, `reproduce` |
@@ -54,6 +54,15 @@ The supplied configuration is `configs/policy_prototype.toml`. It declares
 synthetic provenance, seeds, horizon, cohort size, decision parameters, harm
 parameters and weights, adult/youth opportunity valuations, producer costs and
 safe revenue, EPGC payment rules, and output options.
+
+Policy CLI commands load one `ProfileBundle` and pass that same immutable bundle
+to the scenario batch and sensitivity analysis. The result records a canonical
+JSON snapshot and SHA-256 fingerprint of every `CountryProfile` field plus the
+bundle's metric and money-scale contracts. The manifest also records the exact
+jurisdiction-file and source-register hashes and the validated global retrieval
+date. Programmatic callers may still supply a custom `country_profiles` tuple;
+its exact contents are fingerprinted but its lineage is explicitly labelled
+`unregistered_custom_profiles`, with no default-file provenance claimed.
 
 Validate without running a batch:
 
@@ -301,7 +310,7 @@ parameter distributions.
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden, and monetary proxies by scenario. |
 | `epgc_financing.csv` | Public revenue, minimum contribution, cap, safe profit, feasibility, sustainability, clawback, and penalty by seed. |
 | `sensitivity.csv` | Parameter levels, uncertainty, monotonicity, and instability diagnostics. |
-| `manifest.json` | Schema/config/source digests, Git state, environment, command, seeds, cohort digests, scenario vectors, equations, assumptions, and scope limits. |
+| `manifest.json` | Schema/config/source and profile-input digests, exact profile snapshot, metric/money contract summaries, source retrieval date, actual profile codes, Git state, environment, command, seeds, cohort digests, scenario vectors, equations, assumptions, and scope limits. |
 | `summary.md` | Concise human-readable synthetic scenario table and interpretation warning. |
 | `harm_distribution.svg` | Baseline F2P composite-harm histogram. |
 | `spending_distribution.svg` | Baseline F2P spending histogram. |

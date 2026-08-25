@@ -258,8 +258,9 @@ Validation occurs at several boundaries:
 
 1. `load_config` parses one run scenario and validates types, ranges, positive
    intervals, and calendar alignment with `tick_days`.
-2. `load_profile_bundle` parses both TOML data files, validates source integrity,
-   builds metric and money contracts, and creates country and state agents.
+2. `load_profile_bundle` parses both TOML data files, validates source integrity
+   and the canonical ISO retrieval date, hashes the exact files, builds metric
+   and money contracts, and creates country and state agents.
 3. `World.create` applies `allow_synthetic`, checks the duplicated shared
    behavioural values for exact equality, and applies the run-level audit
    parameters to each state.
@@ -272,16 +273,27 @@ structural check. `base.toml` sets `allow_synthetic=false`; with the current
 synthetic profile dependencies it is intentionally rejected at world creation.
 It is a future-scale configuration, not an authorized campaign.
 
+The policy runner retains the exact `CountryProfile` tuple it used. A canonical
+snapshot fingerprints every profile field and, for a loaded `ProfileBundle`,
+the metric contracts and money scales. Exported manifests identify the actual
+profile codes, jurisdiction and source-register hashes, global source retrieval
+date, and compact contract-status summaries. A caller-supplied bare profile
+tuple is fingerprinted but marked `unregistered_custom_profiles`; it is never
+attributed to the repository's default evidence files.
+
 ## Reproducibility gaps
 
 The source register records publisher, title, URL, period, geography, declared
-support scope, status, and a global retrieval date. It does not yet contain:
+support scope, status, and a global retrieval date. The loader retains that date
+on every source record, and run lineage hashes the registry file. This does not
+turn the linked publications into immutable source snapshots. The register does
+not yet contain:
 
 - immutable snapshots or archived URLs;
 - raw downloaded tables or extracts;
 - table, cell, row, page, or variable identifiers;
 - transcription and transformation scripts;
-- file hashes or checksums;
+- hashes or checksums for underlying downloaded source artifacts;
 - sampling weights, uncertainty estimates, or revision identifiers;
 - licenses and redistribution constraints.
 

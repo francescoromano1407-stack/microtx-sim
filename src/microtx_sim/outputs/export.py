@@ -47,6 +47,21 @@ def export_policy_batch(
     """Persist a complete, self-describing synthetic result bundle."""
 
     destination = Path(output_dir) if output_dir is not None else config.output.output_dir
+    batch_lineage = batch.profile_input_lineage
+    sensitivity_lineage = (
+        sensitivity.profile_input_lineage if sensitivity is not None else None
+    )
+    if batch_lineage is None:
+        raise ValueError("policy batch export requires profile input lineage")
+    if sensitivity is not None and sensitivity_lineage is None:
+        raise ValueError("sensitivity export requires profile input lineage")
+    if sensitivity_lineage is not None and (
+        batch_lineage.fingerprint_sha256
+        != sensitivity_lineage.fingerprint_sha256
+    ):
+        raise ValueError(
+            "batch and sensitivity results used different profile inputs"
+        )
     manifest = build_run_manifest(
         config,
         batch,
@@ -55,6 +70,14 @@ def export_policy_batch(
         created_utc=created_utc,
         command=command,
     )
+    manifest["sensitivity"] = {
+        "run": sensitivity is not None,
+        "profile_input_fingerprint_sha256": (
+            sensitivity_lineage.fingerprint_sha256
+            if sensitivity_lineage is not None
+            else None
+        ),
+    }
     sensitivity_rows = list(sensitivity.rows) if sensitivity is not None else []
     player_rows = batch.player_rows() if config.output.include_player_rows else []
     opportunity_rows = batch.opportunity_rows()

@@ -1,4 +1,10 @@
-"""Validated country profiles and machine-readable provenance contracts."""
+"""Validated country profiles, provenance contracts, and input lineage."""
+
+from .lineage import (
+    ProfileInputLineage,
+    build_profile_input_lineage,
+    resolve_profile_inputs,
+)
 
 from .profiles import (
     DEFAULT_JURISDICTIONS_PATH,
@@ -23,11 +29,14 @@ __all__ = [
     "MoneyScaleContract",
     "ProfileBundle",
     "ProfileConfigurationError",
+    "ProfileInputLineage",
     "ProfileValidationError",
     "ProvenanceContract",
     "SourceRecord",
     "SourceProvenance",
+    "build_profile_input_lineage",
     "load_country_profiles",
     "load_profile_bundle",
     "load_state_agents",
+    "resolve_profile_inputs",
 ]

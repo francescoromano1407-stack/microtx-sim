@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 from microtx_sim.analysis.sensitivity import (
@@ -23,6 +24,15 @@ class SensitivityTests(unittest.TestCase):
         result = run_sensitivity_analysis(
             spec,
             country_profiles=(CountryProfile(code="XX"),),
+        )
+        self.assertEqual(
+            tuple(profile.code for profile in result.country_profiles),
+            ("XX",),
+        )
+        self.assertIsNotNone(result.profile_input_lineage)
+        self.assertEqual(
+            result.profile_input_lineage.lineage_status,
+            "unregistered_custom_profiles",
         )
         self.assertEqual(len(result.rows), 15)
         self.assertTrue(all(row["seed_count"] == 2 for row in result.rows))
@@ -70,6 +80,28 @@ class SensitivityTests(unittest.TestCase):
             SensitivityCase("paid_random_rewards", (0.7, 0.0))
         with self.assertRaises(ValueError):
             SensitivityCase("paid_random_rewards", (0.0,))
+
+    def test_result_rejects_lineage_for_different_same_code_profile(self) -> None:
+        profile = CountryProfile(code="XX")
+        result = run_sensitivity_analysis(
+            PolicyBatchSpec(
+                seeds=(4,),
+                days=0,
+                player_count=0,
+                decision_parameters=DecisionParameters(step_minutes=240),
+            ),
+            cases=(SensitivityCase("paid_random_rewards", (0.0, 0.7)),),
+            country_profiles=(profile,),
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "do not match the fingerprinted snapshot",
+        ):
+            replace(
+                result,
+                country_profiles=(replace(profile, awareness_mean=0.51),),
+            )
 
 
 if __name__ == "__main__":

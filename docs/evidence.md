@@ -46,6 +46,14 @@ yet store immutable snapshots, checksums, extraction scripts, or complete
 table/cell lineage. `ANCHORED` must therefore not be read as reproducibly
 calibrated.
 
+The profile loader validates the catalogue-wide retrieval date in canonical
+`YYYY-MM-DD` form and retains it on every `SourceProvenance` record. Policy runs
+content-address the exact `CountryProfile` values used; a registered bundle also
+adds its metric contracts, money scales, jurisdiction-file hash, and source-
+register hash to that fingerprinted snapshot. These are software-lineage
+controls, not evidence promotion: all current illustrative and synthetic
+statuses remain unchanged.
+
 ## Runtime lineage categories
 
 Every documented input belongs to one of three categories:

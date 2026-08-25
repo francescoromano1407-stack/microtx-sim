@@ -10,7 +10,7 @@ from .analysis import run_sensitivity_analysis
 from .causal.batch import run_policy_batch
 from .config import ConfigurationError, load_config
 from .core.world import World
-from .data.profiles import ProfileValidationError, load_profile_bundle
+from .data.profiles import ProfileBundle, ProfileValidationError, load_profile_bundle
 from .outputs import export_policy_batch
 from .outputs.schema import SENSITIVITY_COLUMNS
 from .outputs.writers import write_csv_atomic, write_json_atomic
@@ -129,8 +129,10 @@ def _policy_batch(
     command: Sequence[str],
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
+    profiles = load_profile_bundle(campaign=False)
     batch = run_policy_batch(
         config.batch,
+        profile_bundle=profiles,
         harm_parameters=config.harm_parameters,
         harm_weights=config.harm_weights,
         opportunity_valuation=config.opportunity_valuation,
@@ -138,7 +140,9 @@ def _policy_batch(
         epgc_policy=config.epgc_policy,
     )
     sensitivity = (
-        _run_configured_sensitivity(config) if run_sensitivity else None
+        _run_configured_sensitivity(config, profile_bundle=profiles)
+        if run_sensitivity
+        else None
     )
     repository_root = Path(__file__).resolve().parents[2]
     destination = _resolve_output(
@@ -178,7 +182,8 @@ def _policy_sensitivity(
     output: Path | None,
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
-    result = _run_configured_sensitivity(config)
+    profiles = load_profile_bundle(campaign=False)
+    result = _run_configured_sensitivity(config, profile_bundle=profiles)
     repository_root = Path(__file__).resolve().parents[2]
     destination = _resolve_output(
         output if output is not None else config.output.output_dir,
@@ -199,6 +204,11 @@ def _policy_sensitivity(
             "config": str(config_path.resolve()),
             "seeds": list(config.batch.seeds),
             "unstable_parameters": list(result.unstable_parameters),
+            "profile_inputs": (
+                result.profile_input_lineage.manifest_payload()
+                if result.profile_input_lineage is not None
+                else None
+            ),
         },
     )
     return {
@@ -210,9 +220,14 @@ def _policy_sensitivity(
     }
 
 
-def _run_configured_sensitivity(config):
+def _run_configured_sensitivity(
+    config,
+    *,
+    profile_bundle: ProfileBundle | None = None,
+):
     return run_sensitivity_analysis(
         config.batch,
+        profile_bundle=profile_bundle,
         base_harm_parameters=config.harm_parameters,
         harm_weights=config.harm_weights,
         opportunity_valuation=config.opportunity_valuation,

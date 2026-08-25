@@ -56,6 +56,23 @@ class PolicyCliTests(unittest.TestCase):
             self.assertTrue((output / "manifest.json").exists())
             self.assertTrue((output / "scenario_summary.csv").exists())
             self.assertTrue((output / "harm_revenue_frontier.svg").exists())
+            manifest = json.loads((output / "manifest.json").read_text("utf-8"))
+            self.assertEqual(
+                manifest["profile_inputs"]["lineage_status"],
+                "registered_profile_bundle",
+            )
+            self.assertEqual(
+                manifest["batch"]["profile_codes"],
+                ["UK", "KR", "JP", "BE"],
+            )
+            self.assertEqual(
+                manifest["source_registry_retrieved_on"],
+                "2026-08-24",
+            )
+            self.assertEqual(
+                manifest["batch"]["profile_input_fingerprint_sha256"],
+                manifest["profile_inputs"]["fingerprint_sha256"],
+            )
 
 
 if __name__ == "__main__":

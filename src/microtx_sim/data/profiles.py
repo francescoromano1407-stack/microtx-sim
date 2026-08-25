@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from fractions import Fraction
+from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -81,6 +83,7 @@ class SourceProvenance:
     geography: str
     supports: tuple[str, ...]
     calibration_status: ProvenanceStatus
+    retrieved_on: date | None = None
 
     def __post_init__(self) -> None:
         for name in ("id", "publisher", "title", "url", "period", "geography"):
@@ -98,6 +101,10 @@ class SourceProvenance:
         if not isinstance(self.calibration_status, ProvenanceStatus):
             raise ProfileValidationError(
                 f"source {self.id} has an invalid calibration status"
+            )
+        if self.retrieved_on is not None and type(self.retrieved_on) is not date:
+            raise ProfileValidationError(
+                f"source {self.id} retrieved_on must be an ISO calendar date"
             )
 
     @property
@@ -276,6 +283,10 @@ class ProfileBundle:
     caveats: tuple[str, ...]
     contracts: tuple[MetricContract, ...] = ()
     money_scales: tuple[MoneyScaleContract, ...] = ()
+    jurisdictions_path: Path | None = None
+    source_registry_path: Path | None = None
+    jurisdictions_sha256: str | None = None
+    source_registry_sha256: str | None = None
 
     def __post_init__(self) -> None:
         frozen_sources = MappingProxyType(dict(self.sources))
@@ -299,6 +310,22 @@ class ProfileBundle:
         if any(not caveat.strip() for caveat in self.caveats):
             raise ProfileValidationError("bundle caveats cannot be empty")
 
+        retrieval_dates = {source.retrieved_on for source in frozen_sources.values()}
+        if len(retrieval_dates) > 1:
+            raise ProfileValidationError(
+                "source catalogue records must share one global retrieval date"
+            )
+        for name in ("jurisdictions_path", "source_registry_path"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, Path):
+                raise ProfileValidationError(f"{name} must be a Path when supplied")
+        for name in ("jurisdictions_sha256", "source_registry_sha256"):
+            value = getattr(self, name)
+            if value is not None and not _is_sha256(value):
+                raise ProfileValidationError(
+                    f"{name} must be a lowercase SHA-256 digest when supplied"
+                )
+
         referenced = {
             source_id
             for profile in self.country_profiles
@@ -321,6 +348,15 @@ class ProfileBundle:
         """Alias that makes the evidence contracts discoverable to callers."""
 
         return self.contracts
+
+    @property
+    def source_retrieved_on(self) -> date | None:
+        """Return the catalogue-wide retrieval date retained on each source."""
+
+        return next(
+            (source.retrieved_on for source in self.sources.values()),
+            None,
+        )
 
     def money_scale(self, jurisdiction_code: str) -> MoneyScaleContract:
         for scale in self.money_scales:
@@ -418,8 +454,14 @@ def load_profile_bundle(
 
     jurisdiction_file = Path(jurisdictions_path)
     sources_file = Path(sources_path)
-    jurisdiction_raw = _read_toml(jurisdiction_file, "jurisdiction profiles")
-    sources_raw = _read_toml(sources_file, "source catalogue")
+    jurisdiction_raw, jurisdiction_sha256 = _read_toml(
+        jurisdiction_file,
+        "jurisdiction profiles",
+    )
+    sources_raw, source_registry_sha256 = _read_toml(
+        sources_file,
+        "source catalogue",
+    )
     sources = _parse_sources(sources_raw, sources_file)
 
     if jurisdiction_raw.get("schema_version") != 1:
@@ -552,6 +594,10 @@ def load_profile_bundle(
         caveats=caveats,
         contracts=tuple(contracts),
         money_scales=tuple(money_scales),
+        jurisdictions_path=jurisdiction_file.resolve(),
+        source_registry_path=sources_file.resolve(),
+        jurisdictions_sha256=jurisdiction_sha256,
+        source_registry_sha256=source_registry_sha256,
     )
     if campaign:
         bundle.validate_for_campaign()
@@ -588,15 +634,15 @@ def load_state_agents(
     ).state_agents
 
 
-def _read_toml(path: Path, label: str) -> dict[str, Any]:
+def _read_toml(path: Path, label: str) -> tuple[dict[str, Any], str]:
     try:
-        with path.open("rb") as handle:
-            raw = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+        encoded = path.read_bytes()
+        raw = tomllib.loads(encoded.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ProfileValidationError(f"cannot read {label} {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise ProfileValidationError(f"{label} {path} must contain a TOML table")
-    return raw
+    return raw, sha256(encoded).hexdigest()
 
 
 def _parse_sources(
@@ -604,9 +650,7 @@ def _parse_sources(
 ) -> Mapping[str, SourceProvenance]:
     if raw.get("schema_version") != 1:
         raise ProfileValidationError(f"{path}: unsupported source schema_version")
-    retrieved_on = raw.get("retrieved_on")
-    if not isinstance(retrieved_on, str) or not retrieved_on.strip():
-        raise ProfileValidationError(f"{path}: retrieved_on must be non-empty text")
+    retrieved_on = _parse_iso_date(raw.get("retrieved_on"), f"{path}: retrieved_on")
     records = raw.get("source")
     if not isinstance(records, list) or any(not isinstance(row, dict) for row in records):
         raise ProfileValidationError(f"{path}: source must be an array of tables")
@@ -632,6 +676,7 @@ def _parse_sources(
                 row.get("calibration_status"),
                 f"{context}.calibration_status",
             ),
+            retrieved_on=retrieved_on,
         )
         if source.id in parsed:
             raise ProfileValidationError(f"{path}: duplicate source id {source.id}")
@@ -1209,6 +1254,33 @@ def _optional_caveat(row: Mapping[str, Any], key: str) -> str:
     if not isinstance(value, str):
         raise ProfileValidationError(f"{key} caveat must be text")
     return value.strip()
+
+
+def _parse_iso_date(value: object, context: str) -> date:
+    if not isinstance(value, str) or not value.strip():
+        raise ProfileValidationError(
+            f"{context} must be an ISO date in YYYY-MM-DD form"
+        )
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise ProfileValidationError(
+            f"{context} must be an ISO date in YYYY-MM-DD form"
+        ) from exc
+    if parsed.isoformat() != value:
+        raise ProfileValidationError(
+            f"{context} must be an ISO date in YYYY-MM-DD form"
+        )
+    return parsed
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and value == value.lower()
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 # Readable compatibility names for callers that use "record" or "contract" in

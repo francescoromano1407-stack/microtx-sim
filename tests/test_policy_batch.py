@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import fields, replace
 import unittest
 
 import numpy as np
@@ -137,6 +138,50 @@ class PolicyBatchTests(unittest.TestCase):
         for row in batch.opportunity_rows():
             self.assertEqual(row["mean_minutes"], 0.0)
             self.assertEqual(row["mean_burden"], 0.0)
+
+    def test_custom_profile_tuple_is_retained_and_content_fingerprinted(self) -> None:
+        spec = PolicyBatchSpec(
+            seeds=(17,),
+            days=0,
+            player_count=0,
+            decision_parameters=DecisionParameters(step_minutes=240),
+        )
+        original_profile = CountryProfile(code="CUSTOM")
+        changed_profile = replace(original_profile, awareness_mean=0.51)
+        original = run_policy_batch(
+            spec,
+            country_profiles=(original_profile,),
+        )
+        changed = run_policy_batch(
+            spec,
+            country_profiles=(changed_profile,),
+        )
+
+        self.assertEqual(original.country_profiles, (original_profile,))
+        self.assertIsNotNone(original.profile_input_lineage)
+        lineage = original.profile_input_lineage
+        assert lineage is not None
+        self.assertEqual(lineage.lineage_status, "unregistered_custom_profiles")
+        self.assertIsNone(lineage.source_registry_sha256)
+        snapshot_profiles = lineage.snapshot["country_profiles"]
+        self.assertIsInstance(snapshot_profiles, list)
+        snapshot_profile = snapshot_profiles[0]
+        self.assertEqual(
+            set(snapshot_profile),
+            {descriptor.name for descriptor in fields(CountryProfile)},
+        )
+        self.assertNotEqual(
+            original.profile_input_lineage.fingerprint_sha256,
+            changed.profile_input_lineage.fingerprint_sha256,
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "do not match the fingerprinted snapshot",
+        ):
+            replace(
+                changed,
+                profile_input_lineage=original.profile_input_lineage,
+            )
 
 
 if __name__ == "__main__":

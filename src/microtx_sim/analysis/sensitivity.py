@@ -12,7 +12,11 @@ from ..causal.batch import PolicyBatchSpec
 from ..causal.scenarios import ScenarioId, scenario_by_id
 from ..consumers.population import CountryProfile, initialize_player_table
 from ..consumers.welfare import initialize_player_life
-from ..data.profiles import load_profile_bundle
+from ..data.lineage import (
+    ProfileInputLineage,
+    resolve_profile_inputs,
+)
+from ..data.profiles import ProfileBundle
 from ..metrics.harm import HarmModelParameters, HarmComponent
 from ..metrics.harm import OpportunityCostValuation, WelfareHarmWeights
 from ..funding import EPGCPolicy
@@ -84,6 +88,18 @@ class SensitivityResult:
 
     rows: tuple[dict[str, object], ...]
     unstable_parameters: tuple[str, ...]
+    country_profiles: tuple[CountryProfile, ...] = ()
+    profile_input_lineage: ProfileInputLineage | None = None
+
+    def __post_init__(self) -> None:
+        profiles = tuple(self.country_profiles)
+        if any(not isinstance(profile, CountryProfile) for profile in profiles):
+            raise TypeError("country_profiles must contain CountryProfile instances")
+        object.__setattr__(self, "country_profiles", profiles)
+        if self.profile_input_lineage is not None:
+            if not isinstance(self.profile_input_lineage, ProfileInputLineage):
+                raise TypeError("profile_input_lineage must be ProfileInputLineage")
+            self.profile_input_lineage.validate_country_profiles(profiles)
 
 
 def run_sensitivity_analysis(
@@ -91,6 +107,7 @@ def run_sensitivity_analysis(
     *,
     cases: Sequence[SensitivityCase] | None = None,
     country_profiles: Sequence[CountryProfile] | None = None,
+    profile_bundle: ProfileBundle | None = None,
     instability_cv_threshold: float = 0.35,
     base_harm_parameters: HarmModelParameters | None = None,
     harm_weights: WelfareHarmWeights | None = None,
@@ -112,8 +129,9 @@ def run_sensitivity_analysis(
         raise ValueError("at least one sensitivity case is required")
     if not np.isfinite(instability_cv_threshold) or instability_cv_threshold < 0:
         raise ValueError("instability_cv_threshold must be finite and non-negative")
-    profiles = tuple(country_profiles) if country_profiles is not None else (
-        load_profile_bundle(campaign=False).country_profiles
+    profiles, profile_lineage = resolve_profile_inputs(
+        country_profiles=country_profiles,
+        profile_bundle=profile_bundle,
     )
     cohorts = {}
     for seed in batch_spec.seeds:
@@ -208,6 +226,8 @@ def run_sensitivity_analysis(
     return SensitivityResult(
         rows=tuple(rows),
         unstable_parameters=tuple(sorted(unstable)),
+        country_profiles=profiles,
+        profile_input_lineage=profile_lineage,
     )
 
 
