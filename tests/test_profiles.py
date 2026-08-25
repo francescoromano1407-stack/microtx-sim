@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
 
 from microtx_sim.data.profiles import (
+    ProfileBundle,
     ProfileValidationError,
     load_country_profiles,
     load_profile_bundle,
@@ -138,6 +140,70 @@ class ProfileLoadingTests(unittest.TestCase):
             load_profile_bundle(JURISDICTIONS, SOURCES, campaign=True)
         with self.assertRaisesRegex(ProfileValidationError, "CALIBRATED"):
             load_country_profiles(JURISDICTIONS, SOURCES, campaign=True)
+
+    def test_campaign_rejects_noncomparable_multi_jurisdiction_money_scales(
+        self,
+    ) -> None:
+        bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
+        candidate = _campaign_candidate(bundle)
+
+        with self.assertRaisesRegex(
+            ProfileValidationError,
+            "cross_country_comparable=false",
+        ):
+            candidate.validate_for_campaign()
+
+    def test_campaign_checks_source_referenced_only_by_money_scale(self) -> None:
+        bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
+        source_id = "ONS_HDI_FYE2024"
+        candidate = _campaign_candidate(
+            bundle,
+            scale_source_id=source_id,
+        )
+
+        with self.assertRaisesRegex(
+            ProfileValidationError,
+            rf"source:{source_id}=ANCHORED",
+        ):
+            candidate.validate_for_campaign()
+
+
+def _campaign_candidate(
+    bundle: ProfileBundle,
+    *,
+    scale_source_id: str | None = None,
+) -> ProfileBundle:
+    """Build a narrow gate fixture with no failures except those under test."""
+
+    profiles = tuple(
+        replace(profile, source_ids=()) for profile in bundle.country_profiles
+    )
+    contracts = tuple(
+        replace(
+            contract,
+            status=ProvenanceStatus.CALIBRATED,
+            source_ids=(),
+        )
+        for contract in bundle.contracts
+    )
+    scales = tuple(
+        replace(
+            scale,
+            anchor_status=ProvenanceStatus.CALIBRATED,
+            scale_status=ProvenanceStatus.CALIBRATED,
+            source_ids=(scale_source_id,) if index == 0 and scale_source_id else (),
+        )
+        for index, scale in enumerate(bundle.money_scales)
+    )
+    return ProfileBundle(
+        country_profiles=profiles,
+        state_agents=bundle.state_agents,
+        sources=bundle.sources,
+        profile_status=ProvenanceStatus.CALIBRATED,
+        caveats=bundle.caveats,
+        contracts=contracts,
+        money_scales=scales,
+    )
 
 
 if __name__ == "__main__":

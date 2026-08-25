@@ -102,9 +102,13 @@ The current rare-card hazard remains an illustrative sensitivity parameter.
 ## Campaign gate
 
 `SimulationConfig.validate(campaign=True)` requires the scenario itself to be
-`CALIBRATED`. The profile bundle then checks every dependent contract and source.
-A campaign fails if a required dependency is synthetic, illustrative, or merely
-anchored.
+`CALIBRATED` and forbids synthetic inputs. The profile bundle then checks every
+dependent contract and source, including money-scale sources. Because current
+outcomes pool money across jurisdictions, campaign validation also requires a
+cross-country-comparable monetary contract. The present local-currency anchor
+scales cannot make that declaration: a dated FX or purchasing-power contract
+must be implemented first. A campaign fails if a required dependency is
+synthetic, illustrative, merely anchored, or not monetarily comparable.
 
 Passing this software gate will be necessary but not sufficient. The policy
 prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,

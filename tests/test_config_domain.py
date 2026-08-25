@@ -9,6 +9,7 @@ import numpy as np
 from microtx_sim.config import ConfigurationError, load_config
 from microtx_sim.core.ledger import Ledger
 from microtx_sim.domain.games import ContentPlanner, GameTable, OwnGameSnapshot
+from microtx_sim.types import ProvenanceStatus
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,21 @@ class ConfigAndDomainTests(unittest.TestCase):
         self.assertEqual(config.run.player_count, 384)
         with self.assertRaisesRegex(ConfigurationError, "CALIBRATED"):
             load_config(ROOT / "configs" / "smoke.toml", campaign=True)
+
+    def test_campaign_rejects_synthetic_permission_even_if_status_is_calibrated(
+        self,
+    ) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        promoted = replace(
+            config,
+            meta=replace(
+                config.meta,
+                provenance_status=ProvenanceStatus.CALIBRATED,
+            ),
+        )
+
+        with self.assertRaisesRegex(ConfigurationError, "allow_synthetic=false"):
+            promoted.validate(campaign=True)
 
     def test_calendar_intervals_must_align_exactly_with_tick_size(self) -> None:
         config = load_config(ROOT / "configs" / "smoke.toml")

@@ -167,7 +167,8 @@ class MoneyScaleContract:
     A separate, explicitly illustrative scale maps each country's monthly anchor
     to the same purchasing-power-cent anchor used by prices inside the model.
     This is not an FX or PPP estimate and cannot be used for cross-country income
-    comparisons.
+    comparisons.  A future dated conversion contract must be implemented before
+    campaign outputs may pool currencies.
     """
 
     jurisdiction_code: str
@@ -349,6 +350,12 @@ class ProfileBundle:
                     f"{scale.jurisdiction_code}.currency_scale="
                     f"{scale.scale_status.value}"
                 )
+        if len(self.money_scales) > 1:
+            failures.extend(
+                f"{scale.jurisdiction_code}.currency_scale_cross_country_comparable=false"
+                for scale in self.money_scales
+                if not scale.cross_country_comparable
+            )
 
         used_source_ids = {
             source_id
@@ -357,6 +364,9 @@ class ProfileBundle:
         }
         used_source_ids.update(
             source_id for contract in self.contracts for source_id in contract.source_ids
+        )
+        used_source_ids.update(
+            source_id for scale in self.money_scales for source_id in scale.source_ids
         )
         for source_id in sorted(used_source_ids):
             source = self.sources[source_id]

@@ -158,11 +158,16 @@ class SimulationConfig:
             and not self.run.allow_synthetic
         ):
             raise ConfigurationError("Synthetic scenarios require allow_synthetic=true")
-        if campaign and self.meta.provenance_status is not ProvenanceStatus.CALIBRATED:
-            raise ConfigurationError(
-                "Scientific campaigns require provenance_status=CALIBRATED; "
-                f"got {self.meta.provenance_status.value}"
-            )
+        if campaign:
+            if self.meta.provenance_status is not ProvenanceStatus.CALIBRATED:
+                raise ConfigurationError(
+                    "Scientific campaigns require provenance_status=CALIBRATED; "
+                    f"got {self.meta.provenance_status.value}"
+                )
+            if self.run.allow_synthetic:
+                raise ConfigurationError(
+                    "Scientific campaigns require allow_synthetic=false"
+                )
 
 
 def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig:

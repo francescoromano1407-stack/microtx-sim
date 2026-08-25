@@ -171,8 +171,9 @@ equations, scenario differences, and interpretation boundary.
 | `provenance_status` | enum | One of `CALIBRATED`, `ANCHORED`, `ILLUSTRATIVE`, or `SYNTHETIC`. |
 | `notes` | string | Human-readable scope and interpretation warning. |
 
-Campaign mode requires `provenance_status = "CALIBRATED"`. A synthetic scenario
-also requires `run.allow_synthetic = true`.
+Campaign mode requires `provenance_status = "CALIBRATED"` and
+`run.allow_synthetic = false`. A synthetic non-campaign scenario instead
+requires `run.allow_synthetic = true`.
 
 ### `[run]`
 
