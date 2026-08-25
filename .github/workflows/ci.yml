@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.6"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Verify and install locked environment
+        run: |
+          uv lock --check
+          uv sync --locked --extra dev
+
+      - name: Run test suite
+        run: uv run --no-sync python -m unittest discover -s tests -v
+
+      - name: Validate configurations
+        run: |
+          uv run --no-sync python -m microtx_sim policy-validate configs/policy_prototype.toml
+          uv run --no-sync python -m microtx_sim validate configs/smoke.toml
+
+      - name: Run deterministic structural smoke
+        run: uv run --no-sync python -m microtx_sim smoke configs/smoke.toml

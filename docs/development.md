@@ -18,6 +18,20 @@ package in editable mode:
 python -m pip install -e ".[dev]"
 ```
 
+For the fully locked project environment, install uv 0.11.6 and synchronize the
+committed lock file without changing it:
+
+```text
+uv sync --locked --extra dev
+```
+
+`uv.lock` is the reproducible runtime and test dependency boundary used by
+continuous integration; the isolated setuptools build backend is pinned
+separately in `pyproject.toml`. Run `uv lock` only as a deliberate
+dependency-update operation, review both files, and rerun the complete test
+matrix. The `[tool.uv]` requirement prevents a different resolver version from
+silently rewriting the lock.
+
 The package exposes both a module entry point and the `microtx-sim` console
 command. Validate both supported entry points before changing model logic:
 
@@ -162,11 +176,12 @@ Use this sequence for a material feature:
 Run the full suite from the repository root with the standard-library runner:
 
 ```text
-python -m unittest discover -s tests -v
+uv run --no-sync python -m unittest discover -s tests -v
 ```
 
-The optional development dependency also supports the shorter
-`python -m pytest` command.
+Without uv, the equivalent authoritative command is
+`python -m unittest discover -s tests -v`. The optional development dependency
+also supports the shorter `python -m pytest` command.
 
 The suite is organised by contract:
 
@@ -203,7 +218,10 @@ The suite is organised by contract:
 - `test_outputs.py` and `test_policy_export.py`: schema, atomic writers,
   escaping, empty rows, deterministic SVGs, hashes, and the 13-file contract;
 - `test_policy_config.py` and `test_policy_cli.py`: strict TOML parsing, command
-  dispatch, output overrides, and error behaviour.
+  dispatch, output overrides, deterministic smoke execution, and error
+  behaviour;
+- `test_documentation.py`: local Markdown links across the README and reference
+  documentation.
 
 For a change local to one module, run its focused test first and the full suite
 before a milestone commit. For example:

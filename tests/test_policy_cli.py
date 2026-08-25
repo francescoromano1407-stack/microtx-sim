@@ -15,6 +15,24 @@ BASE_CONFIG = ROOT / "configs" / "policy_prototype.toml"
 
 
 class PolicyCliTests(unittest.TestCase):
+    def test_smoke_command_is_deterministic_except_for_elapsed_time(self) -> None:
+        payloads: list[dict[str, object]] = []
+        for _ in range(2):
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                code = main(("smoke", str(ROOT / "configs" / "smoke.toml")))
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            payload.pop("elapsed_seconds")
+            payloads.append(payload)
+
+        self.assertEqual(payloads[0], payloads[1])
+        self.assertEqual(payloads[0]["mode"], "smoke_only")
+        self.assertEqual(payloads[0]["cycles"], 3)
+        summary = payloads[0]["summary"]
+        self.assertIsInstance(summary, dict)
+        self.assertEqual(summary["players"], 384)
+
     def test_policy_validate_and_small_batch_commands(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
