@@ -64,7 +64,10 @@ class WelfareHarmWeights:
                 raise ValueError("harm weights must be finite and non-negative")
             object.__setattr__(self, name, normalized)
             values.append(normalized)
-        if sum(values) <= 0.0:
+        total = sum(values)
+        if not isfinite(total):
+            raise ValueError("harm weight sum must be finite")
+        if total <= 0.0:
             raise ValueError("at least one harm weight must be positive")
 
     def as_array(self) -> FloatArray:

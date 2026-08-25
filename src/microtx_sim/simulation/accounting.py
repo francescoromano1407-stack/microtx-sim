@@ -201,12 +201,21 @@ def outcome_snapshot(world: "World", *, tick: int | None = None) -> OutcomeSnaps
     )
     return OutcomeSnapshot(
         tick=world.tick if tick is None else tick,
-        player_harm=world.players.harm_state.astype(np.float64, copy=True),
-        player_spend_cents=world.player_total_spend_cents.copy(),
-        player_income_cents=world.players.monthly_disposable_income_cents.copy(),
+        player_ids=world.players.player_id,
+        player_harm=world.players.harm_state.astype(np.float64, copy=False),
+        player_spend_cents=world.player_total_spend_cents,
+        player_income_cents=world.players.monthly_disposable_income_cents,
         player_debt_cents=debt.astype(np.int64, copy=False),
+        firm_ids=np.asarray(
+            [firm.firm_id for firm in world.firms],
+            dtype=np.int64,
+        ),
         firm_cash_cents=firm_cash,
         firm_operating_margin_cents=margin,
         firm_safe_revenue_share=safe_share,
-        state_subsidy_outlay_cents=world.state_subsidy_outlay_cents.copy(),
+        jurisdiction_ids=np.asarray(
+            [state.jurisdiction_id for state in world.states],
+            dtype=np.int64,
+        ),
+        state_subsidy_outlay_cents=world.state_subsidy_outlay_cents,
     )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, replace
 from hashlib import sha256
 from json import dumps
 from math import sqrt
@@ -24,8 +24,10 @@ from ..metrics.harm import (
     HarmComponent,
     HarmModelParameters,
     OpportunityCostValuation,
+    WelfareHarmResult,
     WelfareHarmWeights,
 )
+from ..metrics.outcomes import _immutable_array_copy
 from ..metrics.reporting import REPEATED_SEED_METRIC_STEMS
 from ..rng import CounterRNG, validate_seed
 from ..simulation.policy_orchestrator import (
@@ -35,6 +37,25 @@ from ..simulation.policy_orchestrator import (
     run_policy_scenario,
 )
 from .scenarios import ScenarioId, ScenarioSpec, required_scenarios
+
+
+_POLICY_PRETREATMENT_RESULT_CONTRACTS = (
+    ("player_ids", np.dtype(np.int64)),
+    ("is_minor", np.dtype(np.bool_)),
+    ("age_years", np.dtype(np.int16)),
+    ("jurisdiction", np.dtype(np.int16)),
+    ("baseline_vulnerability", np.dtype(np.float32)),
+    ("disposable_budget_cents", np.dtype(np.int64)),
+)
+
+_POLICY_RESULT_ARRAY_CONTRACTS = (
+    *_POLICY_PRETREATMENT_RESULT_CONTRACTS,
+    ("spending_cents", np.dtype(np.int64)),
+    ("composite_harm", np.dtype(np.float64)),
+    ("enjoyment", np.dtype(np.float64)),
+    ("high_risk", np.dtype(np.bool_)),
+    ("action_minutes", np.dtype(np.int64)),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,12 +280,43 @@ class PolicyBatchResult:
             raise TypeError("spec must be PolicyBatchSpec")
         if type(self.run_inputs) is not PolicyRunInputs:
             raise TypeError("run_inputs must be PolicyRunInputs")
+        profiles = tuple(self.country_profiles)
+        if any(not isinstance(profile, CountryProfile) for profile in profiles):
+            raise TypeError("country_profiles must contain CountryProfile instances")
+        if self.spec.player_count and not profiles:
+            raise ValueError("country_profiles are required for non-empty policy cohorts")
+        object.__setattr__(self, "country_profiles", profiles)
         expected = len(self.spec.seeds) * len(self.spec.scenarios)
         if len(self.records) != expected:
             raise ValueError(f"expected {expected} seed-scenario records")
+        normalized_records: list[SeedScenarioRecord] = []
+        for record in self.records:
+            if type(record) is not SeedScenarioRecord:
+                raise TypeError("records must contain SeedScenarioRecord instances")
+            frozen_result = _readonly_policy_result(record.result)
+            record = replace(record, result=frozen_result)
+            if (
+                type(record.result.days) is not int
+                or record.result.days != self.spec.days
+            ):
+                raise ValueError("record result days do not match the batch spec")
+            if record.result.player_ids.size != self.spec.player_count:
+                raise ValueError(
+                    "record result player count does not match the batch spec"
+                )
+            _validate_policy_pretreatment_result(
+                record.result,
+                expected_player_count=self.spec.player_count,
+                country_profiles=profiles,
+            )
+            _validate_policy_result_outcomes(
+                record.result,
+                harm_weights=self.run_inputs.harm_weights,
+            )
+            normalized_records.append(record)
         record_by_key = {
             (record.result.seed, record.result.scenario.scenario_id): record
-            for record in self.records
+            for record in normalized_records
         }
         if len(record_by_key) != expected:
             raise ValueError("duplicate seed-scenario result")
@@ -280,6 +332,25 @@ class PolicyBatchResult:
             for seed in self.spec.seeds
             for scenario in self.spec.scenarios
         )
+        for seed in self.spec.seeds:
+            reference = record_by_key[
+                (seed, self.spec.reference_scenario)
+            ].result
+            for scenario in self.spec.scenarios:
+                result = record_by_key[(seed, scenario.scenario_id)].result
+                if result.scenario != scenario:
+                    raise ValueError(
+                        "record result scenario does not exactly match the batch spec: "
+                        f"{scenario.scenario_id.value}"
+                    )
+                _assert_policy_pretreatment_alignment(
+                    result,
+                    reference,
+                )
+                _validate_record_effects(
+                    record_by_key[(seed, scenario.scenario_id)],
+                    reference,
+                )
         object.__setattr__(self, "records", records)
         provided_digests: dict[int, str] = {}
         for raw_seed, value in self.cohort_digest_by_seed.items():
@@ -297,10 +368,6 @@ class PolicyBatchResult:
             if digests[record.result.seed] != record.cohort_digest:
                 raise ValueError("record cohort digest is inconsistent")
         object.__setattr__(self, "cohort_digest_by_seed", MappingProxyType(digests))
-        profiles = tuple(self.country_profiles)
-        if any(not isinstance(profile, CountryProfile) for profile in profiles):
-            raise TypeError("country_profiles must contain CountryProfile instances")
-        object.__setattr__(self, "country_profiles", profiles)
         if self.profile_input_lineage is not None:
             if not isinstance(self.profile_input_lineage, ProfileInputLineage):
                 raise TypeError("profile_input_lineage must be ProfileInputLineage")
@@ -552,7 +619,7 @@ def run_policy_batch(
         digests[seed] = digest
         scenario_results: dict[ScenarioId, PolicyScenarioResult] = {}
         for scenario in spec.scenarios:
-            scenario_results[scenario.scenario_id] = run_policy_scenario(
+            result = run_policy_scenario(
                 players,
                 life,
                 scenario,
@@ -565,11 +632,31 @@ def run_policy_batch(
                 producer_assumptions=run_inputs.producer_assumptions,
                 epgc_policy=run_inputs.epgc_policy,
             )
+            if _cohort_digest(players, life) != digest:
+                raise RuntimeError(
+                    "policy branch mutated the shared pre-treatment cohort"
+                )
+            if result.scenario != scenario:
+                raise ValueError(
+                    "policy runner returned a result for a different scenario"
+                )
+            _validate_policy_pretreatment_result(
+                result,
+                expected_player_count=spec.player_count,
+                country_profiles=profiles,
+            )
+            _validate_policy_result_outcomes(
+                result,
+                harm_weights=run_inputs.harm_weights,
+            )
+            scenario_results[scenario.scenario_id] = result
         reference = scenario_results[spec.reference_scenario]
         for scenario in spec.scenarios:
             result = scenario_results[scenario.scenario_id]
-            if not np.array_equal(result.player_ids, reference.player_ids):
-                raise RuntimeError("counterfactual branches lost player alignment")
+            _assert_policy_pretreatment_alignment(
+                result,
+                reference,
+            )
             harm_difference = result.composite_harm - reference.composite_harm
             records.append(
                 SeedScenarioRecord(
@@ -670,6 +757,215 @@ def _seed_row(record: SeedScenarioRecord) -> dict[str, object]:
     for source, value in result.revenue_composition_cents.items():
         row[f"revenue_{source}_cents"] = value
     return row
+
+
+def _readonly_array_copy(values: np.ndarray) -> np.ndarray:
+    return _immutable_array_copy(values)
+
+
+def _readonly_policy_result(result: PolicyScenarioResult) -> PolicyScenarioResult:
+    """Give a retained batch an immutable, independently owned result snapshot."""
+
+    if type(result) is not PolicyScenarioResult:
+        raise TypeError("record result must be PolicyScenarioResult")
+    for name, expected_dtype in _POLICY_RESULT_ARRAY_CONTRACTS:
+        values = getattr(result, name)
+        if type(values) is not np.ndarray:
+            raise TypeError(f"policy result field {name} must be a numpy array")
+        if values.dtype != expected_dtype:
+            raise ValueError(
+                f"policy result field {name} must have dtype {expected_dtype.name}"
+            )
+    if type(result.harm) is not WelfareHarmResult:
+        raise TypeError("policy result harm must be WelfareHarmResult")
+    harm_updates: dict[str, np.ndarray] = {}
+    for descriptor in fields(result.harm):
+        values = getattr(result.harm, descriptor.name)
+        if type(values) is not np.ndarray:
+            raise TypeError(
+                f"policy harm result field {descriptor.name} must be a numpy array"
+            )
+        harm_updates[descriptor.name] = _readonly_array_copy(values)
+    frozen_harm = replace(result.harm, **harm_updates)
+    result_updates = {
+        name: _readonly_array_copy(getattr(result, name))
+        for name, _ in _POLICY_RESULT_ARRAY_CONTRACTS
+    }
+    frozen_result = replace(result, harm=frozen_harm, **result_updates)
+    for name in (
+        "total_revenue_cents",
+        "producer_cost_cents",
+        "producer_profit_cents",
+    ):
+        if type(getattr(frozen_result, name)) is not int:
+            raise TypeError(f"policy result field {name} must be a built-in integer")
+    return frozen_result
+
+
+def _validate_record_effects(
+    record: SeedScenarioRecord,
+    reference: PolicyScenarioResult,
+) -> None:
+    result = record.result
+    with np.errstate(over="ignore", invalid="ignore"):
+        harm_difference = result.composite_harm - reference.composite_harm
+        expected_mean = (
+            float(harm_difference.mean()) if harm_difference.size else 0.0
+        )
+    if not np.isfinite(expected_mean):
+        raise ValueError("recomputed mean_harm_effect_vs_safe must be finite")
+    actual_mean = record.mean_harm_effect_vs_safe
+    if type(actual_mean) is not float:
+        raise TypeError("mean_harm_effect_vs_safe must be a built-in float")
+    if not np.isfinite(actual_mean):
+        raise ValueError("mean_harm_effect_vs_safe must be finite")
+    if actual_mean != expected_mean:
+        raise ValueError("mean_harm_effect_vs_safe does not match paired results")
+
+    expected_integer_effects = {
+        "total_spending_effect_vs_safe_cents": (
+            _python_sum(result.spending_cents)
+            - _python_sum(reference.spending_cents)
+        ),
+        "harmful_spending_effect_vs_safe_cents": (
+            _python_sum(result.harm.harmful_spending_cents)
+            - _python_sum(reference.harm.harmful_spending_cents)
+        ),
+        "total_revenue_effect_vs_safe_cents": (
+            result.total_revenue_cents - reference.total_revenue_cents
+        ),
+    }
+    for name, expected_value in expected_integer_effects.items():
+        actual_value = getattr(record, name)
+        if type(actual_value) is not int:
+            raise TypeError(f"{name} must be a built-in integer")
+        if actual_value != expected_value:
+            raise ValueError(f"{name} does not match paired results")
+
+
+def _assert_policy_pretreatment_alignment(
+    comparison: PolicyScenarioResult,
+    reference: PolicyScenarioResult,
+) -> None:
+    """Fail closed if a policy branch changes an invariant input field."""
+
+    if comparison.seed != reference.seed:
+        raise ValueError("policy counterfactual branches use different seeds")
+    if comparison.days != reference.days:
+        raise ValueError("policy counterfactual branches use different day horizons")
+    if comparison.player_ids.size != reference.player_ids.size:
+        raise ValueError("policy counterfactual branches have different player counts")
+    for name, _ in _POLICY_PRETREATMENT_RESULT_CONTRACTS:
+        comparison_values = getattr(comparison, name)
+        reference_values = getattr(reference, name)
+        if (
+            comparison_values.shape != reference_values.shape
+            or not np.array_equal(comparison_values, reference_values)
+        ):
+            raise ValueError(
+                "policy counterfactual branches differ on pre-treatment/exogenous "
+                f"field {name}: comparison={comparison.scenario.scenario_id.value}, "
+                f"reference={reference.scenario.scenario_id.value}, seed={comparison.seed}"
+            )
+
+
+def _validate_policy_pretreatment_result(
+    result: PolicyScenarioResult,
+    *,
+    expected_player_count: int,
+    country_profiles: tuple[CountryProfile, ...] = (),
+) -> None:
+    if type(result) is not PolicyScenarioResult:
+        raise TypeError("record result must be PolicyScenarioResult")
+    expected_shape = (expected_player_count,)
+    for name, expected_dtype in _POLICY_PRETREATMENT_RESULT_CONTRACTS:
+        values = getattr(result, name)
+        if type(values) is not np.ndarray:
+            raise TypeError(f"policy pre-treatment field {name} must be a numpy array")
+        if values.dtype != expected_dtype:
+            raise ValueError(
+                f"policy pre-treatment field {name} must have dtype "
+                f"{expected_dtype.name}"
+            )
+        if values.shape != expected_shape:
+            raise ValueError(
+                f"policy pre-treatment field {name} must have shape "
+                f"{expected_shape}"
+            )
+
+    player_ids = result.player_ids
+    if np.any(player_ids < 0):
+        raise ValueError("policy pre-treatment field player_ids must be non-negative")
+    if not _has_unique_integer_ids(player_ids):
+        raise ValueError("policy pre-treatment field player_ids must be unique")
+
+    if np.any(result.age_years < 0):
+        raise ValueError("policy pre-treatment field age_years cannot be negative")
+
+    jurisdictions = result.jurisdiction
+    if np.any(jurisdictions < 0):
+        raise ValueError(
+            "policy pre-treatment field jurisdiction contains an unknown code"
+        )
+    if country_profiles and np.any(jurisdictions >= len(country_profiles)):
+        raise ValueError(
+            "policy pre-treatment field jurisdiction contains an unknown code"
+        )
+
+    vulnerability = result.baseline_vulnerability
+    if (
+        not np.all(np.isfinite(vulnerability))
+        or np.any(vulnerability < 0.0)
+        or np.any(vulnerability > 1.0)
+    ):
+        raise ValueError(
+            "policy pre-treatment field baseline_vulnerability must be finite "
+            "and in [0, 1]"
+        )
+
+    if np.any(result.disposable_budget_cents < 0):
+        raise ValueError(
+            "policy pre-treatment field disposable_budget_cents cannot be negative"
+        )
+
+    if country_profiles and expected_player_count:
+        adult_ages = np.asarray(
+            [profile.adult_age for profile in country_profiles],
+            dtype=np.int16,
+        )
+        expected_minor = result.age_years < adult_ages[jurisdictions]
+        if not np.array_equal(result.is_minor, expected_minor):
+            raise ValueError(
+                "policy pre-treatment field is_minor is inconsistent with age "
+                "and jurisdiction"
+            )
+
+
+def _validate_policy_result_outcomes(
+    result: PolicyScenarioResult,
+    *,
+    harm_weights: WelfareHarmWeights,
+) -> None:
+    if np.any(result.spending_cents < 0):
+        raise ValueError("policy result field spending_cents cannot be negative")
+    if np.any(result.spending_cents > result.disposable_budget_cents):
+        raise ValueError(
+            "policy result field spending_cents cannot exceed disposable budget"
+        )
+    if np.any(result.action_minutes < 0):
+        raise ValueError("policy result field action_minutes cannot be negative")
+    with np.errstate(over="ignore", invalid="ignore"):
+        expected_composite = result.harm.composite_harm(harm_weights)
+    if not np.all(np.isfinite(expected_composite)):
+        raise ValueError("recomputed composite_harm must be finite")
+    if not np.array_equal(result.composite_harm, expected_composite):
+        raise ValueError("composite_harm does not match component scores and weights")
+
+
+def _has_unique_integer_ids(values: np.ndarray) -> bool:
+    if values.size < 2 or bool(np.all(values[1:] > values[:-1])):
+        return True
+    return np.unique(values).size == values.size
 
 
 def _cohort_digest(players: object, life: object) -> str:

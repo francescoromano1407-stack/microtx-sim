@@ -76,6 +76,8 @@ class WelfareHarmTests(unittest.TestCase):
                 family_social=0.0,
                 wellbeing=0.0,
             )
+        with self.assertRaisesRegex(ValueError, "weight sum must be finite"):
+            WelfareHarmWeights(*([1e308] * 6))
 
     def test_planned_transparent_affordable_spending_is_not_harm(self) -> None:
         result = compute_welfare_harm(**_inputs())

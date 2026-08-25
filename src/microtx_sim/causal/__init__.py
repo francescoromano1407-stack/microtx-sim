@@ -9,9 +9,15 @@ from .interventions import (
     SubsidyRegime,
 )
 from .paired_worlds import (
+    BalanceMismatchKind,
+    NegativeControlValidationError,
     PairedOutcome,
     PairedWorldRun,
+    PreTreatmentBalanceError,
+    PreTreatmentBalanceReport,
+    PreTreatmentMismatch,
     RegimeEffect,
+    assess_pre_treatment_balance,
     compare_outcomes,
     run_paired_worlds,
 )
@@ -23,9 +29,15 @@ __all__ = [
     "MechanismCap",
     "NullIntervention",
     "SubsidyRegime",
+    "BalanceMismatchKind",
+    "NegativeControlValidationError",
     "PairedOutcome",
     "PairedWorldRun",
+    "PreTreatmentBalanceError",
+    "PreTreatmentBalanceReport",
+    "PreTreatmentMismatch",
     "RegimeEffect",
+    "assess_pre_treatment_balance",
     "compare_outcomes",
     "run_paired_worlds",
 ]

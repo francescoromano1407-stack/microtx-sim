@@ -35,7 +35,11 @@ class HarmWeights:
         )
         if np.any(result < 0.0) or not np.all(np.isfinite(result)):
             raise ValueError("harm weights must be finite and non-negative")
-        if result.sum() <= 0.0:
+        with np.errstate(over="ignore", invalid="ignore"):
+            total = float(result.sum())
+        if not np.isfinite(total):
+            raise ValueError("harm weight sum must be finite")
+        if total <= 0.0:
             raise ValueError("at least one harm weight must be positive")
         return result
 
@@ -49,34 +53,97 @@ class OutcomeSnapshot:
     """
 
     tick: int
+    player_ids: IntArray
     player_harm: FloatArray
     player_spend_cents: IntArray
     player_income_cents: IntArray
     player_debt_cents: IntArray
+    firm_ids: IntArray
     firm_cash_cents: IntArray
     firm_operating_margin_cents: IntArray
     firm_safe_revenue_share: FloatArray
+    jurisdiction_ids: IntArray
     state_subsidy_outlay_cents: IntArray
 
     def __post_init__(self) -> None:
-        players = len(self.player_spend_cents)
-        if self.player_harm.shape != (players, 7):
-            raise ValueError("player_harm must have one row and seven dimensions per player")
-        if len(self.player_income_cents) != players or len(self.player_debt_cents) != players:
-            raise ValueError("player outcome columns have inconsistent lengths")
-        firms = len(self.firm_cash_cents)
+        array_columns = (
+            "player_ids",
+            "player_harm",
+            "player_spend_cents",
+            "player_income_cents",
+            "player_debt_cents",
+            "firm_ids",
+            "firm_cash_cents",
+            "firm_operating_margin_cents",
+            "firm_safe_revenue_share",
+            "jurisdiction_ids",
+            "state_subsidy_outlay_cents",
+        )
+        for name in array_columns:
+            if type(getattr(self, name)) is not np.ndarray:
+                raise TypeError(f"{name} must be a numpy array")
+
+        identity_columns = {
+            "player_ids": self.player_ids,
+            "firm_ids": self.firm_ids,
+            "jurisdiction_ids": self.jurisdiction_ids,
+        }
+        for name, values in identity_columns.items():
+            if type(values) is not np.ndarray or values.dtype != np.dtype(np.int64):
+                raise TypeError(f"{name} must be an int64 numpy array")
+            if values.ndim != 1:
+                raise ValueError(f"{name} must be one-dimensional")
+            if np.any(values < 0):
+                raise ValueError(f"{name} must be non-negative")
+            if not _has_unique_int64_ids(values):
+                raise ValueError(f"{name} must be unique")
+
+        players = len(self.player_ids)
+        _validate_player_harm(self.player_harm, expected_players=players)
         if (
-            len(self.firm_operating_margin_cents) != firms
+            len(self.player_spend_cents) != players
+            or len(self.player_income_cents) != players
+            or len(self.player_debt_cents) != players
+        ):
+            raise ValueError("player outcome columns have inconsistent lengths")
+        firms = len(self.firm_ids)
+        if (
+            len(self.firm_cash_cents) != firms
+            or len(self.firm_operating_margin_cents) != firms
             or len(self.firm_safe_revenue_share) != firms
         ):
             raise ValueError("firm outcome columns have inconsistent lengths")
+        if len(self.state_subsidy_outlay_cents) != len(self.jurisdiction_ids):
+            raise ValueError("jurisdiction outcome columns have inconsistent lengths")
+        for name in array_columns:
+            object.__setattr__(
+                self,
+                name,
+                _immutable_array_copy(getattr(self, name)),
+            )
 
     def composite_harm(self, weights: HarmWeights | None = None) -> FloatArray:
+        _validate_player_harm(
+            self.player_harm,
+            expected_players=len(self.player_ids),
+        )
         weight_array = (weights or HarmWeights()).as_array()
-        return self.player_harm @ (weight_array / weight_array.sum())
+        with np.errstate(over="ignore", invalid="ignore"):
+            composite = self.player_harm @ (
+                weight_array / weight_array.sum()
+            )
+        if not np.all(np.isfinite(composite)):
+            raise OverflowError("weighted composite harm is not finite")
+        return composite
 
     def summary(self) -> dict[str, float | int]:
         composite = self.composite_harm()
+        with np.errstate(over="ignore", invalid="ignore"):
+            mean_composite = (
+                float(composite.mean()) if len(composite) else 0.0
+            )
+        if not np.isfinite(mean_composite):
+            raise OverflowError("mean composite harm is not finite")
         return {
             "tick": self.tick,
             "players": len(self.player_spend_cents),
@@ -84,7 +151,7 @@ class OutcomeSnapshot:
                 int(value) for value in self.player_spend_cents
             ),
             "players_with_debt": int(np.count_nonzero(self.player_debt_cents > 0)),
-            "mean_composite_harm": float(composite.mean()) if len(composite) else 0.0,
+            "mean_composite_harm": mean_composite,
             "p99_composite_harm": (
                 float(np.quantile(composite, 0.99)) if len(composite) else 0.0
             ),
@@ -119,18 +186,42 @@ class OutcomeRecorder:
         return self._latest
 
     def record(self, snapshot: OutcomeSnapshot) -> None:
+        if type(snapshot) is not OutcomeSnapshot:
+            raise TypeError("snapshot must be an OutcomeSnapshot")
         if self._summaries and snapshot.tick <= int(self._summaries[-1]["tick"]):
             raise ValueError("outcome ticks must increase strictly")
         self._summaries.append(snapshot.summary())
         if self.record_individual:
-            self._latest = OutcomeSnapshot(
-                tick=snapshot.tick,
-                player_harm=snapshot.player_harm.copy(),
-                player_spend_cents=snapshot.player_spend_cents.copy(),
-                player_income_cents=snapshot.player_income_cents.copy(),
-                player_debt_cents=snapshot.player_debt_cents.copy(),
-                firm_cash_cents=snapshot.firm_cash_cents.copy(),
-                firm_operating_margin_cents=snapshot.firm_operating_margin_cents.copy(),
-                firm_safe_revenue_share=snapshot.firm_safe_revenue_share.copy(),
-                state_subsidy_outlay_cents=snapshot.state_subsidy_outlay_cents.copy(),
-            )
+            self._latest = snapshot
+
+
+def _validate_player_harm(
+    values: object,
+    *,
+    expected_players: int,
+) -> None:
+    if type(values) is not np.ndarray or values.dtype != np.dtype(np.float64):
+        raise TypeError("player_harm must be a float64 numpy array")
+    if values.shape != (expected_players, 7):
+        raise ValueError(
+            "player_harm must have one row and seven dimensions per player"
+        )
+    if (
+        not np.all(np.isfinite(values))
+        or np.any(values < 0.0)
+        or np.any(values > 1.0)
+    ):
+        raise ValueError("player_harm must be finite and in [0, 1]")
+
+
+def _has_unique_int64_ids(values: IntArray) -> bool:
+    if values.size < 2 or bool(np.all(values[1:] > values[:-1])):
+        return True
+    return np.unique(values).size == values.size
+
+
+def _immutable_array_copy(values: np.ndarray) -> np.ndarray:
+    """Return an independent C-order array backed by immutable bytes."""
+
+    copied = np.frombuffer(values.tobytes(order="C"), dtype=values.dtype)
+    return copied.reshape(values.shape)

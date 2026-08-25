@@ -103,6 +103,21 @@ The primary result is a market-regime contrast conditional on the model's
 structural equations. It is not an observational regression adjustment and not
 an experimentally identified effect in human participants.
 
+The paired runner now fails before treatment if independently created synthetic
+worlds differ anywhere in their reachable initial state, retains that exact
+balance assessment, and carries player income as a pre-treatment/exogenous
+negative-control difference that invalidates a run when nonzero. Ordered
+player, firm, and jurisdiction identifiers guard positional subtraction. The
+balance walk rejects mutable objects or overlapping NumPy buffers shared across
+branches even at different graph paths, and it compares within-branch mutable
+alias topology. Shared immutable inputs remain permitted; explicit profile
+bundles receive branch-local copies of their mutable jurisdiction templates.
+The policy batch likewise rejects drift in its immutable pre-treatment result
+fields, exact scenario attribution, or shared cohort state. Null-branch and
+planted-effect recovery tests are structural software falsification checks only.
+They cannot establish empirical balance, prove that an observed negative control
+is valid, or rule out unmeasured confounding and misspecification.
+
 ### Interference is intrinsic
 
 Rankings, firm responses, switching, collaboration, collusion, and enforcement
@@ -208,10 +223,11 @@ accidental omniscience in the current code.
 
 It does not prove that the information environment is realistic. Signal noise,
 delay, precision, costs, complaint formation, and learning rules are illustrative.
-The model has no calibrated social network, advertising-auction data, app-store
-recommendation system, platform-level enforcement, press cycle, or household
-communication process. “Information has a cost” is implemented structurally,
-not estimated empirically.
+The only household communication slice is a synthetic, lagged, leave-one-out
+signal of co-players' current games. The model has no calibrated or general
+social network, advertising-auction data, app-store recommendation system,
+platform-level enforcement, or press cycle. “Information has a cost” and the
+household-peer channel are implemented structurally, not estimated empirically.
 
 ## Market and gameplay abstraction
 
@@ -221,12 +237,13 @@ monetization is a vector of abstract mechanism intensities. Content search is
 exact over the configured candidate grid, but the grid and utility function are
 model choices.
 
-Player game discovery considers the titles represented in the model and retains
-all known alternatives within each computation block. It does not reproduce a
-global app store, organic search, influencers, device constraints, regional
-availability, churn surveys, or genre-specific preferences. Firms, games, and
-states are few relative to the real market, and firm home jurisdictions are not
-empirical ownership locations.
+Player game discovery considers public signals and the bounded household-peer
+channel, then retains all known alternatives within each computation block. It
+does not reproduce a global app store, organic search, broader friendship or
+status networks, influencers, device constraints, regional availability, churn
+surveys, or genre-specific preferences. Firms, games, and states are few
+relative to the real market, and firm home jurisdictions are not empirical
+ownership locations.
 
 Collaboration, collusion, acquisition, research, compliance, and evasion are
 utility-driven actions, but their feasible sets and payoffs are stylized. The
@@ -235,12 +252,14 @@ use the same decision process.
 
 ## Technical and computational limitations
 
-The player step evaluates all represented alternatives and has time complexity
-`O(P·G)`. Chunking reduces temporary memory to approximately `O(B·G + P)` but
-does not reduce the exact alternative set. Popularity and accounting are roughly
-`O(P + G)`, while audit selection includes sorting firms. Content candidate
-enumeration is exponential in the number of stat dimensions; the configuration
-therefore caps that dimension at 12.
+The player step evaluates all represented alternatives. Sparse household-peer
+indexing and lookup make game choice
+`O(P log P + P·G·log K_peer)`, where `K_peer <= P` is the number of observed
+household/game pairs. Chunking reduces temporary memory to approximately
+`O(B·G + P)` but does not reduce the exact alternative set. Popularity and
+accounting are roughly `O(P + G)`, while audit selection includes sorting firms.
+Content candidate enumeration is exponential in the number of stat dimensions;
+the configuration therefore caps that dimension at 12.
 
 The market non-campaign runner deliberately rejects more than 32 cycles or
 5,000 players. `smoke.toml` is within that guard. The policy prototype has its
@@ -255,10 +274,11 @@ boundaries, but they are not a proof against every possible extreme custom
 configuration.
 
 Exact reproducibility is conditional on the same code, configuration, source
-files, Python/NumPy behavior, and platform-level numerical behavior. The project
-specifies minimum dependency versions rather than a complete immutable
-environment lock. Runtime duration is not deterministic and is not part of the
-causal result.
+files, interpreter, and platform-level numerical behavior. The dependency graph,
+build backend, and CI installer are locked, but the operating-system image,
+interpreter binary, external source publications, and source bundles are not
+signed immutable artifacts. Runtime duration is not deterministic and is not
+part of the causal result.
 
 ## Source and reproducibility limitations
 

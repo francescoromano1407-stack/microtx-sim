@@ -270,6 +270,48 @@ These conditions support causal comparisons inside the program. They do not
 solve external validity, empirical calibration, structural misspecification,
 measurement error, omitted constructs, or uncertainty about real institutions.
 
+## Synthetic structural falsification checks
+
+The strategic paired-world runner assesses the complete reachable initial
+state of both independently created worlds before either intervention is
+applied. The retained typed balance report records every checked path and any
+exact value, type, shape, or mutable-alias mismatch. Shared mutable branch state
+is forbidden even when the two references occur at different graph paths.
+Mutable alias topology must also match within each branch, including memory
+overlap between distinct NumPy views. Immutable configuration and profile
+metadata may be shared, but mutable `ProfileBundle.state_agents` templates may
+not; the paired runner clones those templates separately when an explicit
+profile bundle is supplied. A mismatch fails the run before treatment or
+simulation. Exact equality, rather than a statistical standardized-difference
+threshold, is the right software contract because these branches are intended
+to be independently mutable copies of one synthetic market.
+
+Paired outcomes must have the same tick, expected array types and ranks, and
+exactly equal ordered player, firm, and jurisdiction identifiers before
+subtraction. Integer differences are checked before conversion to `int64`, so a
+contrast cannot wrap silently. Player income is retained as an explicit
+pre-treatment/exogenous negative-control difference. It must remain zero in
+valid runs because none of the declared interventions changes the synthetic
+income input; a nonzero difference raises a typed validation error.
+
+The policy batch separately requires every same-seed branch to retain identical
+player IDs, minor status, age, jurisdiction, baseline vulnerability, and
+disposable budget with their canonical shapes and dtypes, as well as the exact
+declared scenario, seed, horizon, and player count. It retains independently
+owned read-only copies of every result and nested harm array, recomputes all four
+reported effects from each seed's safe reference, and rejects invalid identity,
+age, jurisdiction, vulnerability, budget, spending, activity, or harm domains.
+The shared player-and-life cohort digest is checked after every branch so a
+branch cannot contaminate later counterfactuals. Tests exercise independently
+executed null branches, deliberately injected value, alias, and shared-state
+imbalance, a non-null intervention with a zero income negative control,
+rejection of a nonzero control, and exact recovery of planted synthetic outcome
+shifts.
+
+These checks can falsify branch isolation, alignment, subtraction, and estimator
+code. Passing them does not demonstrate empirical covariate balance, validate a
+negative-control assumption in observed data, or identify a real-world effect.
+
 ## Sensitivity design
 
 The implemented one-at-a-time sensitivity runner varies declared mechanism,

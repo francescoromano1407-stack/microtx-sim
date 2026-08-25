@@ -331,6 +331,388 @@ class PolicyBatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "effect_vs_safe"):
             PolicyBatchSpec(reference_scenario=ScenarioId.BASELINE_F2P)
 
+    def test_batch_rejects_drift_in_every_pretreatment_result_field(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(seeds=(31,), days=0, player_count=4),
+            country_profiles=PROFILE,
+        )
+        record = batch.records[0]
+        field_names = (
+            "player_ids",
+            "is_minor",
+            "age_years",
+            "jurisdiction",
+            "baseline_vulnerability",
+            "disposable_budget_cents",
+        )
+
+        for name in field_names:
+            with self.subTest(field=name, drift="value"):
+                changed = getattr(record.result, name).copy()
+                if changed.dtype == np.bool_:
+                    changed[0] = not bool(changed[0])
+                else:
+                    changed[0] += 1
+                changed_result = replace(record.result, **{name: changed})
+                changed_records = list(batch.records)
+                changed_records[0] = replace(record, result=changed_result)
+                with self.assertRaisesRegex(ValueError, name):
+                    replace(batch, records=tuple(changed_records))
+
+        changed_dtype = record.result.player_ids.astype(np.int32)
+        changed_result = replace(record.result, player_ids=changed_dtype)
+        changed_records = list(batch.records)
+        changed_records[0] = replace(record, result=changed_result)
+        with self.assertRaisesRegex(ValueError, "player_ids"):
+            replace(batch, records=tuple(changed_records))
+
+        shared_dtype_drift = tuple(
+            replace(
+                item,
+                result=replace(
+                    item.result,
+                    player_ids=item.result.player_ids.astype(np.int32),
+                ),
+            )
+            for item in batch.records
+        )
+        with self.assertRaisesRegex(ValueError, "dtype int64"):
+            replace(batch, records=shared_dtype_drift)
+
+        rank_drift = record.result.player_ids.reshape(2, 2)
+        changed_result = replace(record.result, player_ids=rank_drift)
+        changed_records = list(batch.records)
+        changed_records[0] = replace(record, result=changed_result)
+        with self.assertRaisesRegex(ValueError, r"shape \(4,\)"):
+            replace(batch, records=tuple(changed_records))
+
+        changed_scenario = replace(
+            record.result.scenario,
+            fixed_access_price_cents=(
+                record.result.scenario.fixed_access_price_cents + 1
+            ),
+        )
+        changed_result = replace(record.result, scenario=changed_scenario)
+        changed_records = list(batch.records)
+        changed_records[0] = replace(record, result=changed_result)
+        with self.assertRaisesRegex(ValueError, "exactly match the batch spec"):
+            replace(batch, records=tuple(changed_records))
+
+        changed_days = replace(record.result, days=record.result.days + 1)
+        changed_records = list(batch.records)
+        changed_records[0] = replace(record, result=changed_days)
+        with self.assertRaisesRegex(ValueError, "days"):
+            replace(batch, records=tuple(changed_records))
+
+        wrong_count_spec = replace(
+            batch.spec,
+            player_count=batch.spec.player_count + 1,
+        )
+        with self.assertRaisesRegex(ValueError, "player count"):
+            replace(batch, spec=wrong_count_spec)
+
+    def test_batch_rejects_shared_invalid_pretreatment_domains(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(seeds=(37,), days=0, player_count=4),
+            country_profiles=PROFILE,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "country_profiles are required for non-empty policy cohorts",
+        ):
+            replace(
+                batch,
+                country_profiles=(),
+                profile_input_lineage=None,
+            )
+
+        def replace_field_in_every_record(
+            field_name: str,
+            values: np.ndarray,
+        ) -> tuple:
+            return tuple(
+                replace(
+                    record,
+                    result=replace(
+                        record.result,
+                        **{field_name: values.copy()},
+                    ),
+                )
+                for record in batch.records
+            )
+
+        first = batch.records[0].result
+        invalid_cases: list[tuple[str, np.ndarray, str]] = []
+
+        duplicate_ids = first.player_ids.copy()
+        duplicate_ids[1] = duplicate_ids[0]
+        invalid_cases.append(("player_ids", duplicate_ids, "unique"))
+
+        negative_ids = first.player_ids.copy()
+        negative_ids[0] = -1
+        invalid_cases.append(("player_ids", negative_ids, "non-negative"))
+
+        negative_age = first.age_years.copy()
+        negative_age[0] = -1
+        invalid_cases.append(("age_years", negative_age, "cannot be negative"))
+
+        negative_jurisdiction = first.jurisdiction.copy()
+        negative_jurisdiction[0] = -1
+        invalid_cases.append(
+            ("jurisdiction", negative_jurisdiction, "unknown code")
+        )
+
+        unknown_jurisdiction = first.jurisdiction.copy()
+        unknown_jurisdiction[0] = len(PROFILE)
+        invalid_cases.append(
+            ("jurisdiction", unknown_jurisdiction, "unknown code")
+        )
+
+        for invalid_value in (np.inf, -0.01, 1.01):
+            vulnerability = first.baseline_vulnerability.copy()
+            vulnerability[0] = invalid_value
+            invalid_cases.append(
+                (
+                    "baseline_vulnerability",
+                    vulnerability,
+                    r"finite and in \[0, 1\]",
+                )
+            )
+
+        negative_budget = first.disposable_budget_cents.copy()
+        negative_budget[0] = -1
+        invalid_cases.append(
+            ("disposable_budget_cents", negative_budget, "cannot be negative")
+        )
+
+        inconsistent_minor = first.is_minor.copy()
+        inconsistent_minor[0] = not bool(inconsistent_minor[0])
+        invalid_cases.append(("is_minor", inconsistent_minor, "inconsistent"))
+
+        for field_name, values, message in invalid_cases:
+            with self.subTest(field=field_name, message=message):
+                records = replace_field_in_every_record(field_name, values)
+                with self.assertRaisesRegex(ValueError, message):
+                    replace(batch, records=records)
+
+    def test_batch_recomputes_every_retained_effect_scalar(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(seeds=(39,), days=0, player_count=4),
+            country_profiles=PROFILE,
+        )
+        record = batch.records[0]
+
+        with self.assertRaisesRegex(ValueError, "must be finite"):
+            replace(
+                batch,
+                records=(
+                    replace(record, mean_harm_effect_vs_safe=float("nan")),
+                    *batch.records[1:],
+                ),
+            )
+        with self.assertRaisesRegex(TypeError, "built-in float"):
+            replace(
+                batch,
+                records=(
+                    replace(record, mean_harm_effect_vs_safe=np.float64(0.0)),
+                    *batch.records[1:],
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "does not match paired results"):
+            replace(
+                batch,
+                records=(
+                    replace(
+                        record,
+                        mean_harm_effect_vs_safe=(
+                            record.mean_harm_effect_vs_safe + 0.25
+                        ),
+                    ),
+                    *batch.records[1:],
+                ),
+            )
+
+        integer_fields = (
+            "total_spending_effect_vs_safe_cents",
+            "harmful_spending_effect_vs_safe_cents",
+            "total_revenue_effect_vs_safe_cents",
+        )
+        for name in integer_fields:
+            with self.subTest(field=name, failure="type"):
+                changed = replace(record, **{name: np.int64(0)})
+                with self.assertRaisesRegex(TypeError, "built-in integer"):
+                    replace(
+                        batch,
+                        records=(changed, *batch.records[1:]),
+                    )
+            with self.subTest(field=name, failure="value"):
+                changed = replace(record, **{name: getattr(record, name) + 1})
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "does not match paired results",
+                ):
+                    replace(
+                        batch,
+                        records=(changed, *batch.records[1:]),
+                    )
+
+    def test_batch_owns_read_only_copies_of_all_result_arrays(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(seeds=(43,), days=0, player_count=4),
+            country_profiles=PROFILE,
+        )
+        result = batch.records[0].result
+        top_level_arrays = (
+            "player_ids",
+            "is_minor",
+            "age_years",
+            "jurisdiction",
+            "baseline_vulnerability",
+            "disposable_budget_cents",
+            "spending_cents",
+            "composite_harm",
+            "enjoyment",
+            "high_risk",
+            "action_minutes",
+        )
+        for name in top_level_arrays:
+            with self.subTest(field=name):
+                values = getattr(result, name)
+                self.assertFalse(values.flags.writeable)
+                with self.assertRaises(ValueError):
+                    values.setflags(write=True)
+        for descriptor in fields(result.harm):
+            with self.subTest(harm_field=descriptor.name):
+                values = getattr(result.harm, descriptor.name)
+                self.assertFalse(values.flags.writeable)
+                with self.assertRaises(ValueError):
+                    values.setflags(write=True)
+
+        source_ids = result.player_ids.copy()
+        source_result = replace(result, player_ids=source_ids)
+        source_record = replace(batch.records[0], result=source_result)
+        retained = replace(
+            batch,
+            records=(source_record, *batch.records[1:]),
+        )
+        source_ids[0] = 999
+        self.assertNotEqual(int(retained.records[0].result.player_ids[0]), 999)
+        with self.assertRaises(ValueError):
+            retained.records[0].result.player_ids[0] = 999
+
+    def test_batch_rejects_shared_invalid_outcome_arrays(self) -> None:
+        batch = run_policy_batch(
+            PolicyBatchSpec(seeds=(47,), days=0, player_count=4),
+            country_profiles=PROFILE,
+        )
+
+        def replace_result_in_every_record(**changes) -> tuple:
+            return tuple(
+                replace(
+                    record,
+                    result=replace(record.result, **changes),
+                )
+                for record in batch.records
+            )
+
+        result = batch.records[0].result
+        cases = (
+            (
+                {"spending_cents": result.spending_cents.astype(np.int32)},
+                "spending_cents must have dtype int64",
+            ),
+            (
+                {
+                    "spending_cents": np.full(
+                        result.spending_cents.shape,
+                        -1,
+                        dtype=np.int64,
+                    )
+                },
+                "spending_cents cannot be negative",
+            ),
+            (
+                {
+                    "spending_cents": (
+                        result.disposable_budget_cents + 1
+                    ).astype(np.int64)
+                },
+                "cannot exceed disposable budget",
+            ),
+            (
+                {"high_risk": result.high_risk.astype(np.int8)},
+                "high_risk must have dtype bool",
+            ),
+            (
+                {"action_minutes": result.action_minutes.astype(np.int32)},
+                "action_minutes must have dtype int64",
+            ),
+            (
+                {
+                    "action_minutes": np.full(
+                        result.action_minutes.shape,
+                        -1,
+                        dtype=np.int64,
+                    )
+                },
+                "action_minutes cannot be negative",
+            ),
+        )
+        for changes, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    replace(
+                        batch,
+                        records=replace_result_in_every_record(**changes),
+                    )
+
+        forged_composite = np.full(
+            result.composite_harm.shape,
+            0.25,
+            dtype=np.float64,
+        )
+        with self.assertRaisesRegex(ValueError, "does not match component"):
+            replace(
+                batch,
+                records=replace_result_in_every_record(
+                    composite_harm=forged_composite,
+                ),
+            )
+
+        component_scores = result.harm.component_scores.copy()
+        component_scores[:, 0] = 0.5
+        forged_harm = replace(result.harm, component_scores=component_scores)
+        with self.assertRaisesRegex(ValueError, "does not match component"):
+            replace(
+                batch,
+                records=replace_result_in_every_record(harm=forged_harm),
+            )
+
+    def test_branch_cannot_mutate_the_shared_pre_treatment_cohort(self) -> None:
+        def mutating_runner(players, life, scenario, **kwargs):
+            result = run_policy_scenario(
+                players,
+                life,
+                scenario,
+                **kwargs,
+            )
+            life.wellbeing[0] += 0.01
+            return result
+
+        with patch(
+            "microtx_sim.causal.batch.run_policy_scenario",
+            side_effect=mutating_runner,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "mutated the shared pre-treatment cohort",
+            ):
+                run_policy_batch(
+                    PolicyBatchSpec(seeds=(41,), days=0, player_count=4),
+                    country_profiles=PROFILE,
+                )
+
     def test_catalogue_contains_exactly_seven_explicit_scenarios(self) -> None:
         scenarios = required_scenarios()
         self.assertEqual(tuple(item.scenario_id for item in scenarios), tuple(ScenarioId))
