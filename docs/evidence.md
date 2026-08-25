@@ -104,6 +104,12 @@ spending distributions, deprivation, consumption propensity, and programme
 rates/caps—remain contract-only. Their presence does not calibrate current
 consumption, harm, company, audit, or subsidy outcomes.
 
+`behavior.household_peer_influence` is runtime-consumed but has no empirical
+source contract. It is a synthetic sensitivity-only coefficient over a
+structurally observed, lagged household co-player signal. It must not be
+promoted to a calibrated network effect without external identification and
+validation.
+
 ## Units
 
 Source currencies remain nominal local units with explicit exponents. GBP and

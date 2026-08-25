@@ -80,6 +80,9 @@ class World:
                 essential_spend_share=config.behavior.essential_spend_share,
                 game_choice_temperature=config.behavior.game_choice_temperature,
                 switching_cost=config.behavior.switching_cost,
+                household_peer_influence=(
+                    config.behavior.household_peer_influence
+                ),
                 base_purchase_logit=config.behavior.base_purchase_logit,
                 harm_decay=config.behavior.harm_decay,
             )

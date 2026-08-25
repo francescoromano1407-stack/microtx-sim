@@ -27,6 +27,7 @@ research_noise = 0.035
 [behavior]
 game_choice_temperature = 0.24
 switching_cost = 0.12
+household_peer_influence = 0.35
 base_purchase_logit = -4.2
 unauthorised_card_hazard_per_exposed_minor_day = 0.0000005
 essential_spend_share = 0.68

@@ -5,6 +5,8 @@ import unittest
 
 import numpy as np
 
+from microtx_sim.agents.players import TRAIT_NAMES
+from microtx_sim.consumers.logic import _build_household_peer_index
 from microtx_sim.core.ledger import Ledger
 from microtx_sim.domain.games import GameTable
 from microtx_sim.rng import CounterRNG
@@ -87,6 +89,155 @@ def _prepare_exposed_minors(
 
 
 class PlayerDynamicsTests(unittest.TestCase):
+    def test_household_peer_index_is_leave_one_out_and_order_invariant(self) -> None:
+        game_ids = np.array([41, 7], dtype=np.int64)
+        household_ids = np.array(
+            [900, 900, 42, 42, 42, 1_000_000], dtype=np.int64
+        )
+        previous_games = np.array([41, 7, 41, 41, -1, 7], dtype=np.int32)
+        expected = np.array(
+            [
+                [0.0, 1.0],
+                [1.0, 0.0],
+                [0.5, 0.0],
+                [0.5, 0.0],
+                [1.0, 0.0],
+                [0.0, 0.0],
+            ],
+            dtype=np.float64,
+        )
+
+        index = _build_household_peer_index(
+            household_ids, previous_games, game_ids
+        )
+        np.testing.assert_array_equal(index.share(0, 6, 2), expected)
+
+        permutation = np.array([5, 2, 0, 4, 1, 3], dtype=np.int64)
+        permuted = _build_household_peer_index(
+            household_ids[permutation],
+            previous_games[permutation],
+            game_ids,
+        ).share(0, 6, 2)
+        restored = np.empty_like(permuted)
+        restored[permutation] = permuted
+        np.testing.assert_array_equal(restored, expected)
+
+    def test_household_peers_add_a_socially_weighted_discovery_channel(self) -> None:
+        social_index = TRAIT_NAMES.index("social_susceptibility")
+
+        def players_with_social_susceptibility(value: float):
+            players = initialize_player_table(
+                2, (_profile(),), CounterRNG(700), tick=1
+            )
+            players.household_id[:] = 700_001
+            players.household_liquidity_cents[:] = 50_000
+            players.current_game[:] = np.array([0, 1], dtype=np.int32)
+            players.awareness[:] = 0.0
+            players.traits[:, social_index] = value
+            return players
+
+        def peer_games() -> GameTable:
+            games = _games(2)
+            games.public_score[:] = 0.5
+            games.quality[:] = 0.5
+            games.novelty[:] = 0.5
+            games.competitive_integrity[:] = 0.5
+            games.monetisation[:] = 0.3
+            games.price_cents[:] = 199
+            return games
+
+        baseline = step_player_dynamics(
+            players_with_social_susceptibility(1.0),
+            peer_games(),
+            CounterRNG(123),
+            Ledger(),
+            tick=3,
+            config=PlayerDynamicsConfig(
+                base_unauthorised_card_hazard_per_exposed_minor_day=0.0,
+                household_peer_influence=0.0,
+                game_choice_temperature=1e-6,
+            ),
+        )
+        influenced = step_player_dynamics(
+            players_with_social_susceptibility(1.0),
+            peer_games(),
+            CounterRNG(123),
+            Ledger(),
+            tick=3,
+            config=PlayerDynamicsConfig(
+                base_unauthorised_card_hazard_per_exposed_minor_day=0.0,
+                household_peer_influence=1.0,
+                game_choice_temperature=1e-6,
+            ),
+        )
+        unsusceptible = step_player_dynamics(
+            players_with_social_susceptibility(0.0),
+            peer_games(),
+            CounterRNG(123),
+            Ledger(),
+            tick=3,
+            config=PlayerDynamicsConfig(
+                base_unauthorised_card_hazard_per_exposed_minor_day=0.0,
+                household_peer_influence=1.0,
+                game_choice_temperature=1e-6,
+            ),
+        )
+
+        self.assertEqual(baseline.counters.known_player_game_pairs, 2)
+        self.assertEqual(influenced.counters.known_player_game_pairs, 4)
+        self.assertEqual(unsusceptible.counters.known_player_game_pairs, 2)
+        np.testing.assert_array_equal(
+            baseline.chosen_game, np.array([0, 1], dtype=np.int32)
+        )
+        np.testing.assert_array_equal(
+            influenced.chosen_game, np.array([1, 0], dtype=np.int32)
+        )
+        np.testing.assert_array_equal(unsusceptible.chosen_game, baseline.chosen_game)
+
+    def test_zero_peer_weight_is_exactly_independent_of_household_membership(
+        self,
+    ) -> None:
+        first_players = initialize_player_table(
+            240, (_profile(),), CounterRNG(440), tick=2
+        )
+        second_players = initialize_player_table(
+            240, (_profile(),), CounterRNG(440), tick=2
+        )
+        previous_games = np.arange(240, dtype=np.int32) % 4
+        first_players.current_game[:] = previous_games
+        second_players.current_game[:] = previous_games
+        second_players.household_id[:] = np.arange(240, dtype=np.int64) + 10_000
+        config = PlayerDynamicsConfig(
+            base_unauthorised_card_hazard_per_exposed_minor_day=0.0,
+            household_peer_influence=0.0,
+        )
+        first_ledger = Ledger()
+        second_ledger = Ledger()
+        first = step_player_dynamics(
+            first_players,
+            _games(4),
+            CounterRNG(992),
+            first_ledger,
+            tick=5,
+            config=config,
+        )
+        second = step_player_dynamics(
+            second_players,
+            _games(4),
+            CounterRNG(992),
+            second_ledger,
+            tick=5,
+            config=config,
+        )
+        for name in StepResult.__dataclass_fields__:
+            first_value = getattr(first, name)
+            second_value = getattr(second, name)
+            if isinstance(first_value, np.ndarray):
+                np.testing.assert_array_equal(first_value, second_value)
+            else:
+                self.assertEqual(first_value, second_value)
+        self.assertEqual(first_ledger.entries, second_ledger.entries)
+
     def test_step_reconciles_money_rank_and_separate_harm_columns(self) -> None:
         players = initialize_player_table(1_200, (_profile(),), CounterRNG(73))
         games = _games()
@@ -260,8 +411,12 @@ class PlayerDynamicsTests(unittest.TestCase):
         second_games = _games(6)
         first_ledger = Ledger()
         second_ledger = Ledger()
+        previous_games = np.arange(777, dtype=np.int32) % 6
+        first_players.current_game[:] = previous_games
+        second_players.current_game[:] = previous_games
         base = PlayerDynamicsConfig(
-            base_unauthorised_card_hazard_per_exposed_minor_day=0.0
+            base_unauthorised_card_hazard_per_exposed_minor_day=0.0,
+            household_peer_influence=0.75,
         )
 
         first = step_player_dynamics(

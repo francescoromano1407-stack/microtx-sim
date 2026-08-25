@@ -80,6 +80,32 @@ class ConfigAndDomainTests(unittest.TestCase):
         ):
             invalid.validate()
 
+    def test_household_peer_influence_is_explicit_and_bounded(self) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        self.assertEqual(config.behavior.household_peer_influence, 0.35)
+        for value in (0.0, 1.0):
+            replace(
+                config,
+                behavior=replace(
+                    config.behavior,
+                    household_peer_influence=value,
+                ),
+            ).validate()
+        for value in (-0.01, 1.01, float("nan")):
+            with self.subTest(value=value):
+                invalid = replace(
+                    config,
+                    behavior=replace(
+                        config.behavior,
+                        household_peer_influence=value,
+                    ),
+                )
+                with self.assertRaisesRegex(
+                    ConfigurationError,
+                    "household_peer_influence",
+                ):
+                    invalid.validate()
+
     def test_ledger_balances_and_rejects_duplicate_reference(self) -> None:
         ledger = Ledger()
         ledger.transfer(

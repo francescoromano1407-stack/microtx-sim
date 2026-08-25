@@ -235,6 +235,7 @@ charged through company accounting; it does not grant access to `World`.
 | --- | --- | --- |
 | `game_choice_temperature` | float in (0, 1] | Scale of consumer choice sensitivity. |
 | `switching_cost` | float in [0, 1] | Utility penalty for leaving the current game. |
+| `household_peer_influence` | float in [0, 1] | Synthetic sensitivity coefficient for lagged, leave-one-out household-peer discovery and game-choice utility; it is not an estimated network effect. |
 | `base_purchase_logit` | finite float | Baseline purchase propensity before heterogeneous covariates. |
 | `unauthorised_card_hazard_per_exposed_minor_day` | probability in [0, 1] | Daily hazard conditional on all minor exposure conditions, not population prevalence. |
 | `essential_spend_share` | fraction in [0, 1] | Share removed when converting adult monthly disposable income to periodic liquid inflow. |
@@ -244,7 +245,9 @@ charged through company accounting; it does not grant access to `World`.
 The unauthorised-card hazard and essential-spend share also have shared evidence
 contracts. `World.create()` requires exact equality between the profile contract
 and run-level value, then uses the run-level value. This makes divergence
-explicit.
+explicit. `household_peer_influence` has no empirical contract: the configured
+value is runtime-consumed, synthetic, and sensitivity-only. A value of zero
+recovers the pre-peer choice path exactly.
 
 ### `[regulation]`
 

@@ -173,7 +173,7 @@ use the domain packages above so ownership remains visible in import paths.
 
 | Actor or layer | Directly owns/knows | Receives imperfectly | Must not receive |
 | --- | --- | --- | --- |
-| Consumer/household | Own age, motives, traits, resources, consent/supervision, current game, time obligations, commitments, habit, and wellbeing | Public rank/score, disclosed mechanics and price, discovery, noisy personal quality | True popularity, other players' vulnerability/welfare, firm or regulator private state |
+| Consumer/household | Own age, motives, traits, resources, consent/supervision, current game, time obligations, commitments, habit, and wellbeing | Public rank/score, disclosed mechanics and price, discovery, lagged game use by simulated co-players in the same household, noisy personal quality | True popularity, other players' vulnerability/welfare, firm or regulator private state |
 | Company | Cash, own portfolio, investments, costs, collusive trust | Own telemetry estimates, released rankings, demand estimates, expected audits/fines/subsidies, purchased research | Player-level latent vulnerability/harm, true popularity, actual audit selection, competitors' private state |
 | State/regulator | Treasury, budgets, capacity, rules, policy priorities, accumulated audit beliefs | Complaints, reported minor harm, reported spending anomalies, public detections, audit evidence, verified subsidy dossier | Researcher's latent harm mean, latent unsafe-revenue share, undetected compliance truth before audit |
 | Public market | Published score and rank | Delayed source data plus noise and promotion pressure | The current latent ranking snapshot |
@@ -219,6 +219,14 @@ Traits are sampled with correlations and motives overlap. Age and income affect
 resources and behaviour continuously. The unauthorised-card event is possible
 only for an exposed minor lacking consent, with stored-payment access and low
 supervision; the event then remains stochastic and resource-capped.
+
+The strategic `World` also constructs a pre-tick, leave-one-out household-peer
+game-use signal. Sparse household/game counts are indexed independently of raw
+identifier values, and only block-local player-by-game shares are materialised.
+A separate counter-RNG field governs peer discovery; social susceptibility and
+the explicit synthetic `household_peer_influence` coefficient scale both that
+channel and peer utility. This is a bounded household-network prototype, not a
+calibrated social graph or household communication model.
 
 ### Welfare decision and transition boundary
 
@@ -366,7 +374,7 @@ actions, and `Q = 1440 / step_minutes` welfare decisions per day.
 
 | Operation | Time | Temporary memory | Notes |
 | --- | ---: | ---: | --- |
-| Exact consumer game choice | `O(P·G)` | `O(B·G + P)` | Every known alternative is evaluated. |
+| Household peer indexing and exact consumer game choice | `O(P log P + P·G)` | `O(B·G + P)` | Sparse household/game pairs are indexed once per tick; every known alternative is evaluated. |
 | Activity, purchase, harm, aggregation | `O(P·G + Σ n_g log n_g)` as currently grouped | `O(P + G)` | Repeated per-game masks are exact but leave room for exact grouped optimisation. |
 | Welfare daily action process | `O(P·A·Q)` | `O(P·A)` | Every action is evaluated at every time step. |
 | Welfare harm decomposition | `O(P)` | `O(P)` | Six scores plus displaced-time and monetary-proxy columns. |

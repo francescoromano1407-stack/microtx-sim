@@ -44,6 +44,7 @@ class InformationConfig:
 class BehaviorConfig:
     game_choice_temperature: float
     switching_cost: float
+    household_peer_influence: float
     base_purchase_logit: float
     unauthorised_card_hazard_per_exposed_minor_day: float
     essential_spend_share: float
@@ -146,6 +147,7 @@ class SimulationConfig:
             raise ConfigurationError("base_purchase_logit must be finite")
         for name, value in {
             "switching_cost": self.behavior.switching_cost,
+            "household_peer_influence": self.behavior.household_peer_influence,
             "unauthorised_card_hazard_per_exposed_minor_day": (
                 self.behavior.unauthorised_card_hazard_per_exposed_minor_day
             ),

@@ -103,6 +103,13 @@ These tasks block scientific interpretation.
    social or household networks. Discovery, imitation, and competitive status
    can then generate network spillovers instead of relying only on aggregate
    rankings.
+
+   A first synthetic slice is now wired into the strategic `World`: lagged
+   leave-one-out game use by other simulated players in the same household can
+   affect discovery and utility through an explicit sensitivity-only
+   coefficient. This does not yet provide simultaneous multi-game portfolios,
+   a general social graph, calibrated peer effects, or competitive-status
+   transmission, so the roadmap item remains open.
 2. Model refunds, chargebacks, complaints, parental disputes, account suspension,
    and remediation after unauthorised spending.
 3. Add advertising, subscriptions, battle passes, direct cosmetics, app-store

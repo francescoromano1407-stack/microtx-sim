@@ -2,8 +2,9 @@
 
 This module is deliberately a system over passive tables, not an agent policy
 with access to a ``World`` object.  Game choice sees public ranking signals,
-published prices/monetisation, and a player's current-game experience only.
-Counter-based random fields keep results independent of population chunking.
+published prices/monetisation, a player's current-game experience, and an
+explicit lagged household-peer signal. Counter-based random fields keep results
+independent of population chunking.
 
 All monetary columns consumed here are *simulation purchasing-power cents*.
 They are comparable integer minor units, not nominal GBP, KRW, JPY, or EUR.
@@ -36,6 +37,9 @@ Int64Array = npt.NDArray[np.int64]
 Float64Array = npt.NDArray[np.float64]
 
 _STREAM_DISCOVERY: Final[str] = "player-dynamics:game-discovery"
+_STREAM_HOUSEHOLD_DISCOVERY: Final[str] = (
+    "player-dynamics:household-peer-discovery"
+)
 _STREAM_GAME_TASTE: Final[str] = "player-dynamics:game-taste"
 _STREAM_OUTSIDE_TASTE: Final[str] = "player-dynamics:outside-taste"
 _STREAM_ACTIVITY: Final[str] = "player-dynamics:activity"
@@ -59,7 +63,8 @@ class PlayerDynamicsConfig:
 
     The rare-card value is a daily hazard.  The default matches the explicit
     sensitivity-analysis prior in ``configs/jurisdictions.toml``; it is not a
-    prevalence estimate.
+    prevalence estimate. ``household_peer_influence`` is likewise a synthetic
+    sensitivity parameter, not an estimated network effect.
     """
 
     tick_days: int = 1
@@ -72,6 +77,7 @@ class PlayerDynamicsConfig:
     essential_spend_share: float = 0.68
     game_choice_temperature: float = 0.30
     switching_cost: float = 0.12
+    household_peer_influence: float = 0.0
     base_purchase_logit: float = -3.55
     harm_decay: float = 0.985
 
@@ -94,6 +100,7 @@ class PlayerDynamicsConfig:
             "unauthorised_household_fraction",
             "essential_spend_share",
             "switching_cost",
+            "household_peer_influence",
             "harm_decay",
         ):
             value = float(getattr(self, name))
@@ -245,6 +252,51 @@ class _PurchasePlan:
     game_unsafe_revenue: Int64Array
 
 
+@dataclass(frozen=True, slots=True)
+class _HouseholdPeerIndex:
+    """Sparse pre-tick household/game counts for block-local peer signals."""
+
+    household_rows: Int64Array
+    household_sizes: Int64Array
+    previous_game_rows: npt.NDArray[np.int32]
+    pair_keys: Int64Array
+    pair_counts: Int64Array
+
+    def share(self, start: int, stop: int, game_count: int) -> Float64Array:
+        """Return leave-one-out peer shares for one player block."""
+
+        block_households = self.household_rows[start:stop]
+        block_previous_games = self.previous_game_rows[start:stop]
+        block_size = stop - start
+        query_keys = (
+            block_households[:, None] * game_count
+            + np.arange(game_count, dtype=np.int64)[None, :]
+        )
+        locations = np.searchsorted(self.pair_keys, query_keys)
+        valid = locations < self.pair_keys.size
+        if self.pair_keys.size:
+            clipped = np.minimum(locations, self.pair_keys.size - 1)
+            valid &= self.pair_keys[clipped] == query_keys
+        else:
+            clipped = np.zeros_like(locations)
+        peer_counts = np.zeros((block_size, game_count), dtype=np.int64)
+        peer_counts[valid] = self.pair_counts[clipped[valid]]
+        has_game = block_previous_games >= 0
+        if np.any(has_game):
+            peer_counts[
+                np.flatnonzero(has_game), block_previous_games[has_game]
+            ] -= 1
+        peer_denominator = self.household_sizes[block_households] - 1
+        result = np.zeros((block_size, game_count), dtype=np.float64)
+        np.divide(
+            peer_counts,
+            peer_denominator[:, None],
+            out=result,
+            where=peer_denominator[:, None] > 0,
+        )
+        return result
+
+
 class PlayerDynamicsSystem:
     """Small state-free facade suitable for a simulation kernel."""
 
@@ -309,7 +361,7 @@ def step_player_dynamics(
 
     previous_game = players.current_game.copy()
     chosen_game, known_pairs = _choose_games_exact_blocked(
-        players, games, rng, tick, resolved
+        players, games, rng, tick, resolved, previous_game=previous_game
     )
     game_rows = _rows_for_game_ids(chosen_game, games.game_id)
     activity = _activity_and_competition(players, games, game_rows, rng, tick)
@@ -386,6 +438,8 @@ def _choose_games_exact_blocked(
     rng: CounterRNG,
     tick: int,
     config: PlayerDynamicsConfig,
+    *,
+    previous_game: npt.NDArray[np.int32],
 ) -> tuple[npt.NDArray[np.int32], int]:
     n_players = len(players)
     n_games = len(games.game_id)
@@ -410,12 +464,33 @@ def _choose_games_exact_blocked(
     power_sale = games.monetisation[:, MonetisationMechanism.POWER_SALE]
     social_pressure = games.monetisation[:, MonetisationMechanism.SOCIAL_PRESSURE]
 
+    peer_index: _HouseholdPeerIndex | None = None
+    if config.household_peer_influence > 0.0:
+        peer_index = _build_household_peer_index(
+            players.household_id,
+            previous_game,
+            game_ids,
+        )
+
     known_pairs = 0
     literacy_index = TRAIT_NAMES.index("financial_literacy")
+    social_susceptibility_index = TRAIT_NAMES.index("social_susceptibility")
     for start in range(0, n_players, config.chunk_size):
         stop = min(start + config.chunk_size, n_players)
         ids = players.player_id[start:stop, None]
         awareness = players.awareness[start:stop].astype(np.float64)[:, None]
+        peer_share_block = (
+            None
+            if peer_index is None
+            else peer_index.share(start, stop, n_games)
+        )
+        social_susceptibility = (
+            None
+            if peer_share_block is None
+            else players.traits[
+                start:stop, social_susceptibility_index
+            ].astype(np.float64)[:, None]
+        )
         discovery_probability = np.clip(
             0.015 + awareness * (0.12 + 0.85 * visibility[None, :]),
             0.0,
@@ -428,7 +503,23 @@ def _choose_games_exact_blocked(
             game_ids[None, :],
         )
         known = discovery_draw < discovery_probability
-        current = players.current_game[start:stop, None].astype(np.int64)
+        if peer_share_block is not None:
+            assert social_susceptibility is not None
+            peer_discovery_probability = np.clip(
+                config.household_peer_influence
+                * social_susceptibility
+                * peer_share_block,
+                0.0,
+                1.0,
+            )
+            peer_discovery_draw = rng.uniform(
+                ids,
+                tick,
+                _STREAM_HOUSEHOLD_DISCOVERY,
+                game_ids[None, :],
+            )
+            known |= peer_discovery_draw < peer_discovery_probability
+        current = previous_game[start:stop, None].astype(np.int64)
         known |= current == game_ids[None, :]
         known_pairs += int(np.count_nonzero(known))
 
@@ -466,6 +557,13 @@ def _choose_games_exact_blocked(
             - 0.20 * affordability
             + inertia
         )
+        if peer_share_block is not None:
+            assert social_susceptibility is not None
+            systematic += (
+                config.household_peer_influence
+                * social_susceptibility
+                * peer_share_block
+            )
         taste_uniform = np.clip(
             rng.uniform(ids, tick, _STREAM_GAME_TASTE, game_ids[None, :]),
             np.finfo(np.float64).tiny,
@@ -495,6 +593,40 @@ def _choose_games_exact_blocked(
         selected[plays] = game_ids[best_row[plays]]
         chosen[start:stop] = selected.astype(np.int32)
     return chosen, known_pairs
+
+
+def _build_household_peer_index(
+    household_id: npt.NDArray[np.int64],
+    previous_game: npt.NDArray[np.int32],
+    game_ids: Int64Array,
+) -> _HouseholdPeerIndex:
+    """Index sparse pre-tick household/game counts without using raw IDs as rows."""
+
+    if household_id.ndim != 1 or previous_game.shape != household_id.shape:
+        raise ValueError("household and previous-game columns must be aligned 1-D arrays")
+    game_count = game_ids.size
+    _, household_rows = np.unique(household_id, return_inverse=True)
+    household_rows = household_rows.astype(np.int64, copy=False)
+    household_sizes = np.bincount(household_rows).astype(np.int64, copy=False)
+    previous_game_rows = _rows_for_game_ids(previous_game, game_ids)
+    has_game = previous_game_rows >= 0
+    if (
+        household_sizes.size
+        and game_count > np.iinfo(np.int64).max // household_sizes.size
+    ):
+        raise OverflowError("household/game index exceeds int64")
+    pair_keys = (
+        household_rows[has_game] * game_count
+        + previous_game_rows[has_game].astype(np.int64)
+    )
+    unique_keys, pair_counts = np.unique(pair_keys, return_counts=True)
+    return _HouseholdPeerIndex(
+        household_rows=household_rows,
+        household_sizes=household_sizes,
+        previous_game_rows=previous_game_rows,
+        pair_keys=unique_keys.astype(np.int64, copy=False),
+        pair_counts=pair_counts.astype(np.int64, copy=False),
+    )
 
 
 def _activity_and_competition(

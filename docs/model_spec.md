@@ -210,11 +210,16 @@ memory, but no game is sampled or pruned.
 
 Choice utility combines public quality/rank, price burden, novelty, competitive
 integrity, monetisation pressure, motives, literacy, switching cost, awareness,
-personal experience, and a stable idiosyncratic shock. The selected game then
-produces activity, abstract matches, noisy personal quality, competitive rank,
-purchase consideration, package demand, resource allocation, and harm
-diagnostics. This path remains the behavioural component of the strategic market
-simulation.
+personal experience, a lagged household-peer signal, and a stable idiosyncratic
+shock. The peer signal is calculated from other simulated players in the same
+household and their pre-tick current games. It excludes the focal player, never
+crosses household boundaries, and affects both a separate peer-discovery draw
+and utility in proportion to social susceptibility. The configured coefficient
+is a synthetic sensitivity parameter; zero recovers the prior choice path. The
+selected game then produces activity, abstract matches, noisy personal quality,
+competitive rank, purchase consideration, package demand, resource allocation,
+and harm diagnostics. This path remains the behavioural component of the
+strategic market simulation.
 
 Purchases cannot exceed available permitted liquidity and credit. Financial
 mutations are preflighted before commit. Revenue is aggregated by game and firm
@@ -464,7 +469,7 @@ size, `D` content-stat dimensions, and `K` boost rates.
 
 | Operation | Time | Temporary memory |
 | --- | ---: | ---: |
-| Exact consumer game evaluation | `O(P·G)` | `O(B·G + P)` |
+| Household peer indexing and exact consumer game evaluation | `O(P log P + P·G)` | `O(B·G + P)` |
 | Welfare activity allocation | `O(P·A·T)` | `O(P·A)` |
 | Welfare harm decomposition | `O(P)` | `O(P)` |
 | Popularity and public ranking | `O(P + G log G)` | `O(P + G)` |
