@@ -1,0 +1,14 @@
+schema_version = 1
+bundle_id = "default-empty-rate-evidence"
+provenance_status = "ILLUSTRATIVE"
+source_registry_sha256 = "acd5093e72963d6d5906b0914512514bba7cea38fa048871130a9d5390bea870"
+artifact_root = "rate_artifacts"
+notes = "No immutable rate extracts or signature are registered; this empty bundle cannot support campaign comparability."
+artifacts = []
+bindings = []
+
+[signature]
+status = "MISSING"
+algorithm = "NONE"
+key_id = ""
+value = ""

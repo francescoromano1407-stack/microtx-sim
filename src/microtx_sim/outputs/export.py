@@ -20,9 +20,9 @@ from .plots import (
 )
 from .schema import (
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
-    OUTPUT_SCHEMA_VERSION,
     PLAYER_OUTCOME_COLUMNS,
     POLICY_ARTIFACT_FILENAMES,
+    stamp_manifest_schema,
 )
 from .writers import (
     preflight_csv_rows,
@@ -220,8 +220,10 @@ def export_policy_batch(
     # The initial manifest is written before charts so failures never describe
     # non-existent outputs.  Once all writes succeed, replace it with complete
     # file names, sizes, and hashes (excluding the self-referential manifest).
-    manifest["output_schema_version"] = OUTPUT_SCHEMA_VERSION
-    manifest["artifact_files"] = list(POLICY_ARTIFACT_FILENAMES)
+    manifest = stamp_manifest_schema(
+        manifest,
+        artifact_files=POLICY_ARTIFACT_FILENAMES,
+    )
     manifest["artifacts"] = {
         path.name: {
             "bytes": path.stat().st_size,

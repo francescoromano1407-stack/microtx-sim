@@ -119,9 +119,13 @@ those values are still fingerprinted exactly, but the manifest labels their
 evidence lineage `unregistered_custom_profiles` and leaves repository input-file
 hashes unset.
 
-The current output schema is `2.0`. It preserves v1 populated-table header order
-but expands empty seed, scenario-summary, and sensitivity headers to the full
-declared contracts.
+The current full output-bundle schema is `3.0`. Its CSV filenames and columns
+are unchanged from the frozen `2.0` exhaustive-column contract; version 3 adds
+an independently versioned and fingerprinted manifest envelope. Released
+schemas `1.0` and `2.0` remain documented legacy forms without that manifest
+version. Standalone sensitivity output uses its own two-file
+`standalone_sensitivity` profile at schema `1.0`, rather than claiming to be a
+13-artifact full bundle.
 
 Use a new or empty destination when the exact directory inventory matters. The
 exporter atomically replaces its own 13 filenames but does not delete unrelated

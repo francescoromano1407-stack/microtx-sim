@@ -23,10 +23,10 @@ from typing import Any
 from .schema import (
     ARTIFACT_FILENAMES,
     EPGC_FINANCING_COLUMNS,
-    OUTPUT_SCHEMA_VERSION,
     SCENARIO_SUMMARY_COLUMNS,
     SEED_RESULT_COLUMNS,
     SENSITIVITY_COLUMNS,
+    stamp_manifest_schema,
 )
 
 
@@ -108,26 +108,16 @@ def write_batch_artifacts(
 ) -> dict[str, Path]:
     """Write the five stable tabular/metadata artifacts for one batch.
 
-    ``manifest`` may contain arbitrary JSON-compatible metadata.  The writer
-    owns ``output_schema_version`` and ``artifact_files`` so a caller cannot
-    accidentally describe a different on-disk contract.
+    ``manifest`` may contain arbitrary JSON-compatible domain metadata.  The
+    writer owns the output version, manifest version/fingerprint, and artifact
+    filenames so a caller cannot describe a different on-disk contract.
     """
 
     destination = Path(output_dir)
-    if not isinstance(manifest, Mapping):
-        raise TypeError("manifest must be a mapping")
-    manifest_payload = dict(manifest)
-    declared_version = manifest_payload.get("output_schema_version")
-    if declared_version not in (None, OUTPUT_SCHEMA_VERSION):
-        raise ValueError(
-            "manifest output_schema_version conflicts with the writer schema"
-        )
-    declared_files = manifest_payload.get("artifact_files")
-    if declared_files not in (None, ARTIFACT_FILENAMES):
-        if declared_files != list(ARTIFACT_FILENAMES):
-            raise ValueError("manifest artifact_files conflicts with stable filenames")
-    manifest_payload["output_schema_version"] = OUTPUT_SCHEMA_VERSION
-    manifest_payload["artifact_files"] = list(ARTIFACT_FILENAMES)
+    manifest_payload = stamp_manifest_schema(
+        manifest,
+        artifact_files=ARTIFACT_FILENAMES,
+    )
 
     # Render every table and the manifest before touching the destination.  A
     # late-table schema/value error therefore cannot leave a partial bundle or

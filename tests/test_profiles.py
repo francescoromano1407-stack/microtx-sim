@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from datetime import date
 from fractions import Fraction
@@ -20,6 +21,7 @@ from microtx_sim.data.profiles import (
     SourceProvenance,
     load_country_profiles,
     load_profile_bundle,
+    monetary_structure_assessment_from_snapshot,
 )
 from microtx_sim.types import ProvenanceStatus
 
@@ -27,6 +29,7 @@ from microtx_sim.types import ProvenanceStatus
 ROOT = Path(__file__).resolve().parents[1]
 JURISDICTIONS = ROOT / "configs" / "jurisdictions.toml"
 SOURCES = ROOT / "data" / "provenance" / "sources.toml"
+FIXTURES = ROOT / "tests" / "fixtures"
 
 _TEST_ONLY_SOURCE_ID = "TEST_ONLY_MONETARY_CONVERSION"
 _TEST_ONLY_SOURCE_TOML = """
@@ -304,7 +307,7 @@ class ProfileLoadingTests(unittest.TestCase):
 
     def test_jurisdiction_schema_rejects_unknown_or_v2_fields_in_v1(self) -> None:
         original = JURISDICTIONS.read_text(encoding="utf-8")
-        unsupported = original.replace("schema_version = 2", "schema_version = 3", 1)
+        unsupported = original.replace("schema_version = 2", "schema_version = 4", 1)
         boolean_alias = original.replace(
             "schema_version = 2", "schema_version = true", 1
         )
@@ -347,6 +350,34 @@ class ProfileLoadingTests(unittest.TestCase):
                         ProfileValidationError,
                         "unsupported source schema_version",
                     ):
+                        load_profile_bundle(JURISDICTIONS, path)
+
+    def test_source_schema_rejects_unknown_catalogue_and_record_fields(self) -> None:
+        original = SOURCES.read_text(encoding="utf-8")
+        variants = (
+            (
+                original.replace(
+                    'retrieved_on = "2026-08-24"',
+                    'retrieved_on = "2026-08-24"\nsnapshot = "unbound"',
+                    1,
+                ),
+                "source catalogue contains unknown fields: snapshot",
+            ),
+            (
+                original.replace(
+                    'publisher = "Eurostat"',
+                    'publisher = "Eurostat"\nartifact_sha256 = "unbound"',
+                    1,
+                ),
+                r"source\[0\] contains unknown fields: artifact_sha256",
+            ),
+        )
+        for text, message in variants:
+            with self.subTest(message=message):
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "sources.toml"
+                    path.write_text(text, encoding="utf-8")
+                    with self.assertRaisesRegex(ProfileValidationError, message):
                         load_profile_bundle(JURISDICTIONS, path)
 
     def test_profile_numbers_reject_non_finite_values_at_ingestion(self) -> None:
@@ -561,6 +592,12 @@ class ProfileLoadingTests(unittest.TestCase):
                 "sha256": "2" * 64,
                 "retrieved_on": "2026-08-24",
             }
+            file_lineage["source_bundle"] = {
+                "path": None,
+                "sha256": None,
+                "source_registry_sha256": None,
+                "signature_status": None,
+            }
             snapshot_json = json.dumps(
                 snapshot,
                 ensure_ascii=False,
@@ -614,15 +651,14 @@ class ProfileLoadingTests(unittest.TestCase):
             root = Path(directory)
             jurisdictions = root / "jurisdictions.toml"
             sources = root / "sources.toml"
-            jurisdictions.write_text(
+            jurisdictions.write_bytes(
                 JURISDICTIONS.read_text(encoding="utf-8").replace(
                     "schema_version = 2",
                     "schema_version = 1",
                     1,
-                ),
-                encoding="utf-8",
+                ).encode("utf-8")
             )
-            sources.write_bytes(SOURCES.read_bytes())
+            sources.write_bytes(SOURCES.read_text(encoding="utf-8").encode("utf-8"))
             bundle = load_profile_bundle(jurisdictions, sources)
             current = build_profile_input_lineage(
                 bundle.country_profiles,
@@ -630,9 +666,20 @@ class ProfileLoadingTests(unittest.TestCase):
             )
             snapshot = current.snapshot
             snapshot["schema_version"] = 1
+            file_lineage = snapshot["file_lineage"]
+            assert isinstance(file_lineage, dict)
+            file_lineage.pop("source_bundle")
             bundle_snapshot = snapshot["profile_bundle"]
             assert isinstance(bundle_snapshot, dict)
             bundle_snapshot.pop("monetary_conversions")
+            for field in (
+                "jurisdiction_schema_version",
+                "source_catalogue_schema_version",
+                "source_evidence_bundle",
+                "rate_evidence_results",
+                "monetary_evidence_assessment",
+            ):
+                bundle_snapshot.pop(field)
             snapshot_json = json.dumps(
                 snapshot,
                 ensure_ascii=False,
@@ -659,6 +706,335 @@ class ProfileLoadingTests(unittest.TestCase):
 
         self.assertEqual(legacy.snapshot["schema_version"], 1)
         self.assertEqual(summary_count, 0)
+        self.assertEqual(
+            _normalized_registered_snapshot_sha(legacy.snapshot),
+            "d452aa6622726060a0e35b061fc8289445f278f4140ae863d074f74a4cbb3d25",
+        )
+
+    def test_frozen_profile_lineage_v1_and_v2_fixtures_remain_readable(self) -> None:
+        for version in (1, 2):
+            with self.subTest(version=version):
+                snapshot_json = (
+                    FIXTURES / f"profile_lineage_v{version}.json"
+                ).read_text(encoding="utf-8").strip()
+                lineage = ProfileInputLineage(
+                    lineage_status="unregistered_custom_profiles",
+                    profile_codes=("ZZ",),
+                    fingerprint_sha256=sha256(
+                        snapshot_json.encode("utf-8")
+                    ).hexdigest(),
+                    snapshot_json=snapshot_json,
+                )
+                self.assertEqual(lineage.snapshot["schema_version"], version)
+                self.assertEqual(
+                    lineage.manifest_payload()["monetary_conversion_summary"][
+                        "count"
+                    ],
+                    0,
+                )
+
+    def test_registered_profile_lineage_v2_projection_remains_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            jurisdictions = root / "jurisdictions.toml"
+            sources = root / "sources.toml"
+            jurisdictions.write_bytes(
+                (
+                    JURISDICTIONS.read_text(encoding="utf-8")
+                    + _TEST_ONLY_UK_CONVERSION_TOML
+                ).encode("utf-8")
+            )
+            sources.write_bytes(
+                (SOURCES.read_text(encoding="utf-8") + _TEST_ONLY_SOURCE_TOML).encode(
+                    "utf-8"
+                )
+            )
+            bundle = load_profile_bundle(
+                jurisdictions,
+                sources,
+                source_bundle_path=None,
+            )
+            current = build_profile_input_lineage(
+                bundle.country_profiles,
+                profile_bundle=bundle,
+            )
+            snapshot = current.snapshot
+            snapshot["schema_version"] = 2
+            file_lineage = snapshot["file_lineage"]
+            assert isinstance(file_lineage, dict)
+            file_lineage.pop("source_bundle")
+            bundle_snapshot = snapshot["profile_bundle"]
+            assert isinstance(bundle_snapshot, dict)
+            for field in (
+                "jurisdiction_schema_version",
+                "source_catalogue_schema_version",
+                "source_evidence_bundle",
+                "rate_evidence_results",
+                "monetary_evidence_assessment",
+            ):
+                bundle_snapshot.pop(field)
+            conversions = bundle_snapshot["monetary_conversions"]
+            assert isinstance(conversions, list)
+            self.assertEqual(len(conversions), 1)
+            for conversion in conversions:
+                assert isinstance(conversion, dict)
+                self.assertIn("conversion_id", conversion)
+                self.assertIn("rate_binding_id", conversion)
+                conversion.pop("conversion_id")
+                conversion.pop("rate_binding_id")
+            snapshot_json = json.dumps(
+                snapshot,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            legacy = ProfileInputLineage(
+                lineage_status=current.lineage_status,
+                profile_codes=current.profile_codes,
+                fingerprint_sha256=sha256(
+                    snapshot_json.encode("utf-8")
+                ).hexdigest(),
+                snapshot_json=snapshot_json,
+                jurisdictions_path=current.jurisdictions_path,
+                jurisdictions_sha256=current.jurisdictions_sha256,
+                source_registry_path=current.source_registry_path,
+                source_registry_sha256=current.source_registry_sha256,
+                source_retrieved_on=current.source_retrieved_on,
+            )
+            summary_count = legacy.manifest_payload()[
+                "monetary_conversion_summary"
+            ]["count"]
+
+        self.assertEqual(legacy.snapshot["schema_version"], 2)
+        self.assertEqual(summary_count, 1)
+        self.assertEqual(
+            _normalized_registered_snapshot_sha(legacy.snapshot),
+            "2cbf76453fbc288effad30b7006c8135578b3e89c4ddafcdebaa4cae1cbac5fc",
+        )
+
+    def test_profile_lineage_v2_downgrade_cannot_carry_v3_evidence(self) -> None:
+        bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
+        current = build_profile_input_lineage(
+            bundle.country_profiles,
+            profile_bundle=bundle,
+        )
+        snapshot = current.snapshot
+        snapshot["schema_version"] = 2
+        file_lineage = snapshot["file_lineage"]
+        assert isinstance(file_lineage, dict)
+        file_lineage.pop("source_bundle")
+        snapshot_json = json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        with self.assertRaisesRegex(
+            ProfileValidationError,
+            "legacy profile snapshot cannot contain schema-v3 evidence fields",
+        ):
+            replace(
+                current,
+                snapshot_json=snapshot_json,
+                fingerprint_sha256=sha256(
+                    snapshot_json.encode("utf-8")
+                ).hexdigest(),
+                source_bundle_path=None,
+                source_bundle_sha256=None,
+            )
+
+    def test_unregistered_lineage_cannot_forge_monetary_readiness_or_reasons(self) -> None:
+        bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
+        unregistered_bundle = replace(
+            bundle,
+            jurisdictions_path=None,
+            jurisdictions_sha256=None,
+            source_registry_path=None,
+            source_registry_sha256=None,
+        )
+        lineage = build_profile_input_lineage(
+            unregistered_bundle.country_profiles,
+            profile_bundle=unregistered_bundle,
+        )
+        variants = []
+
+        promoted = lineage.snapshot
+        promoted_bundle = promoted["profile_bundle"]
+        assert isinstance(promoted_bundle, dict)
+        promoted_assessment = promoted_bundle["monetary_evidence_assessment"]
+        assert isinstance(promoted_assessment, dict)
+        for field in (
+            "structure_coherent",
+            "source_rate_evidence_bound",
+            "source_bundle_signature_bound",
+            "output_design_binding_bound",
+            "population_binding_bound",
+            "preregistration_bound",
+            "public_output_comparability",
+        ):
+            promoted_assessment[field] = True
+        promoted_assessment["blockers"] = []
+        variants.append(promoted)
+
+        duplicate = lineage.snapshot
+        duplicate_bundle = duplicate["profile_bundle"]
+        assert isinstance(duplicate_bundle, dict)
+        duplicate_assessment = duplicate_bundle["monetary_evidence_assessment"]
+        assert isinstance(duplicate_assessment, dict)
+        blockers = duplicate_assessment["blockers"]
+        assert isinstance(blockers, list)
+        blockers.append(blockers[-1])
+        variants.append(duplicate)
+
+        forged_structure = lineage.snapshot
+        forged_structure_bundle = forged_structure["profile_bundle"]
+        assert isinstance(forged_structure_bundle, dict)
+        forged_structure_assessment = forged_structure_bundle[
+            "monetary_evidence_assessment"
+        ]
+        assert isinstance(forged_structure_assessment, dict)
+        forged_structure_assessment["structure_coherent"] = True
+        forged_structure_blockers = forged_structure_assessment["blockers"]
+        assert isinstance(forged_structure_blockers, list)
+        forged_structure_assessment["blockers"] = [
+            blocker
+            for blocker in forged_structure_blockers
+            if not blocker.endswith(".monetary_conversion=missing")
+        ]
+        variants.append(forged_structure)
+
+        forged_source_readiness = lineage.snapshot
+        forged_source_bundle = forged_source_readiness["profile_bundle"]
+        assert isinstance(forged_source_bundle, dict)
+        source_evidence = forged_source_bundle["source_evidence_bundle"]
+        assert isinstance(source_evidence, dict)
+        source_evidence["campaign_ready"] = True
+        source_evidence["campaign_blockers"] = []
+        variants.append(forged_source_readiness)
+
+        for snapshot in variants:
+            with self.subTest(blockers=snapshot["profile_bundle"]):
+                snapshot_json = json.dumps(
+                    snapshot,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+                with self.assertRaises(ProfileValidationError):
+                    replace(
+                        lineage,
+                        snapshot_json=snapshot_json,
+                        fingerprint_sha256=sha256(
+                            snapshot_json.encode("utf-8")
+                        ).hexdigest(),
+                    )
+
+    def test_snapshot_structure_rebuild_rejects_laundered_rows(self) -> None:
+        base = load_profile_bundle(JURISDICTIONS, SOURCES)
+        coherent = _coherent_campaign_candidate(base)
+        coherent_lineage = build_profile_input_lineage(
+            coherent.country_profiles,
+            profile_bundle=coherent,
+        )
+        coherent_bundle = coherent_lineage.snapshot["profile_bundle"]
+        assert isinstance(coherent_bundle, dict)
+        self.assertEqual(
+            monetary_structure_assessment_from_snapshot(coherent_bundle),
+            (True, ()),
+        )
+
+        uniform_invalid_date = deepcopy(coherent_bundle)
+        invalid_conversions = uniform_invalid_date["monetary_conversions"]
+        assert isinstance(invalid_conversions, list)
+        for conversion in invalid_conversions:
+            assert isinstance(conversion, dict)
+            conversion["rate_period_start"] = "not-a-date"
+
+        noncalibrated_hides_bad_integer = deepcopy(coherent_bundle)
+        noncalibrated_conversions = noncalibrated_hides_bad_integer[
+            "monetary_conversions"
+        ]
+        assert isinstance(noncalibrated_conversions, list)
+        for conversion in noncalibrated_conversions:
+            assert isinstance(conversion, dict)
+            conversion["status"] = "ILLUSTRATIVE"
+        first_conversion = noncalibrated_conversions[0]
+        assert isinstance(first_conversion, dict)
+        first_conversion["rate_numerator"] = True
+        first_conversion["rate_numerator_decimal"] = "garbage"
+
+        extra_jurisdiction_hides_behind_missing = deepcopy(
+            build_profile_input_lineage(
+                base.country_profiles,
+                profile_bundle=replace(
+                    base,
+                    jurisdictions_path=None,
+                    jurisdictions_sha256=None,
+                    source_registry_path=None,
+                    source_registry_sha256=None,
+                ),
+            ).snapshot["profile_bundle"]
+        )
+        assert isinstance(extra_jurisdiction_hides_behind_missing, dict)
+        missing_conversions = extra_jurisdiction_hides_behind_missing[
+            "monetary_conversions"
+        ]
+        assert isinstance(missing_conversions, list)
+        coherent_conversions = coherent_bundle["monetary_conversions"]
+        assert isinstance(coherent_conversions, list)
+        extra_conversion = deepcopy(coherent_conversions[0])
+        assert isinstance(extra_conversion, dict)
+        extra_conversion["jurisdiction_code"] = "ZZ"
+        missing_conversions.append(extra_conversion)
+
+        matched_jurisdiction_removed = deepcopy(coherent_bundle)
+        removed_scales = matched_jurisdiction_removed["money_scales"]
+        removed_conversions = matched_jurisdiction_removed["monetary_conversions"]
+        assert isinstance(removed_scales, list)
+        assert isinstance(removed_conversions, list)
+        removed_scales.pop(0)
+        removed_conversions.pop(0)
+
+        matched_jurisdiction_added = deepcopy(coherent_bundle)
+        added_scales = matched_jurisdiction_added["money_scales"]
+        added_conversions = matched_jurisdiction_added["monetary_conversions"]
+        assert isinstance(added_scales, list)
+        assert isinstance(added_conversions, list)
+        extra_scale = deepcopy(added_scales[0])
+        extra_matched_conversion = deepcopy(added_conversions[0])
+        assert isinstance(extra_scale, dict)
+        assert isinstance(extra_matched_conversion, dict)
+        extra_scale["jurisdiction_code"] = "ZZ"
+        extra_matched_conversion["jurisdiction_code"] = "ZZ"
+        added_scales.append(extra_scale)
+        added_conversions.append(extra_matched_conversion)
+
+        schema_three_without_ids = deepcopy(coherent_bundle)
+        schema_three_without_ids["jurisdiction_schema_version"] = 3
+
+        legacy_schema_with_ids = deepcopy(coherent_bundle)
+        legacy_conversions = legacy_schema_with_ids["monetary_conversions"]
+        assert isinstance(legacy_conversions, list)
+        for index, conversion in enumerate(legacy_conversions):
+            assert isinstance(conversion, dict)
+            conversion["conversion_id"] = f"test-conversion-{index}"
+            conversion["rate_binding_id"] = f"test-binding-{index}"
+
+        for malformed in (
+            uniform_invalid_date,
+            noncalibrated_hides_bad_integer,
+            extra_jurisdiction_hides_behind_missing,
+            matched_jurisdiction_removed,
+            matched_jurisdiction_added,
+            schema_three_without_ids,
+            legacy_schema_with_ids,
+        ):
+            with self.subTest(malformed=malformed["monetary_conversions"]):
+                with self.assertRaises(ProfileValidationError):
+                    monetary_structure_assessment_from_snapshot(malformed)
 
     def test_profile_lineage_schema_requires_a_strict_integer_version(self) -> None:
         bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
@@ -1053,6 +1429,31 @@ def _coherent_campaign_candidate(bundle: ProfileBundle) -> ProfileBundle:
         extra_sources=(source,),
         monetary_conversions=conversions,
     )
+
+
+def _normalized_registered_snapshot_sha(snapshot: dict[str, object]) -> str:
+    """Fingerprint frozen legacy bytes while excluding host-specific paths."""
+
+    normalized = json.loads(
+        json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    )
+    file_lineage = normalized["file_lineage"]
+    file_lineage["jurisdictions"]["path"] = "<JURISDICTIONS>"
+    file_lineage["source_registry"]["path"] = "<SOURCES>"
+    encoded = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
 
 
 if __name__ == "__main__":

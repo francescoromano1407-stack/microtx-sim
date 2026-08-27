@@ -20,11 +20,12 @@ from .profiles import (
     _is_sha256,
     _parse_iso_date,
     load_profile_bundle,
+    monetary_evidence_assessment_from_snapshot,
 )
 
 
-_PROFILE_INPUT_SCHEMA_VERSION = 2
-_SUPPORTED_PROFILE_INPUT_SCHEMA_VERSIONS = frozenset({1, 2})
+_PROFILE_INPUT_SCHEMA_VERSION = 3
+_SUPPORTED_PROFILE_INPUT_SCHEMA_VERSIONS = frozenset({1, 2, 3})
 _REGISTERED_PROFILE_LINEAGE = "registered_profile_bundle"
 _UNREGISTERED_PROFILE_LINEAGE = "unregistered_custom_profiles"
 _UNREGISTERED_BUNDLE_LINEAGE = "unregistered_profile_bundle"
@@ -43,6 +44,8 @@ class ProfileInputLineage:
     source_registry_path: str | None = None
     source_registry_sha256: str | None = None
     source_retrieved_on: date | None = None
+    source_bundle_path: str | None = None
+    source_bundle_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.lineage_status not in {
@@ -66,6 +69,17 @@ class ProfileInputLineage:
             raise ProfileValidationError("profile snapshot must be valid JSON") from exc
         if not isinstance(snapshot, dict):
             raise ProfileValidationError("profile snapshot root must be an object")
+        if set(snapshot) != {
+            "schema_version",
+            "lineage_status",
+            "country_profile_type",
+            "country_profiles",
+            "profile_bundle",
+            "file_lineage",
+        }:
+            raise ProfileValidationError(
+                "profile snapshot root fields do not match its schema"
+            )
         if self.snapshot_json != _canonical_snapshot_json(snapshot):
             raise ProfileValidationError("profile snapshot JSON must be canonical")
         snapshot_schema_version = snapshot.get("schema_version")
@@ -98,12 +112,27 @@ class ProfileInputLineage:
         file_lineage = snapshot.get("file_lineage")
         if not isinstance(file_lineage, dict):
             raise ProfileValidationError("profile snapshot file lineage is malformed")
+        expected_lineage_fields = {"jurisdictions", "source_registry"}
+        if snapshot_schema_version == 3:
+            expected_lineage_fields.add("source_bundle")
+        if set(file_lineage) != expected_lineage_fields:
+            raise ProfileValidationError(
+                "profile snapshot file lineage fields do not match its schema"
+            )
         jurisdictions = file_lineage.get("jurisdictions")
         source_registry = file_lineage.get("source_registry")
         if not isinstance(jurisdictions, dict) or not isinstance(
             source_registry, dict
         ):
             raise ProfileValidationError("profile snapshot file lineage is malformed")
+        if set(jurisdictions) != {"path", "sha256"} or set(source_registry) != {
+            "path",
+            "sha256",
+            "retrieved_on",
+        }:
+            raise ProfileValidationError(
+                "profile snapshot file-lineage record fields are malformed"
+            )
         snapshot_jurisdictions_path = jurisdictions.get("path")
         snapshot_jurisdictions_sha256 = jurisdictions.get("sha256")
         snapshot_source_registry_path = source_registry.get("path")
@@ -117,22 +146,72 @@ class ProfileInputLineage:
             if snapshot_retrieved_text is not None
             else None
         )
+        if snapshot_schema_version == 3:
+            source_bundle = file_lineage.get("source_bundle")
+            if not isinstance(source_bundle, dict) or set(source_bundle) != {
+                "path",
+                "sha256",
+                "source_registry_sha256",
+                "signature_status",
+            }:
+                raise ProfileValidationError(
+                    "profile snapshot source-bundle lineage is malformed"
+                )
+            snapshot_source_bundle_path = source_bundle.get("path")
+            snapshot_source_bundle_sha256 = source_bundle.get("sha256")
+            bound_registry_sha256 = source_bundle.get("source_registry_sha256")
+            signature_status = source_bundle.get("signature_status")
+            if snapshot_source_bundle_path is None:
+                if any(
+                    value is not None
+                    for value in (
+                        snapshot_source_bundle_sha256,
+                        bound_registry_sha256,
+                        signature_status,
+                    )
+                ):
+                    raise ProfileValidationError(
+                        "absent source-bundle lineage cannot claim evidence metadata"
+                    )
+            elif (
+                not isinstance(snapshot_source_bundle_path, str)
+                or not snapshot_source_bundle_path
+                or not _is_sha256(snapshot_source_bundle_sha256)
+                or bound_registry_sha256 != snapshot_source_registry_sha256
+                or signature_status != "MISSING"
+            ):
+                raise ProfileValidationError(
+                    "profile snapshot source-bundle lineage is inconsistent"
+                )
+        else:
+            snapshot_source_bundle_path = None
+            snapshot_source_bundle_sha256 = None
         if (
             snapshot_jurisdictions_path != self.jurisdictions_path
             or snapshot_jurisdictions_sha256 != self.jurisdictions_sha256
             or snapshot_source_registry_path != self.source_registry_path
             or snapshot_source_registry_sha256 != self.source_registry_sha256
             or snapshot_retrieved_on != self.source_retrieved_on
+            or snapshot_source_bundle_path != self.source_bundle_path
+            or snapshot_source_bundle_sha256 != self.source_bundle_sha256
         ):
             raise ProfileValidationError(
                 "published profile file lineage does not match its fingerprinted snapshot"
             )
 
-        for name in ("jurisdictions_path", "source_registry_path"):
+        for name in (
+            "jurisdictions_path",
+            "source_registry_path",
+            "source_bundle_path",
+        ):
             value = getattr(self, name)
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ProfileValidationError(f"{name} must be non-empty text")
-        for name in ("jurisdictions_sha256", "source_registry_sha256"):
+        for name in (
+            "jurisdictions_sha256",
+            "source_registry_sha256",
+            "source_bundle_sha256",
+        ):
             value = getattr(self, name)
             if value is not None and not _is_sha256(value):
                 raise ProfileValidationError(f"{name} is not a SHA-256 digest")
@@ -163,6 +242,8 @@ class ProfileInputLineage:
                 self.source_registry_path,
                 self.source_registry_sha256,
                 self.source_retrieved_on,
+                self.source_bundle_path,
+                self.source_bundle_sha256,
             )
         ):
             raise ProfileValidationError(
@@ -184,6 +265,13 @@ class ProfileInputLineage:
             raise ProfileValidationError(
                 "profile snapshot schema version 1 cannot contain monetary conversions"
             )
+        _validate_snapshot_schema_fields(
+            snapshot_schema_version,
+            bundle,
+            registered_lineage=(
+                self.lineage_status == _REGISTERED_PROFILE_LINEAGE
+            ),
+        )
         self._validate_registered_files(snapshot)
 
     @property
@@ -225,10 +313,16 @@ class ProfileInputLineage:
         metric_contracts = bundle_payload.get("metric_contracts", [])
         money_scales = bundle_payload.get("money_scales", [])
         monetary_conversions = bundle_payload.get("monetary_conversions", [])
+        source_evidence_bundle = bundle_payload.get("source_evidence_bundle")
+        rate_evidence_results = bundle_payload.get("rate_evidence_results", [])
+        monetary_evidence_assessment = bundle_payload.get(
+            "monetary_evidence_assessment"
+        )
         if (
             not isinstance(metric_contracts, list)
             or not isinstance(money_scales, list)
             or not isinstance(monetary_conversions, list)
+            or not isinstance(rate_evidence_results, list)
         ):
             raise ProfileValidationError("profile snapshot contract tables are malformed")
         file_lineage = snapshot.get("file_lineage")
@@ -241,6 +335,16 @@ class ProfileInputLineage:
             "snapshot": snapshot,
             "jurisdictions": dict(file_lineage["jurisdictions"]),
             "source_registry": dict(file_lineage["source_registry"]),
+            "source_bundle": (
+                dict(file_lineage["source_bundle"])
+                if "source_bundle" in file_lineage
+                else {
+                    "path": None,
+                    "sha256": None,
+                    "source_registry_sha256": None,
+                    "signature_status": None,
+                }
+            ),
             "metric_contract_summary": {
                 "count": len(metric_contracts),
                 "status_counts": _status_counts(metric_contracts, "status"),
@@ -329,6 +433,49 @@ class ProfileInputLineage:
                     "status",
                 ),
             },
+            "source_evidence_summary": {
+                "present": isinstance(source_evidence_bundle, dict),
+                "artifact_count": (
+                    len(source_evidence_bundle.get("artifacts", []))
+                    if isinstance(source_evidence_bundle, dict)
+                    and isinstance(source_evidence_bundle.get("artifacts"), list)
+                    else 0
+                ),
+                "binding_count": (
+                    len(source_evidence_bundle.get("bindings", []))
+                    if isinstance(source_evidence_bundle, dict)
+                    and isinstance(source_evidence_bundle.get("bindings"), list)
+                    else 0
+                ),
+                "verified_result_count": len(rate_evidence_results),
+                "signature_status": (
+                    source_evidence_bundle.get("signature", {}).get("status")
+                    if isinstance(source_evidence_bundle, dict)
+                    and isinstance(source_evidence_bundle.get("signature"), dict)
+                    else None
+                ),
+            },
+            "monetary_evidence_assessment": (
+                dict(monetary_evidence_assessment)
+                if isinstance(monetary_evidence_assessment, dict)
+                else {
+                    "structure_coherent": False,
+                    "source_rate_evidence_bound": False,
+                    "source_bundle_signature_bound": False,
+                    "output_design_binding_bound": False,
+                    "population_binding_bound": False,
+                    "preregistration_bound": False,
+                    "public_output_comparability": False,
+                    "blockers": [
+                        "monetary_conversion.structure=unavailable",
+                        "monetary_conversion.source_rate_binding=missing",
+                        "monetary_conversion.source_bundle_signature=missing",
+                        "monetary_conversion.output_design_binding=missing",
+                        "monetary_conversion.population_binding=missing",
+                        "monetary_conversion.preregistration_binding=missing",
+                    ],
+                }
+            ),
         }
 
     def _validate_registered_files(self, snapshot: Mapping[str, object]) -> None:
@@ -342,6 +489,11 @@ class ProfileInputLineage:
             loaded = load_profile_bundle(
                 self.jurisdictions_path,
                 self.source_registry_path,
+                source_bundle_path=(
+                    self.source_bundle_path
+                    if snapshot.get("schema_version") == 3
+                    else None
+                ),
                 campaign=False,
             )
         except (OSError, ProfileValidationError) as exc:
@@ -354,12 +506,25 @@ class ProfileInputLineage:
             or str(loaded.source_registry_path) != self.source_registry_path
             or loaded.source_registry_sha256 != self.source_registry_sha256
             or loaded.source_retrieved_on != self.source_retrieved_on
+            or (
+                str(loaded.source_evidence_bundle.bundle_path)
+                if loaded.source_evidence_bundle is not None
+                else None
+            )
+            != self.source_bundle_path
+            or (
+                loaded.source_evidence_bundle.bundle_sha256
+                if loaded.source_evidence_bundle is not None
+                else None
+            )
+            != self.source_bundle_sha256
         ):
             raise ProfileValidationError(
                 "registered profile lineage no longer matches its claimed files"
             )
-        expected_bundle = _profile_bundle_snapshot(loaded)
-        if snapshot.get("schema_version") == 1:
+        expected_bundle = _profile_bundle_snapshot(loaded, registered=True)
+        snapshot_version = snapshot.get("schema_version")
+        if snapshot_version in {1, 2}:
             try:
                 with Path(self.jurisdictions_path).open("rb") as handle:
                     claimed_schema_version = tomllib.load(handle).get(
@@ -369,16 +534,23 @@ class ProfileInputLineage:
                 raise ProfileValidationError(
                     "registered profile lineage files are unavailable or invalid"
                 ) from exc
-            if (
-                type(claimed_schema_version) is not int
-                or claimed_schema_version != 1
-                or loaded.monetary_conversions
+            if type(claimed_schema_version) is not int or (
+                snapshot_version == 1
+                and (
+                    claimed_schema_version != 1
+                    or loaded.monetary_conversions
+                )
+            ) or (
+                snapshot_version == 2
+                and claimed_schema_version not in {1, 2}
             ):
                 raise ProfileValidationError(
-                    "profile snapshot schema version 1 requires a version-1 "
-                    "jurisdiction file without monetary conversions"
+                    "legacy profile snapshot requires a compatible jurisdiction file"
                 )
-            expected_bundle.pop("monetary_conversions")
+            expected_bundle = _downgrade_profile_bundle_snapshot(
+                expected_bundle,
+                version=snapshot_version,
+            )
         if (
             snapshot.get("country_profiles")
             != [_snapshot_dataclass(profile) for profile in loaded.country_profiles]
@@ -406,9 +578,6 @@ def build_profile_input_lineage(
             "profile bundle country profiles differ from the profiles being fingerprinted"
         )
 
-    bundle_snapshot: dict[str, object] | None = None
-    if profile_bundle is not None:
-        bundle_snapshot = _profile_bundle_snapshot(profile_bundle)
     registered_bundle = profile_bundle is not None and _matches_loaded_profile_bundle(
         profile_bundle
     )
@@ -418,6 +587,12 @@ def build_profile_input_lineage(
         lineage_status = _UNREGISTERED_BUNDLE_LINEAGE
     else:
         lineage_status = _UNREGISTERED_PROFILE_LINEAGE
+    bundle_snapshot: dict[str, object] | None = None
+    if profile_bundle is not None:
+        bundle_snapshot = _profile_bundle_snapshot(
+            profile_bundle,
+            registered=registered_bundle,
+        )
     jurisdictions_path = (
         str(profile_bundle.jurisdictions_path)
         if registered_bundle
@@ -447,6 +622,34 @@ def build_profile_input_lineage(
         if registered_bundle and profile_bundle is not None
         else None
     )
+    source_bundle_path = (
+        str(profile_bundle.source_evidence_bundle.bundle_path)
+        if registered_bundle
+        and profile_bundle is not None
+        and profile_bundle.source_evidence_bundle is not None
+        else None
+    )
+    source_bundle_sha256 = (
+        profile_bundle.source_evidence_bundle.bundle_sha256
+        if registered_bundle
+        and profile_bundle is not None
+        and profile_bundle.source_evidence_bundle is not None
+        else None
+    )
+    source_bundle_registry_sha256 = (
+        profile_bundle.source_evidence_bundle.source_registry_sha256
+        if registered_bundle
+        and profile_bundle is not None
+        and profile_bundle.source_evidence_bundle is not None
+        else None
+    )
+    source_bundle_signature_status = (
+        profile_bundle.source_evidence_bundle.signature.status.value
+        if registered_bundle
+        and profile_bundle is not None
+        and profile_bundle.source_evidence_bundle is not None
+        else None
+    )
     snapshot = {
         "schema_version": _PROFILE_INPUT_SCHEMA_VERSION,
         "lineage_status": lineage_status,
@@ -469,6 +672,12 @@ def build_profile_input_lineage(
                     else None
                 ),
             },
+            "source_bundle": {
+                "path": source_bundle_path,
+                "sha256": source_bundle_sha256,
+                "source_registry_sha256": source_bundle_registry_sha256,
+                "signature_status": source_bundle_signature_status,
+            },
         },
     }
     snapshot_json = _canonical_snapshot_json(snapshot)
@@ -482,6 +691,8 @@ def build_profile_input_lineage(
         source_registry_path=source_registry_path,
         source_registry_sha256=source_registry_sha256,
         source_retrieved_on=source_retrieved_on,
+        source_bundle_path=source_bundle_path,
+        source_bundle_sha256=source_bundle_sha256,
     )
 
 
@@ -513,14 +724,39 @@ def _matches_loaded_profile_bundle(bundle: ProfileBundle) -> bool:
     return bundle.matches_registered_files()
 
 
-def _profile_bundle_snapshot(bundle: ProfileBundle) -> dict[str, object]:
+def _profile_bundle_snapshot(
+    bundle: ProfileBundle,
+    *,
+    registered: bool,
+) -> dict[str, object]:
     conversions: list[dict[str, object]] = []
     for conversion in bundle.monetary_conversions:
         snapshot = _snapshot_dataclass(conversion)
         snapshot["rate_numerator_decimal"] = str(conversion.rate_numerator)
         snapshot["rate_denominator_decimal"] = str(conversion.rate_denominator)
         conversions.append(snapshot)
+    source_evidence_snapshot: dict[str, object] | None = None
+    rate_evidence_results: list[dict[str, object]] = []
+    if bundle.source_evidence_bundle is not None:
+        from .rate_evidence import (
+            RateEvidenceValidationError,
+            verify_rate_evidence_bundle,
+        )
+
+        try:
+            verified = verify_rate_evidence_bundle(bundle.source_evidence_bundle)
+        except RateEvidenceValidationError as exc:
+            raise ProfileValidationError(
+                f"profile source evidence cannot be re-attested: {exc}"
+            ) from exc
+        source_evidence_snapshot = bundle.source_evidence_bundle.snapshot()
+        rate_evidence_results = [result.snapshot() for result in verified]
+    evidence_assessment = bundle.monetary_evidence_assessment(
+        registered=registered
+    )
     return {
+        "jurisdiction_schema_version": bundle.jurisdiction_schema_version,
+        "source_catalogue_schema_version": bundle.source_catalogue_schema_version,
         "profile_status": bundle.profile_status.value,
         "caveats": list(bundle.caveats),
         "sources": [
@@ -534,7 +770,137 @@ def _profile_bundle_snapshot(bundle: ProfileBundle) -> dict[str, object]:
             _snapshot_dataclass(scale) for scale in bundle.money_scales
         ],
         "monetary_conversions": conversions,
+        "source_evidence_bundle": source_evidence_snapshot,
+        "rate_evidence_results": rate_evidence_results,
+        "monetary_evidence_assessment": _snapshot_dataclass(
+            evidence_assessment
+        ),
     }
+
+
+def _validate_snapshot_schema_fields(
+    schema_version: int,
+    bundle: object,
+    *,
+    registered_lineage: bool,
+) -> None:
+    """Reject downgrade claims and internally inconsistent evidence flags."""
+
+    if not isinstance(bundle, dict):
+        return
+    base_fields = {
+        "profile_status",
+        "caveats",
+        "sources",
+        "metric_contracts",
+        "money_scales",
+    }
+    v3_fields = {
+        "jurisdiction_schema_version",
+        "source_catalogue_schema_version",
+        "source_evidence_bundle",
+        "rate_evidence_results",
+        "monetary_evidence_assessment",
+    }
+    expected_fields = set(base_fields)
+    if schema_version >= 2:
+        expected_fields.add("monetary_conversions")
+    if schema_version == 3:
+        expected_fields.update(v3_fields)
+    if schema_version < 3:
+        present_v3_fields = sorted(v3_fields.intersection(bundle))
+        if present_v3_fields:
+            raise ProfileValidationError(
+                "legacy profile snapshot cannot contain schema-v3 evidence fields: "
+                + ", ".join(present_v3_fields)
+            )
+    if set(bundle) != expected_fields:
+        raise ProfileValidationError(
+            "profile bundle snapshot fields do not match its schema"
+        )
+    if schema_version < 3:
+        conversions = bundle.get("monetary_conversions", [])
+        if isinstance(conversions, list) and any(
+            isinstance(conversion, dict)
+            and bool({"conversion_id", "rate_binding_id"}.intersection(conversion))
+            for conversion in conversions
+        ):
+            raise ProfileValidationError(
+                "legacy profile snapshot cannot contain schema-v3 conversion fields"
+            )
+        return
+
+    missing = sorted(v3_fields.difference(bundle))
+    if missing:
+        raise ProfileValidationError(
+            "profile snapshot schema version 3 is missing evidence fields: "
+            + ", ".join(missing)
+        )
+    jurisdiction_version = bundle.get("jurisdiction_schema_version")
+    source_version = bundle.get("source_catalogue_schema_version")
+    if (
+        type(jurisdiction_version) is not int
+        or jurisdiction_version not in {1, 2, 3}
+        or type(source_version) is not int
+        or source_version != 1
+    ):
+        raise ProfileValidationError(
+            "profile snapshot contains unsupported source schema metadata"
+        )
+    results = bundle.get("rate_evidence_results")
+    if not isinstance(results, list) or any(
+        not isinstance(result, dict) for result in results
+    ):
+        raise ProfileValidationError(
+            "profile snapshot rate evidence results are malformed"
+        )
+    from .rate_evidence import (
+        RateEvidenceValidationError,
+        validate_rate_evidence_snapshot,
+    )
+
+    try:
+        validate_rate_evidence_snapshot(
+            bundle.get("source_evidence_bundle"),
+            results,
+        )
+    except RateEvidenceValidationError as exc:
+        raise ProfileValidationError(
+            f"profile snapshot source evidence is malformed: {exc}"
+        ) from exc
+    monetary_evidence_assessment_from_snapshot(
+        bundle.get("monetary_evidence_assessment"),
+        registered_lineage=registered_lineage,
+        bundle_snapshot=bundle,
+    )
+
+
+def _downgrade_profile_bundle_snapshot(
+    bundle: dict[str, object],
+    *,
+    version: object,
+) -> dict[str, object]:
+    """Project current typed values onto an exact legacy snapshot surface."""
+
+    if version not in {1, 2}:
+        raise ProfileValidationError("unsupported legacy profile snapshot version")
+    for field in (
+        "jurisdiction_schema_version",
+        "source_catalogue_schema_version",
+        "source_evidence_bundle",
+        "rate_evidence_results",
+        "monetary_evidence_assessment",
+    ):
+        bundle.pop(field, None)
+    conversions = bundle.get("monetary_conversions")
+    if isinstance(conversions, list):
+        for conversion in conversions:
+            if isinstance(conversion, dict):
+                conversion.pop("conversion_id", None)
+                conversion.pop("rate_binding_id", None)
+    if version == 1:
+        bundle.pop("monetary_conversions", None)
+    return bundle
 
 
 def _snapshot_dataclass(value: object) -> dict[str, object]:

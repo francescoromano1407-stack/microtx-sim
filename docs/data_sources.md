@@ -6,7 +6,8 @@ This document describes what the current code actually reads and uses. It is not
 a claim that the model has been empirically calibrated. The machine-readable
 source register is `data/provenance/sources.toml`; jurisdiction inputs are in
 `configs/jurisdictions.toml`; run-level assumptions are in `configs/base.toml`
-and `configs/smoke.toml`. The separate policy prototype reads
+and `configs/smoke.toml`. The content-addressed rate-evidence registry is
+`data/provenance/source_bundle.toml`. The separate policy prototype reads
 `configs/policy_prototype.toml` and reuses the jurisdiction profile loader.
 
 At this stage:
@@ -14,8 +15,11 @@ At this stage:
 - every record in the source register is `ANCHORED`, not `CALIBRATED`;
 - the jurisdiction bundle is globally `ILLUSTRATIVE`;
 - the common money scale is `ILLUSTRATIVE`;
-- the version-2 profile schema can retain dated exact FX/PPP contracts, but the
-  checked-in bundle supplies none and no fallback rates are invented;
+- profile schema version 2 can retain declaration-only dated exact FX/PPP
+  contracts, while version 3 requires verified rate-binding identifiers;
+- the checked-in source bundle binds the exact source-catalogue digest but has
+  zero artifacts, zero bindings, `ILLUSTRATIVE` status, and signature
+  `MISSING`; no fallback rates are invented;
 - population allocation, audit capacity, regulator operating budgets, and many
   agent defaults are `SYNTHETIC` or otherwise uncalibrated;
 - a scientific campaign is therefore rejected by construction.
@@ -84,7 +88,7 @@ are exact. The Korean central quintile is an anchor from a household table; it
 is not asserted to be an individual-income median. The Japanese value has no
 income source and is explicitly illustrative.
 
-### Cross-country conversion contract: implemented boundary, absent evidence
+### Cross-country conversion and source-evidence contracts
 
 Profile schema version 2 accepts optional `[[monetary_conversion]]` records as
 immutable `MonetaryConversionContract` values. Each record names one
@@ -97,6 +101,20 @@ rounding stage, and aggregation unit. Signed integer conversion rounds half ties
 away from zero, either per observation or after the declared aggregate is
 formed. There is no default method, target, rate, period, rounding stage, or
 scientific status.
+
+Profile schema version 3 keeps those terms and additionally requires stable
+`conversion_id` and `rate_binding_id` values. The referenced binding lives in a
+separate source-bundle schema. That bundle binds the exact SHA-256 of
+`sources.toml`, each regular CSV artifact's normalized relative path, media
+type, byte length, and digest, and a canonical JSON extraction recipe. The only
+version-1 interpreter selects exactly one row by source, jurisdiction, quote
+direction, method, rate dates, and retrieval date, then parses a positive
+reduced integer numerator and denominator without a floating-point conversion.
+The artifact and bundle are re-read when registered lineage is built and again
+when a manifest is emitted. Content hashes establish reproducibility, not
+publisher authenticity or scientific correctness. Repository attributes pin
+the hashed TOML/JSON inputs to LF bytes and disable text conversion for rate
+artifacts, so the same Git blobs retain the same digests across platforms.
 
 For pooled campaign outputs, the gate requires exactly one contract per local
 money profile. Every contract and referenced source must be `CALIBRATED`; source
@@ -112,18 +130,21 @@ the target-price and rate intervals must be identical. The gate also checks exac
 coherence between each local-to-target rate and the corresponding
 local-to-simulation scale. Matching labels alone cannot make outputs comparable.
 
-This structural gate is deliberately not the public substantive-comparability
-claim. The latter remains false, and full campaign validation reports
-`monetary_conversion.source_rate_binding=missing`, until each numerical rate and
-transformation recipe is bound to an immutable source extraction and the actual
-preregistered output/population contract.
+These gates are deliberately not one public substantive-comparability claim.
+The typed assessment reports separate source-extraction, source-signature,
+output/design, population, and preregistration results. A valid test artifact
+can clear only source extraction. Schema-v1 source bundles have signature
+`MISSING`, and the prototype has no run-specific output conversion binding,
+calibrated target-population specification, or external preregistration, so
+public comparability remains false.
 
-The checked-in `jurisdictions.toml` deliberately has zero conversion records.
-That absence is fingerprinted, summarized in exported manifests, and reported
-as four explicit campaign blockers. Even a structurally coherent test contract
-cannot clear the separate source-rate binding blocker. The software contract is
-ready to receive reviewed rates later, but P0 monetary calibration is not
-complete.
+The checked-in `jurisdictions.toml` deliberately remains schema version 2 with
+zero conversion records. The checked-in source bundle deliberately has zero
+artifacts and bindings. Those absences, the catalogue digest, and the missing
+signature are fingerprinted and summarized in exported manifests. The software
+can reproduce a reviewed rate extraction later, but P0 monetary calibration,
+scientific rate selection, output use, population binding, and preregistration
+are not complete.
 
 The complete profile bundle must also match the jurisdiction and source files
 whose hashes it claims. Registered lineage reloads those files both when the

@@ -138,10 +138,10 @@ class OutputMetricContractTests(unittest.TestCase):
 
     def test_registry_digest_and_snapshot_are_frozen(self) -> None:
         self.assertEqual(METRIC_CONTRACT_SCHEMA_VERSION, "1.0")
-        self.assertEqual(OUTPUT_SCHEMA_VERSION, "2.0")
+        self.assertEqual(OUTPUT_SCHEMA_VERSION, "3.0")
         self.assertEqual(
             metric_contract_registry_sha256(),
-            "1b700ad15e299a77ae7da94f5fe79e0dba36e3f4b35f312fa0eb028416f9eeef",
+            "1fc38d396d85cbd829bc60de0cb5d6f3c63a0996e40a74a60a431db28a32d966",
         )
         snapshot = metric_contract_registry_snapshot()
         self.assertEqual(len(snapshot), 220)
@@ -382,6 +382,25 @@ class OutputMetricContractTests(unittest.TestCase):
         self.assertEqual(lineage["profile_source_retrieved_on"], "2026-08-24")
         self.assertFalse(lineage["profile_dependencies_calibrated"])
         self.assertFalse(lineage["monetary_outputs_cross_country_comparable"])
+        comparability = manifest["monetary_comparability"]
+        self.assertEqual(
+            comparability["typed_assessment"],
+            manifest["profile_inputs"]["monetary_evidence_assessment"],
+        )
+        self.assertFalse(
+            comparability["manifest_gate"]["public_output_comparability"]
+        )
+        self.assertFalse(
+            comparability["manifest_gate"]["source_rate_evidence_bound"]
+        )
+        self.assertIn(
+            "monetary_conversion.source_rate_binding=missing",
+            comparability["typed_assessment"]["blockers"],
+        )
+        self.assertIn(
+            "monetary_conversion.output_design_binding=missing",
+            comparability["typed_assessment"]["blockers"],
+        )
         seed_contract = manifest["random_stream_contract"]
         self.assertEqual(
             seed_contract["root_seed"]["maximum_decimal"],

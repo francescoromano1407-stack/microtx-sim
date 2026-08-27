@@ -1,20 +1,27 @@
-"""Stable, machine-readable column contracts for exported simulation results.
+"""Stable, machine-readable contracts for exported simulation results.
 
-Version 2 exhaustively declares every column in a policy table and rejects
-undeclared row keys.  The named v1 prefix tuples preserve the migration
-boundary: v2 keeps the released non-empty header order while empty tables now
-expose the complete schema.  The generic CSV writer remains flexible.
+Version 2 exhaustively declared every policy-table column.  Version 3 preserves
+those filenames and columns exactly and introduces a separately versioned
+manifest envelope.  Output-v2 manifests had no independent manifest version;
+they are legacy artifacts, not payloads that current writers may relabel.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from hashlib import sha256
+import json
 from types import MappingProxyType
-from typing import Final, Mapping
+from typing import Final
 
 from ..metrics.reporting import REPEATED_SEED_METRIC_STEMS
 
 
-OUTPUT_SCHEMA_VERSION: Final[str] = "2.0"
+LEGACY_OUTPUT_SCHEMA_VERSION: Final[str] = "2.0"
+OUTPUT_SCHEMA_VERSION: Final[str] = "3.0"
+MANIFEST_SCHEMA_VERSION: Final[str] = "1.0"
+STANDALONE_SENSITIVITY_PROFILE: Final[str] = "standalone_sensitivity"
+STANDALONE_SENSITIVITY_SCHEMA_VERSION: Final[str] = "1.0"
 
 SEED_RESULT_V1_PREFIX_COLUMNS: Final[tuple[str, ...]] = (
     "scenario_id",
@@ -233,10 +240,232 @@ POLICY_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
     "epgc_subsidy_requirement.svg",
 )
 
+STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
+    "sensitivity.csv",
+    "sensitivity_metadata.json",
+)
+
+
+def manifest_schema_descriptor() -> dict[str, object]:
+    """Return the deterministic contract for the versioned manifest envelope.
+
+    Domain payloads inside a manifest retain their own schema/version contracts.
+    This descriptor owns the four fields which identify the on-disk output and
+    manifest contracts, while deliberately allowing additional domain metadata.
+    """
+
+    return {
+        "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
+        "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        "legacy_output_schema_versions_without_manifest_schema": ["1.0", "2.0"],
+        "required_fields": [
+            "artifact_files",
+            "manifest_schema_sha256",
+            "manifest_schema_version",
+            "output_schema_version",
+        ],
+        "reserved_fields": {
+            "artifact_files": {
+                "type": "array[string]",
+                "allowed_exact_values": [
+                    list(ARTIFACT_FILENAMES),
+                    list(POLICY_ARTIFACT_FILENAMES),
+                ],
+            },
+            "manifest_schema_sha256": {
+                "type": "lowercase-sha256",
+                "value": "sha256(canonical manifest schema descriptor)",
+            },
+            "manifest_schema_version": {
+                "type": "string",
+                "exact_value": MANIFEST_SCHEMA_VERSION,
+            },
+            "output_schema_version": {
+                "type": "string",
+                "exact_value": OUTPUT_SCHEMA_VERSION,
+            },
+        },
+        "additional_domain_metadata_allowed": True,
+    }
+
+
+def _manifest_schema_digest() -> str:
+    encoded = json.dumps(
+        manifest_schema_descriptor(),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+MANIFEST_SCHEMA_SHA256: Final[str] = _manifest_schema_digest()
+
+_MANIFEST_RESERVED_FIELDS = frozenset(
+    {
+        "artifact_files",
+        "manifest_schema_sha256",
+        "manifest_schema_version",
+        "output_schema_version",
+    }
+)
+
+
+def stamp_manifest_schema(
+    manifest: Mapping[str, object],
+    *,
+    artifact_files: Sequence[str],
+) -> dict[str, object]:
+    """Validate and stamp the reserved manifest-version fields.
+
+    Missing reserved fields mean the caller supplied unversioned metadata for a
+    new bundle.  Explicit legacy or conflicting declarations are rejected; the
+    writer never upgrades an already-versioned output-v2 manifest in place.
+    """
+
+    if not isinstance(manifest, Mapping):
+        raise TypeError("manifest must be a mapping")
+    selected_files = tuple(artifact_files)
+    if selected_files not in {ARTIFACT_FILENAMES, POLICY_ARTIFACT_FILENAMES}:
+        raise ValueError("artifact_files must match a registered output profile")
+
+    payload = dict(manifest)
+    unknown_manifest_fields = sorted(
+        key
+        for key in payload
+        if isinstance(key, str)
+        and key.startswith("manifest_schema_")
+        and key not in _MANIFEST_RESERVED_FIELDS
+    )
+    if unknown_manifest_fields:
+        raise ValueError(
+            "unknown manifest schema fields: " + ", ".join(unknown_manifest_fields)
+        )
+    present_reserved_fields = _MANIFEST_RESERVED_FIELDS.intersection(payload)
+    if present_reserved_fields and present_reserved_fields != _MANIFEST_RESERVED_FIELDS:
+        missing = sorted(_MANIFEST_RESERVED_FIELDS.difference(payload))
+        raise ValueError(
+            "manifest reserved schema fields must be supplied together; missing "
+            + ", ".join(missing)
+        )
+
+    declared_output_version = payload.get("output_schema_version")
+    if present_reserved_fields and declared_output_version != OUTPUT_SCHEMA_VERSION:
+        raise ValueError(
+            "manifest output_schema_version conflicts with the writer schema"
+        )
+    declared_manifest_version = payload.get("manifest_schema_version")
+    if present_reserved_fields and declared_manifest_version != MANIFEST_SCHEMA_VERSION:
+        raise ValueError(
+            "manifest_schema_version conflicts with the writer schema"
+        )
+    declared_manifest_digest = payload.get("manifest_schema_sha256")
+    if present_reserved_fields and declared_manifest_digest != MANIFEST_SCHEMA_SHA256:
+        raise ValueError("manifest_schema_sha256 conflicts with the writer schema")
+    declared_files = payload.get("artifact_files")
+    if present_reserved_fields and declared_files not in (
+        selected_files, list(selected_files)
+    ):
+        raise ValueError("manifest artifact_files conflicts with stable filenames")
+
+    payload["output_schema_version"] = OUTPUT_SCHEMA_VERSION
+    payload["manifest_schema_version"] = MANIFEST_SCHEMA_VERSION
+    payload["manifest_schema_sha256"] = MANIFEST_SCHEMA_SHA256
+    payload["artifact_files"] = list(selected_files)
+    return payload
+
+
+def standalone_sensitivity_schema_descriptor() -> dict[str, object]:
+    """Return the contract for the two-file standalone sensitivity profile."""
+
+    return {
+        "output_profile": STANDALONE_SENSITIVITY_PROFILE,
+        "output_profile_schema_version": STANDALONE_SENSITIVITY_SCHEMA_VERSION,
+        "artifact_files": list(STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES),
+        "table_columns": {"sensitivity.csv": list(SENSITIVITY_COLUMNS)},
+        "metadata_filename": "sensitivity_metadata.json",
+        "additional_metadata_allowed": True,
+    }
+
+
+def _standalone_sensitivity_schema_digest() -> str:
+    encoded = json.dumps(
+        standalone_sensitivity_schema_descriptor(),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+STANDALONE_SENSITIVITY_SCHEMA_SHA256: Final[str] = (
+    _standalone_sensitivity_schema_digest()
+)
+
+
+def stamp_standalone_sensitivity_schema(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    """Stamp metadata for the standalone sensitivity output profile.
+
+    This profile is not a complete output-v3 bundle and must not carry the full
+    bundle's ``output_schema_version`` or manifest envelope.
+    """
+
+    if not isinstance(metadata, Mapping):
+        raise TypeError("sensitivity metadata must be a mapping")
+    payload = dict(metadata)
+    forbidden_full_bundle_fields = sorted(
+        key
+        for key in payload
+        if isinstance(key, str)
+        and (
+            key == "output_schema_version"
+            or key.startswith("manifest_schema_")
+        )
+    )
+    if forbidden_full_bundle_fields:
+        raise ValueError(
+            "standalone sensitivity metadata cannot claim full-bundle fields: "
+            + ", ".join(forbidden_full_bundle_fields)
+        )
+    reserved = {
+        "artifact_files": list(STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES),
+        "output_profile": STANDALONE_SENSITIVITY_PROFILE,
+        "output_profile_schema_sha256": STANDALONE_SENSITIVITY_SCHEMA_SHA256,
+        "output_profile_schema_version": STANDALONE_SENSITIVITY_SCHEMA_VERSION,
+    }
+    present = set(reserved).intersection(payload)
+    unknown_profile_schema_fields = sorted(
+        key
+        for key in payload
+        if isinstance(key, str)
+        and key.startswith("output_profile_schema_")
+        and key not in reserved
+    )
+    if unknown_profile_schema_fields:
+        raise ValueError(
+            "unknown standalone sensitivity schema fields: "
+            + ", ".join(unknown_profile_schema_fields)
+        )
+    if present and present != set(reserved):
+        raise ValueError(
+            "standalone sensitivity schema fields must be supplied together"
+        )
+    if present and any(payload[key] != value for key, value in reserved.items()):
+        raise ValueError("standalone sensitivity schema fields conflict")
+    payload.update(reserved)
+    return payload
+
 
 __all__ = [
     "ARTIFACT_FILENAMES",
     "EPGC_FINANCING_COLUMNS",
+    "LEGACY_OUTPUT_SCHEMA_VERSION",
+    "MANIFEST_SCHEMA_SHA256",
+    "MANIFEST_SCHEMA_VERSION",
     "OUTPUT_SCHEMA_VERSION",
     "OPPORTUNITY_DECOMPOSITION_COLUMNS",
     "PLAYER_OUTCOME_COLUMNS",
@@ -248,5 +477,13 @@ __all__ = [
     "SEED_RESULT_V1_PREFIX_COLUMNS",
     "SENSITIVITY_COLUMNS",
     "SENSITIVITY_V1_PREFIX_COLUMNS",
+    "STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES",
+    "STANDALONE_SENSITIVITY_PROFILE",
+    "STANDALONE_SENSITIVITY_SCHEMA_SHA256",
+    "STANDALONE_SENSITIVITY_SCHEMA_VERSION",
     "TABLE_COLUMNS",
+    "manifest_schema_descriptor",
+    "standalone_sensitivity_schema_descriptor",
+    "stamp_manifest_schema",
+    "stamp_standalone_sensitivity_schema",
 ]

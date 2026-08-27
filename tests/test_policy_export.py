@@ -31,7 +31,10 @@ from microtx_sim.outputs.manifest import (
 )
 from microtx_sim.outputs.schema import (
     EPGC_FINANCING_COLUMNS,
+    MANIFEST_SCHEMA_SHA256,
+    MANIFEST_SCHEMA_VERSION,
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
+    OUTPUT_SCHEMA_VERSION,
     PLAYER_OUTCOME_COLUMNS,
     POLICY_ARTIFACT_FILENAMES,
     SCENARIO_SUMMARY_COLUMNS,
@@ -62,23 +65,29 @@ def _canonical_sha256(value: object) -> str:
 def _comparable_profile_inputs_fixture() -> dict[str, object]:
     """Minimal serialized fixture for the manifest's fail-closed mirror."""
 
+    scale_specs = (
+        ("UK", "GBP", 4, 2),
+        ("KR", "KRW", 6, 3),
+        ("JP", "JPY", 8, 4),
+        ("BE", "EUR", 10, 5),
+    )
     scales = [
         {
-            "jurisdiction_code": "AA",
-            "currency": "GBP",
-            "nominal_monthly_anchor_minor_units": 4,
-            "simulation_monthly_anchor_cents": 2,
+            "jurisdiction_code": code,
+            "currency": currency,
+            "reported_income_values": [nominal_anchor],
+            "source_period": "2025-01-01/2025-12-31",
+            "nominal_monthly_anchor_minor_units": nominal_anchor,
+            "anchor_selection": "test-only anchor",
+            "simulation_monthly_anchor_cents": simulation_anchor,
             "anchor_status": "CALIBRATED",
             "scale_status": "CALIBRATED",
-        },
-        {
-            "jurisdiction_code": "BB",
-            "currency": "EUR",
-            "nominal_monthly_anchor_minor_units": 6,
-            "simulation_monthly_anchor_cents": 3,
-            "anchor_status": "CALIBRATED",
-            "scale_status": "CALIBRATED",
-        },
+            "source_ids": ["TEST_ONLY_SOURCE"],
+            "condition": "test-only users",
+            "denominator": "test-only users",
+            "cross_country_comparable": False,
+        }
+        for code, currency, nominal_anchor, simulation_anchor in scale_specs
     ]
     conversions = [
         {
@@ -103,17 +112,25 @@ def _comparable_profile_inputs_fixture() -> dict[str, object]:
             "retrieved_on": "2026-08-24",
             "rounding_method": "nearest_minor_unit_half_away_from_zero",
             "rounding_scope": "AFTER_AGGREGATION",
+            "notes": "test-only conversion",
+            "conversion_id": None,
+            "rate_binding_id": None,
         }
-        for code, source_currency in (("AA", "GBP"), ("BB", "EUR"))
+        for code, source_currency, _nominal, _simulation in scale_specs
     ]
     return {
         "lineage_status": "registered_profile_bundle",
         "snapshot": {
             "profile_bundle": {
+                "jurisdiction_schema_version": 2,
                 "sources": [
                     {
                         "id": "TEST_ONLY_SOURCE",
+                        "publisher": "Test fixture",
+                        "title": "Test-only monetary conversion",
+                        "url": "https://example.invalid/test-only-source",
                         "period": "2025-01-01/2025-12-31",
+                        "geography": "Test jurisdictions",
                         "supports": ["foreign_exchange_rate"],
                         "calibration_status": "CALIBRATED",
                         "retrieved_on": "2026-08-24",
@@ -202,7 +219,15 @@ class PolicyExportTests(unittest.TestCase):
                 players = list(csv.DictReader(handle))
             self.assertEqual(len(players), 2 * 7 * 16)
             manifest = json.loads((output / "manifest.json").read_text("utf-8"))
-            self.assertEqual(manifest["output_schema_version"], "2.0")
+            self.assertEqual(
+                manifest["output_schema_version"], OUTPUT_SCHEMA_VERSION
+            )
+            self.assertEqual(
+                manifest["manifest_schema_version"], MANIFEST_SCHEMA_VERSION
+            )
+            self.assertEqual(
+                manifest["manifest_schema_sha256"], MANIFEST_SCHEMA_SHA256
+            )
             self.assertTrue(manifest["synthetic_only"])
             self.assertFalse(manifest["empirical_validation_claimed"])
             self.assertEqual(
@@ -769,7 +794,7 @@ class PolicyExportTests(unittest.TestCase):
                     "status_counts": {},
                 },
             )
-            self.assertEqual(lineage["snapshot"]["schema_version"], 2)
+            self.assertEqual(lineage["snapshot"]["schema_version"], 3)
             self.assertEqual(
                 lineage["snapshot"]["profile_bundle"]["monetary_conversions"],
                 [],

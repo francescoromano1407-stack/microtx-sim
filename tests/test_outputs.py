@@ -26,6 +26,9 @@ from microtx_sim.outputs.plots import (
 from microtx_sim.outputs.schema import (
     ARTIFACT_FILENAMES,
     EPGC_FINANCING_COLUMNS,
+    LEGACY_OUTPUT_SCHEMA_VERSION,
+    MANIFEST_SCHEMA_SHA256,
+    MANIFEST_SCHEMA_VERSION,
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
     OUTPUT_SCHEMA_VERSION,
     PLAYER_OUTCOME_COLUMNS,
@@ -36,6 +39,13 @@ from microtx_sim.outputs.schema import (
     SEED_RESULT_V1_PREFIX_COLUMNS,
     SENSITIVITY_COLUMNS,
     SENSITIVITY_V1_PREFIX_COLUMNS,
+    STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES,
+    STANDALONE_SENSITIVITY_PROFILE,
+    STANDALONE_SENSITIVITY_SCHEMA_SHA256,
+    STANDALONE_SENSITIVITY_SCHEMA_VERSION,
+    manifest_schema_descriptor,
+    standalone_sensitivity_schema_descriptor,
+    stamp_standalone_sensitivity_schema,
 )
 from microtx_sim.outputs.writers import (
     write_batch_artifacts,
@@ -68,7 +78,7 @@ class OutputSchemaTests(unittest.TestCase):
         )
 
     def test_schema_version_columns_and_filenames_are_stable(self) -> None:
-        self.assertEqual(OUTPUT_SCHEMA_VERSION, "2.0")
+        self.assertEqual(OUTPUT_SCHEMA_VERSION, "3.0")
         self.assertEqual(
             ARTIFACT_FILENAMES,
             (
@@ -120,7 +130,7 @@ class OutputSchemaTests(unittest.TestCase):
 
     def test_v2_schema_fingerprint_is_frozen(self) -> None:
         payload = {
-            "version": OUTPUT_SCHEMA_VERSION,
+            "version": LEGACY_OUTPUT_SCHEMA_VERSION,
             "artifacts": POLICY_ARTIFACT_FILENAMES,
             "columns": {
                 "seed_results.csv": SEED_RESULT_COLUMNS,
@@ -142,6 +152,120 @@ class OutputSchemaTests(unittest.TestCase):
             sha256(encoded).hexdigest(),
             "439df3faab6000565ccb8a33ce81acbc69baeb6e3058cb0e67bf3fd1390ffd80",
         )
+
+    def test_v3_changes_only_the_versioned_manifest_boundary(self) -> None:
+        payload = {
+            "version": OUTPUT_SCHEMA_VERSION,
+            "artifacts": POLICY_ARTIFACT_FILENAMES,
+            "columns": {
+                "seed_results.csv": SEED_RESULT_COLUMNS,
+                "scenario_summary.csv": SCENARIO_SUMMARY_COLUMNS,
+                "epgc_financing.csv": EPGC_FINANCING_COLUMNS,
+                "sensitivity.csv": SENSITIVITY_COLUMNS,
+                "player_outcomes.csv": PLAYER_OUTCOME_COLUMNS,
+                "opportunity_cost_decomposition.csv": (
+                    OPPORTUNITY_DECOMPOSITION_COLUMNS
+                ),
+            },
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self.assertEqual(
+            sha256(encoded).hexdigest(),
+            "4eefa0189157f626e2ae815318ccee46eb736b37855896f8ce61eb74188f540f",
+        )
+
+    def test_manifest_schema_descriptor_and_fingerprint_are_frozen(self) -> None:
+        descriptor = manifest_schema_descriptor()
+        self.assertEqual(descriptor["manifest_schema_version"], "1.0")
+        self.assertEqual(descriptor["output_schema_version"], "3.0")
+        self.assertEqual(
+            descriptor["legacy_output_schema_versions_without_manifest_schema"],
+            ["1.0", "2.0"],
+        )
+        self.assertEqual(
+            descriptor["required_fields"],
+            [
+                "artifact_files",
+                "manifest_schema_sha256",
+                "manifest_schema_version",
+                "output_schema_version",
+            ],
+        )
+        encoded = json.dumps(
+            descriptor,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(sha256(encoded).hexdigest(), MANIFEST_SCHEMA_SHA256)
+        self.assertEqual(
+            MANIFEST_SCHEMA_SHA256,
+            "c5d823c3c36ec7a8d8a28acef1362d9234a4a6bf3e134abd66486ca2b38eb103",
+        )
+
+    def test_standalone_sensitivity_has_its_own_frozen_profile(self) -> None:
+        descriptor = standalone_sensitivity_schema_descriptor()
+        self.assertEqual(
+            descriptor,
+            {
+                "additional_metadata_allowed": True,
+                "artifact_files": [
+                    "sensitivity.csv",
+                    "sensitivity_metadata.json",
+                ],
+                "metadata_filename": "sensitivity_metadata.json",
+                "output_profile": "standalone_sensitivity",
+                "output_profile_schema_version": "1.0",
+                "table_columns": {
+                    "sensitivity.csv": list(SENSITIVITY_COLUMNS),
+                },
+            },
+        )
+        encoded = json.dumps(
+            descriptor,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(
+            sha256(encoded).hexdigest(),
+            STANDALONE_SENSITIVITY_SCHEMA_SHA256,
+        )
+        self.assertEqual(
+            STANDALONE_SENSITIVITY_SCHEMA_SHA256,
+            "52a2636219ac233ecd95d5458b975c6e4fa5d8df14b57e848a2e498161a5cb3a",
+        )
+
+        stamped = stamp_standalone_sensitivity_schema({"synthetic_only": True})
+        self.assertNotIn("output_schema_version", stamped)
+        self.assertEqual(stamped["output_profile"], STANDALONE_SENSITIVITY_PROFILE)
+        self.assertEqual(
+            stamped["output_profile_schema_version"],
+            STANDALONE_SENSITIVITY_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            stamped["artifact_files"],
+            list(STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES),
+        )
+
+    def test_standalone_sensitivity_rejects_full_bundle_or_partial_claims(self) -> None:
+        invalid = (
+            {"output_schema_version": OUTPUT_SCHEMA_VERSION},
+            {"manifest_schema_version": MANIFEST_SCHEMA_VERSION},
+            {"output_profile": STANDALONE_SENSITIVITY_PROFILE},
+            {"output_profile_schema_version": None},
+            {"output_profile_schema_verison": "1.0"},
+        )
+        for metadata in invalid:
+            with self.subTest(metadata=metadata):
+                with self.assertRaises(ValueError):
+                    stamp_standalone_sensitivity_schema(metadata)
 
     def test_emitted_policy_keys_and_headers_exactly_match_v2_schema(self) -> None:
         tables = {
@@ -249,6 +373,14 @@ class AtomicWriterTests(unittest.TestCase):
 
             manifest = json.loads((root / "manifest.json").read_text("utf-8"))
             self.assertEqual(manifest["output_schema_version"], OUTPUT_SCHEMA_VERSION)
+            self.assertEqual(
+                manifest["manifest_schema_version"],
+                MANIFEST_SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                manifest["manifest_schema_sha256"],
+                MANIFEST_SCHEMA_SHA256,
+            )
             self.assertEqual(manifest["artifact_files"], list(ARTIFACT_FILENAMES))
             self.assertEqual(manifest["run_id"], "batch-é")
             self.assertFalse(any(root.glob(".*.tmp")))
@@ -270,6 +402,39 @@ class AtomicWriterTests(unittest.TestCase):
                 self.assertEqual(
                     (first / filename).read_bytes(), (second / filename).read_bytes()
                 )
+
+    def test_pre_v3_epgc_csv_bytes_remain_frozen(self) -> None:
+        expected = (
+            b"scenario_id,seed,public_contract_revenue_cents,"
+            b"minimum_public_contribution_cents,maximum_budget_cents,"
+            b"profit_safe_cents,feasible_under_budget_cap,"
+            b"sustainable_under_policy,clawback_cents,penalty_cents\n"
+            b"legacy-v2,7,0,1,2,-3,true,false,4,5\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_batch_artifacts(
+                root,
+                seed_rows=(),
+                summary_rows=(),
+                epgc_rows=(
+                    {
+                        "scenario_id": "legacy-v2",
+                        "seed": 7,
+                        "public_contract_revenue_cents": 0,
+                        "minimum_public_contribution_cents": 1,
+                        "maximum_budget_cents": 2,
+                        "profit_safe_cents": -3,
+                        "feasible_under_budget_cap": True,
+                        "sustainable_under_policy": False,
+                        "clawback_cents": 4,
+                        "penalty_cents": 5,
+                    },
+                ),
+                sensitivity_rows=(),
+                manifest={},
+            )
+            self.assertEqual((root / "epgc_financing.csv").read_bytes(), expected)
 
     def test_versioned_batch_tables_reject_undeclared_columns(self) -> None:
         arguments = {
@@ -329,22 +494,83 @@ class AtomicWriterTests(unittest.TestCase):
             }
             self.assertEqual(after, before)
 
-    def test_v1_manifest_cannot_describe_a_v2_bundle(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            destination = Path(directory) / "bundle"
-            with self.assertRaisesRegex(
-                ValueError,
-                "output_schema_version conflicts",
+    def test_legacy_output_manifests_cannot_describe_a_v3_bundle(self) -> None:
+        # Output-v2 manifests had no independent manifest version.  They remain
+        # readable historical records, but current writers never relabel them.
+        for legacy_version in ("1.0", LEGACY_OUTPUT_SCHEMA_VERSION):
+            with (
+                self.subTest(legacy_version=legacy_version),
+                tempfile.TemporaryDirectory() as directory,
             ):
-                write_batch_artifacts(
-                    destination,
-                    (),
-                    (),
-                    (),
-                    (),
-                    {"output_schema_version": "1.0"},
-                )
-            self.assertFalse(destination.exists())
+                destination = Path(directory) / "bundle"
+                legacy_manifest = {"output_schema_version": legacy_version}
+                self.assertNotIn("manifest_schema_version", legacy_manifest)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "reserved schema fields must be supplied together",
+                ):
+                    write_batch_artifacts(
+                        destination,
+                        (),
+                        (),
+                        (),
+                        (),
+                        legacy_manifest,
+                    )
+                self.assertFalse(destination.exists())
+
+    def test_partial_or_unknown_manifest_contract_is_rejected_before_writes(self) -> None:
+        invalid_contracts = (
+            ({"manifest_schema_version": "0.0"}, "supplied together"),
+            ({"manifest_schema_version": None}, "supplied together"),
+            ({"output_schema_version": None}, "supplied together"),
+            ({"artifact_files": None}, "supplied together"),
+            ({"manifest_schema_verison": "1.0"}, "unknown manifest schema"),
+        )
+        for manifest, message in invalid_contracts:
+            with (
+                self.subTest(manifest=manifest),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                destination = Path(directory) / "bundle"
+                with self.assertRaisesRegex(ValueError, message):
+                    write_batch_artifacts(
+                        destination,
+                        (),
+                        (),
+                        (),
+                        (),
+                        manifest,
+                    )
+                self.assertFalse(destination.exists())
+
+    def test_complete_but_conflicting_manifest_contract_is_rejected(self) -> None:
+        valid = {
+            "artifact_files": list(ARTIFACT_FILENAMES),
+            "manifest_schema_sha256": MANIFEST_SCHEMA_SHA256,
+            "manifest_schema_version": MANIFEST_SCHEMA_VERSION,
+            "output_schema_version": OUTPUT_SCHEMA_VERSION,
+        }
+        mutations = (
+            {"manifest_schema_version": None},
+            {"manifest_schema_version": True},
+            {"manifest_schema_sha256": None},
+            {"manifest_schema_sha256": "0" * 64},
+            {"output_schema_version": None},
+            {"artifact_files": None},
+        )
+        for mutation in mutations:
+            with (
+                self.subTest(mutation=mutation),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                destination = Path(directory) / "bundle"
+                manifest = {**valid, **mutation}
+                with self.assertRaisesRegex(ValueError, "conflicts"):
+                    write_batch_artifacts(
+                        destination, (), (), (), (), manifest
+                    )
+                self.assertFalse(destination.exists())
 
     def test_generic_writer_retains_ad_hoc_extra_columns(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

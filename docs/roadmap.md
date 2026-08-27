@@ -54,7 +54,7 @@ These tasks block scientific interpretation.
    estimand. Never treat nominal GBP, KRW, JPY, and EUR minor units as directly
    comparable simulation cents.
 
-   The version-2 profile schema now implements the typed exact-rate contract,
+   Profile schema version 2 implements the typed declaration-only exact-rate contract,
    method-specific source and typed-date validation, explicit aggregation-stage
    rounding, registered-file re-attestation, lossless decimal-string rate
    mirrors, lineage/manifest retention, complete-coverage gate, common-basis
@@ -64,7 +64,15 @@ These tasks block scientific interpretation.
    target estimand, and binding to the preregistered campaign population. The
    public comparability claim and campaign gate remain false with an explicit
    `source_rate_binding=missing` blocker even when test-only algebra clears the
-   structural checks.
+   structural checks. Version 3 now additionally requires stable conversion and
+   rate-binding IDs and verifies an exact rational from content-addressed CSV
+   bytes through one canonical declarative recipe. Registered lineage version 3
+   re-attests the source catalogue, bundle, artifact, recipe, and extraction;
+   minimal frozen lineage v1/v2 fixtures plus locked registered projections
+   exercise the migration boundary. The checked-in
+   source bundle is empty, illustrative, and missing a signature. Even a valid
+   test extraction clears only the source subgate: signature, output/design,
+   population, and external-preregistration blockers remain independent.
 3. **Calibrate participation and spending.** Estimate gaming participation,
    payer conversion including zero spenders, conditional spend distributions,
    price sensitivity, switching, churn, and time allocation by age and income.

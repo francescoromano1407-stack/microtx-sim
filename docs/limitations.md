@@ -67,19 +67,21 @@ same-currency conversion into simulation cents may round to the nearest integer.
 This numerical property does not make the underlying monetary assumptions
 empirically exact.
 
-The code now has a typed, dated, exact-rational FX/PPP conversion contract and a
-strict pooled-currency campaign gate. That is a validation boundary, not a
-calibration result: the checked-in profile bundle contains no conversion rates,
-its manifest conversion summary is empty, and campaign validation reports each
-jurisdiction's missing contract. No current output is cross-country comparable.
+The code now has a typed, dated, exact-rational FX/PPP conversion contract, a
+content-addressed exact-CSV extraction contract, and a strict pooled-currency
+campaign gate. Those are validation boundaries, not a calibration result: the
+checked-in profile bundle contains no conversion rates, the checked-in source
+bundle contains no artifacts or bindings and has signature `MISSING`, and the
+manifest conversion summary is empty. No current output is cross-country comparable.
 The contract makes per-observation versus after-aggregation rounding explicit;
 those stages can yield different totals and cannot be interchanged. It also
 requires method-specific source scope, typed date intervals, and registered-file
 re-attestation, but it cannot decide whether a declared estimand or population
 is scientifically appropriate. That requires preregistration and independent
-evidence review. Structural coherence therefore does not promote the public
-comparability flag: it remains false behind an explicit missing source-rate
-binding blocker.
+evidence review. Structural coherence or a reproducible test extraction
+therefore does not promote the public comparability flag. Source extraction,
+bundle signature, output/design binding, population binding, and external
+preregistration remain separate blockers.
 
 ### Official metrics are mostly dormant
 

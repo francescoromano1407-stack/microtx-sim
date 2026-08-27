@@ -8,7 +8,7 @@ from hashlib import sha256
 from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 import tomllib
 
 from ..agents.jurisdictions import (
@@ -19,10 +19,17 @@ from ..agents.jurisdictions import (
 from ..consumers.population import CountryProfile
 from ..types import ProvenanceStatus
 
+if TYPE_CHECKING:
+    from .rate_evidence import RateEvidenceBundle
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_JURISDICTIONS_PATH = _PROJECT_ROOT / "configs" / "jurisdictions.toml"
 DEFAULT_SOURCES_PATH = _PROJECT_ROOT / "data" / "provenance" / "sources.toml"
+DEFAULT_SOURCE_BUNDLE_PATH = (
+    _PROJECT_ROOT / "data" / "provenance" / "source_bundle.toml"
+)
+_USE_REGISTERED_SOURCE_BUNDLE = object()
 
 _EXPECTED_CODES = ("UK", "KR", "JP", "BE")
 _SIMULATION_MONTHLY_INCOME_CENTS = 180_000
@@ -67,7 +74,7 @@ _CONVERSION_SOURCE_SUPPORTS = {
     "FX": frozenset({"foreign_exchange_rate"}),
     "PPP": frozenset({"purchasing_power_parity"}),
 }
-_MONETARY_CONVERSION_FIELDS = frozenset(
+_MONETARY_CONVERSION_V2_FIELDS = frozenset(
     {
         "jurisdiction_code",
         "source_currency",
@@ -90,6 +97,76 @@ _MONETARY_CONVERSION_FIELDS = frozenset(
         "retrieved_on",
         "notes",
     }
+)
+_MONETARY_CONVERSION_V3_FIELDS = _MONETARY_CONVERSION_V2_FIELDS.union(
+    {"conversion_id", "rate_binding_id"}
+)
+_MONETARY_FIXED_BLOCKERS = (
+    (
+        "source_rate_evidence_bound",
+        "monetary_conversion.source_rate_binding=missing",
+    ),
+    (
+        "source_bundle_signature_bound",
+        "monetary_conversion.source_bundle_signature=missing",
+    ),
+    (
+        "output_design_binding_bound",
+        "monetary_conversion.output_design_binding=missing",
+    ),
+    (
+        "population_binding_bound",
+        "monetary_conversion.population_binding=missing",
+    ),
+    (
+        "preregistration_bound",
+        "monetary_conversion.preregistration_binding=missing",
+    ),
+)
+_MONETARY_ASSESSMENT_FIELDS = frozenset(
+    {
+        "structure_coherent",
+        "source_rate_evidence_bound",
+        "source_bundle_signature_bound",
+        "output_design_binding_bound",
+        "population_binding_bound",
+        "preregistration_bound",
+        "public_output_comparability",
+        "blockers",
+    }
+)
+_SOURCE_PROVENANCE_SNAPSHOT_FIELDS = frozenset(
+    {
+        "id",
+        "publisher",
+        "title",
+        "url",
+        "period",
+        "geography",
+        "supports",
+        "calibration_status",
+        "retrieved_on",
+    }
+)
+_MONEY_SCALE_SNAPSHOT_FIELDS = frozenset(
+    {
+        "jurisdiction_code",
+        "currency",
+        "reported_income_values",
+        "source_period",
+        "nominal_monthly_anchor_minor_units",
+        "anchor_selection",
+        "anchor_status",
+        "source_ids",
+        "condition",
+        "denominator",
+        "simulation_monthly_anchor_cents",
+        "scale_status",
+        "cross_country_comparable",
+    }
+)
+_MONETARY_CONVERSION_SNAPSHOT_FIELDS = _MONETARY_CONVERSION_V3_FIELDS.union(
+    {"rate_numerator_decimal", "rate_denominator_decimal"}
 )
 
 
@@ -356,6 +433,8 @@ class MonetaryConversionContract:
     source_ids: tuple[str, ...]
     retrieved_on: date
     notes: str = ""
+    conversion_id: str | None = None
+    rate_binding_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_ids, tuple):
@@ -446,6 +525,22 @@ class MonetaryConversionContract:
             )
         if not isinstance(self.notes, str):
             raise ProfileValidationError("monetary conversion notes must be text")
+        identifiers = (self.conversion_id, self.rate_binding_id)
+        if (identifiers[0] is None) != (identifiers[1] is None):
+            raise ProfileValidationError(
+                "monetary conversion identity and rate binding must be supplied together"
+            )
+        for name, value in zip(
+            ("conversion_id", "rate_binding_id"), identifiers, strict=True
+        ):
+            if value is not None and (
+                not isinstance(value, str)
+                or not value
+                or value.strip() != value
+            ):
+                raise ProfileValidationError(
+                    f"monetary conversion {name} must be non-empty canonical text"
+                )
 
     @property
     def conversion_ratio(self) -> Fraction:
@@ -522,6 +617,579 @@ class MonetaryConversionContract:
 
 
 @dataclass(frozen=True, slots=True)
+class MonetaryEvidenceAssessment:
+    """Typed, fail-closed assessment shared by campaign and manifest gates.
+
+    Reproducible source extraction is intentionally independent from the
+    still-unimplemented output, population, and external preregistration
+    bindings.  A valid rate snapshot can therefore clear only one subgate.
+    """
+
+    structure_coherent: bool
+    source_rate_evidence_bound: bool
+    source_bundle_signature_bound: bool
+    output_design_binding_bound: bool
+    population_binding_bound: bool
+    preregistration_bound: bool
+    public_output_comparability: bool
+    blockers: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        boolean_fields = (
+            "structure_coherent",
+            "source_rate_evidence_bound",
+            "source_bundle_signature_bound",
+            "output_design_binding_bound",
+            "population_binding_bound",
+            "preregistration_bound",
+            "public_output_comparability",
+        )
+        if any(type(getattr(self, field)) is not bool for field in boolean_fields):
+            raise ProfileValidationError(
+                "monetary evidence assessment flags must be booleans"
+            )
+        if not isinstance(self.blockers, tuple) or any(
+            not isinstance(blocker, str) or not blocker
+            for blocker in self.blockers
+        ):
+            raise ProfileValidationError(
+                "monetary evidence blockers must be immutable non-empty text"
+            )
+        if len(set(self.blockers)) != len(self.blockers):
+            raise ProfileValidationError(
+                "monetary evidence blockers must be unique"
+            )
+        if any(
+            getattr(self, field)
+            for field in (
+                "source_bundle_signature_bound",
+                "output_design_binding_bound",
+                "population_binding_bound",
+                "preregistration_bound",
+            )
+        ):
+            raise ProfileValidationError(
+                "current monetary evidence schema cannot promote signature, "
+                "output/design, population, or preregistration gates"
+            )
+        if self.source_rate_evidence_bound and not self.structure_coherent:
+            raise ProfileValidationError(
+                "bound source-rate evidence requires coherent monetary structure"
+            )
+        expected_suffix = tuple(
+            blocker
+            for field, blocker in _MONETARY_FIXED_BLOCKERS
+            if not getattr(self, field)
+        )
+        if len(self.blockers) < len(expected_suffix) or (
+            self.blockers[-len(expected_suffix):] != expected_suffix
+        ):
+            raise ProfileValidationError(
+                "monetary evidence blocker codes do not match their flags"
+            )
+        structural_blockers = self.blockers[: -len(expected_suffix)]
+        if self.structure_coherent and structural_blockers:
+            raise ProfileValidationError(
+                "coherent monetary structure cannot carry structural blockers"
+            )
+        if not self.structure_coherent and not structural_blockers:
+            raise ProfileValidationError(
+                "incoherent monetary structure requires a typed structural blocker"
+            )
+        if structural_blockers and not _valid_structural_monetary_blockers(
+            structural_blockers
+        ):
+            raise ProfileValidationError(
+                "monetary evidence contains unknown or disordered structural blockers"
+            )
+        expected_public = all(
+            (
+                self.structure_coherent,
+                self.source_rate_evidence_bound,
+                self.source_bundle_signature_bound,
+                self.output_design_binding_bound,
+                self.population_binding_bound,
+                self.preregistration_bound,
+            )
+        )
+        if self.public_output_comparability is not expected_public:
+            raise ProfileValidationError(
+                "monetary evidence public-comparability flag is inconsistent"
+            )
+
+
+def monetary_evidence_assessment_from_snapshot(
+    value: object,
+    *,
+    registered_lineage: bool,
+    bundle_snapshot: object | None = None,
+) -> MonetaryEvidenceAssessment:
+    """Parse one serialized assessment through the authoritative validator."""
+
+    if not isinstance(value, Mapping) or set(value) != _MONETARY_ASSESSMENT_FIELDS:
+        raise ProfileValidationError(
+            "profile snapshot monetary evidence assessment is malformed"
+        )
+    boolean_fields = _MONETARY_ASSESSMENT_FIELDS.difference({"blockers"})
+    if any(type(value[field]) is not bool for field in boolean_fields):
+        raise ProfileValidationError(
+            "profile snapshot monetary evidence flags must be booleans"
+        )
+    blockers = value["blockers"]
+    if not isinstance(blockers, (list, tuple)) or any(
+        not isinstance(blocker, str) or not blocker for blocker in blockers
+    ):
+        raise ProfileValidationError(
+            "profile snapshot monetary evidence blockers are malformed"
+        )
+    assessment = MonetaryEvidenceAssessment(
+        structure_coherent=value["structure_coherent"],
+        source_rate_evidence_bound=value["source_rate_evidence_bound"],
+        source_bundle_signature_bound=value["source_bundle_signature_bound"],
+        output_design_binding_bound=value["output_design_binding_bound"],
+        population_binding_bound=value["population_binding_bound"],
+        preregistration_bound=value["preregistration_bound"],
+        public_output_comparability=value["public_output_comparability"],
+        blockers=tuple(blockers),
+    )
+    if not registered_lineage and assessment.source_rate_evidence_bound:
+        raise ProfileValidationError(
+            "unregistered profile lineage cannot claim bound source-rate evidence"
+        )
+    if bundle_snapshot is not None:
+        expected_coherent, expected_structural = (
+            monetary_structure_assessment_from_snapshot(bundle_snapshot)
+        )
+        expected_suffix = tuple(
+            blocker
+            for field, blocker in _MONETARY_FIXED_BLOCKERS
+            if not getattr(assessment, field)
+        )
+        actual_structural = assessment.blockers[: -len(expected_suffix)]
+        if (
+            assessment.structure_coherent is not expected_coherent
+            or actual_structural != expected_structural
+        ):
+            raise ProfileValidationError(
+                "profile monetary assessment does not match its bundle structure"
+            )
+    return assessment
+
+
+def _valid_structural_monetary_blockers(blockers: tuple[str, ...]) -> bool:
+    jurisdiction_blockers: list[str] = []
+    for code in _EXPECTED_CODES:
+        allowed = {
+            f"{code}.monetary_conversion=missing",
+            f"{code}.monetary_conversion={ProvenanceStatus.ANCHORED.value}",
+            f"{code}.monetary_conversion={ProvenanceStatus.ILLUSTRATIVE.value}",
+            f"{code}.monetary_conversion={ProvenanceStatus.SYNTHETIC.value}",
+        }
+        jurisdiction_blockers.extend(
+            blocker for blocker in blockers if blocker in allowed
+        )
+    if jurisdiction_blockers:
+        if len(jurisdiction_blockers) != len(blockers):
+            return False
+        expected = tuple(
+            blocker
+            for code in _EXPECTED_CODES
+            for blocker in blockers
+            if blocker.startswith(f"{code}.monetary_conversion=")
+        )
+        return tuple(blockers) == expected and len(expected) == len(blockers)
+    ordered_global = (
+        "monetary_conversion.comparison_basis=inconsistent",
+        "monetary_conversion.internal_scale=incoherent",
+    )
+    return tuple(blockers) in {
+        ("monetary_conversion.structure=unavailable",),
+        (ordered_global[0],),
+        (ordered_global[1],),
+        ordered_global,
+    }
+
+
+def monetary_structure_assessment_from_snapshot(
+    bundle_snapshot: object,
+) -> tuple[bool, tuple[str, ...]]:
+    """Derive structural blockers only after rebuilding the typed contracts.
+
+    The rebuild is deliberate: a common malformed value in every jurisdiction
+    must not survive merely because equality-based comparison signatures still
+    agree.  It also prevents a non-calibrated or missing conversion from hiding
+    malformed rows, extra jurisdictions, or lossy integer mirrors behind an
+    early blocker return.
+    """
+
+    if not isinstance(bundle_snapshot, Mapping):
+        raise ProfileValidationError("profile bundle snapshot is malformed")
+    jurisdiction_schema_version = bundle_snapshot.get(
+        "jurisdiction_schema_version"
+    )
+    if (
+        type(jurisdiction_schema_version) is not int
+        or jurisdiction_schema_version not in {1, 2, 3}
+    ):
+        raise ProfileValidationError(
+            "profile monetary structure has invalid jurisdiction schema metadata"
+        )
+    raw_sources = bundle_snapshot.get("sources")
+    raw_scales = bundle_snapshot.get("money_scales")
+    raw_conversions = bundle_snapshot.get("monetary_conversions")
+    if (
+        not isinstance(raw_sources, list)
+        or not isinstance(raw_scales, list)
+        or not isinstance(raw_conversions, list)
+        or any(
+            not isinstance(row, Mapping)
+            for row in (*raw_sources, *raw_scales, *raw_conversions)
+        )
+    ):
+        raise ProfileValidationError(
+            "profile monetary structure tables are malformed"
+        )
+    sources = tuple(_source_from_snapshot(row) for row in raw_sources)
+    scales = tuple(_money_scale_from_snapshot(row) for row in raw_scales)
+    conversions = tuple(
+        _monetary_conversion_from_snapshot(row) for row in raw_conversions
+    )
+    scale_codes = tuple(scale.jurisdiction_code for scale in scales)
+    conversion_codes = tuple(
+        conversion.jurisdiction_code for conversion in conversions
+    )
+    if len(set(scale_codes)) != len(scale_codes) or len(
+        set(conversion_codes)
+    ) != len(conversion_codes):
+        raise ProfileValidationError(
+            "profile monetary structure jurisdiction codes are malformed"
+        )
+    if len(scales) > 1 and scale_codes != _EXPECTED_CODES:
+        raise ProfileValidationError(
+            "profile monetary structure jurisdiction order does not match "
+            "the profile schema"
+        )
+    unknown_conversion_codes = sorted(
+        set(conversion_codes).difference(scale_codes)
+    )
+    if unknown_conversion_codes:
+        raise ProfileValidationError(
+            "profile monetary conversions contain unknown jurisdictions: "
+            + ", ".join(unknown_conversion_codes)
+        )
+    conversion_ids = tuple(
+        conversion.conversion_id
+        for conversion in conversions
+        if conversion.conversion_id is not None
+    )
+    if len(set(conversion_ids)) != len(conversion_ids):
+        raise ProfileValidationError(
+            "profile monetary conversions repeat a conversion id"
+        )
+    rate_binding_ids = tuple(
+        conversion.rate_binding_id
+        for conversion in conversions
+        if conversion.rate_binding_id is not None
+    )
+    if len(set(rate_binding_ids)) != len(rate_binding_ids):
+        raise ProfileValidationError(
+            "profile monetary conversions repeat a rate-binding id"
+        )
+    if jurisdiction_schema_version == 3 and any(
+        conversion.conversion_id is None
+        or conversion.rate_binding_id is None
+        for conversion in conversions
+    ):
+        raise ProfileValidationError(
+            "jurisdiction schema version 3 requires monetary conversion ids"
+        )
+    if jurisdiction_schema_version < 3 and any(
+        conversion.conversion_id is not None
+        or conversion.rate_binding_id is not None
+        for conversion in conversions
+    ):
+        raise ProfileValidationError(
+            "legacy jurisdiction schemas cannot carry monetary conversion ids"
+        )
+    sources_by_id = {source.id: source for source in sources}
+    if len(sources_by_id) != len(sources):
+        raise ProfileValidationError("profile source snapshot repeats a source id")
+    retrieval_dates = {source.retrieved_on for source in sources}
+    if len(retrieval_dates) > 1:
+        raise ProfileValidationError(
+            "profile source snapshot has inconsistent retrieval dates"
+        )
+    conversions_by_code = {
+        conversion.jurisdiction_code: conversion
+        for conversion in conversions
+    }
+    scales_by_code = {scale.jurisdiction_code: scale for scale in scales}
+
+    referenced_scale_sources = {
+        source_id for scale in scales for source_id in scale.source_ids
+    }
+    unknown_scale_sources = sorted(
+        referenced_scale_sources.difference(sources_by_id)
+    )
+    if unknown_scale_sources:
+        raise ProfileValidationError(
+            "profile money scales reference unknown source ids: "
+            + ", ".join(unknown_scale_sources)
+        )
+    for conversion in conversions:
+        scale = scales_by_code[conversion.jurisdiction_code]
+        if conversion.source_currency != scale.currency:
+            raise ProfileValidationError(
+                "profile monetary conversion source currency does not match "
+                "its money scale"
+            )
+        unknown_source_ids = sorted(
+            set(conversion.source_ids).difference(sources_by_id)
+        )
+        if unknown_source_ids:
+            raise ProfileValidationError(
+                "profile monetary conversion references unknown source ids: "
+                + ", ".join(unknown_source_ids)
+            )
+        conversion_sources = tuple(
+            sources_by_id[source_id] for source_id in conversion.source_ids
+        )
+        required_supports = _CONVERSION_SOURCE_SUPPORTS[conversion.method.value]
+        compatible_sources = tuple(
+            source
+            for source in conversion_sources
+            if required_supports.intersection(source.supports)
+        )
+        if not compatible_sources:
+            raise ProfileValidationError(
+                "profile monetary conversion sources do not declare "
+                "method-compatible scope"
+            )
+        if not any(
+            source.period == conversion.rate_period_label
+            for source in compatible_sources
+        ):
+            raise ProfileValidationError(
+                "profile monetary conversion period does not match a "
+                "compatible source"
+            )
+        if conversion.status is ProvenanceStatus.CALIBRATED and any(
+            source.status is not ProvenanceStatus.CALIBRATED
+            for source in conversion_sources
+        ):
+            raise ProfileValidationError(
+                "profile calibrated monetary conversion cites "
+                "non-calibrated source evidence"
+            )
+        if {source.retrieved_on for source in conversion_sources} != {
+            conversion.retrieved_on
+        }:
+            raise ProfileValidationError(
+                "profile monetary conversion retrieval date does not match "
+                "its source records"
+            )
+
+    if len(scales) <= 1:
+        return False, ("monetary_conversion.structure=unavailable",)
+
+    failures: list[str] = []
+    for code in scale_codes:
+        conversion = conversions_by_code.get(code)
+        if conversion is None:
+            failures.append(f"{code}.monetary_conversion=missing")
+            continue
+        if conversion.status is not ProvenanceStatus.CALIBRATED:
+            failures.append(
+                f"{code}.monetary_conversion={conversion.status.value}"
+            )
+    if failures:
+        return False, tuple(failures)
+
+    signatures: set[tuple[str, ...]] = set()
+    simulation_per_target: set[Fraction] = set()
+    for scale in scales:
+        code = scale.jurisdiction_code
+        conversion = conversions_by_code[code]
+        signatures.add(conversion.comparison_signature)
+        simulation_per_target.add(
+            scale.currency_scale_to_sim / conversion.conversion_ratio
+        )
+    global_failures: list[str] = []
+    if len(signatures) != 1:
+        global_failures.append(
+            "monetary_conversion.comparison_basis=inconsistent"
+        )
+    if len(simulation_per_target) != 1:
+        global_failures.append("monetary_conversion.internal_scale=incoherent")
+    return not global_failures, tuple(global_failures)
+
+
+def _source_from_snapshot(value: Mapping[object, object]) -> SourceProvenance:
+    if set(value) != _SOURCE_PROVENANCE_SNAPSHOT_FIELDS:
+        raise ProfileValidationError("profile source snapshot fields are malformed")
+    supports = value.get("supports")
+    if not isinstance(supports, list):
+        raise ProfileValidationError("profile source supports are malformed")
+    retrieved_on = value.get("retrieved_on")
+    try:
+        return SourceProvenance(
+            id=value.get("id"),
+            publisher=value.get("publisher"),
+            title=value.get("title"),
+            url=value.get("url"),
+            period=value.get("period"),
+            geography=value.get("geography"),
+            supports=tuple(supports),
+            calibration_status=_provenance_status_from_snapshot(
+                value.get("calibration_status"),
+                context="profile source calibration status",
+            ),
+            retrieved_on=(
+                _parse_iso_date(retrieved_on, "profile source retrieved_on")
+                if retrieved_on is not None
+                else None
+            ),
+        )
+    except (AttributeError, TypeError) as exc:
+        raise ProfileValidationError(
+            "profile source snapshot values are malformed"
+        ) from exc
+
+
+def _money_scale_from_snapshot(value: Mapping[object, object]) -> MoneyScaleContract:
+    if set(value) != _MONEY_SCALE_SNAPSHOT_FIELDS:
+        raise ProfileValidationError(
+            "profile money-scale snapshot fields are malformed"
+        )
+    reported_values = value.get("reported_income_values")
+    source_ids = value.get("source_ids")
+    if not isinstance(reported_values, list) or not isinstance(source_ids, list):
+        raise ProfileValidationError("profile money-scale arrays are malformed")
+    if type(value.get("cross_country_comparable")) is not bool:
+        raise ProfileValidationError(
+            "profile money-scale comparability flag must be boolean"
+        )
+    try:
+        return MoneyScaleContract(
+            jurisdiction_code=value.get("jurisdiction_code"),
+            currency=value.get("currency"),
+            reported_income_values=tuple(reported_values),
+            source_period=value.get("source_period"),
+            nominal_monthly_anchor_minor_units=value.get(
+                "nominal_monthly_anchor_minor_units"
+            ),
+            anchor_selection=value.get("anchor_selection"),
+            anchor_status=_provenance_status_from_snapshot(
+                value.get("anchor_status"),
+                context="profile money-scale anchor status",
+            ),
+            source_ids=tuple(source_ids),
+            condition=value.get("condition"),
+            denominator=value.get("denominator"),
+            simulation_monthly_anchor_cents=value.get(
+                "simulation_monthly_anchor_cents"
+            ),
+            scale_status=_provenance_status_from_snapshot(
+                value.get("scale_status"),
+                context="profile money-scale status",
+            ),
+            cross_country_comparable=value.get("cross_country_comparable"),
+        )
+    except (AttributeError, TypeError) as exc:
+        raise ProfileValidationError(
+            "profile money-scale snapshot values are malformed"
+        ) from exc
+
+
+def _monetary_conversion_from_snapshot(
+    value: Mapping[object, object],
+) -> MonetaryConversionContract:
+    if set(value) != _MONETARY_CONVERSION_SNAPSHOT_FIELDS:
+        raise ProfileValidationError(
+            "profile monetary-conversion snapshot fields are malformed"
+        )
+    source_ids = value.get("source_ids")
+    if not isinstance(source_ids, list):
+        raise ProfileValidationError(
+            "profile monetary-conversion source ids are malformed"
+        )
+    try:
+        method = MonetaryConversionMethod(value.get("method"))
+        rounding_scope = MonetaryRoundingScope(value.get("rounding_scope"))
+    except (TypeError, ValueError) as exc:
+        raise ProfileValidationError(
+            "profile monetary-conversion enum value is malformed"
+        ) from exc
+    try:
+        conversion = MonetaryConversionContract(
+            jurisdiction_code=value.get("jurisdiction_code"),
+            source_currency=value.get("source_currency"),
+            target_currency=value.get("target_currency"),
+            method=method,
+            rate_numerator=value.get("rate_numerator"),
+            rate_denominator=value.get("rate_denominator"),
+            rate_period_start=_parse_iso_date(
+                value.get("rate_period_start"),
+                "profile monetary-conversion rate_period_start",
+            ),
+            rate_period_end=_parse_iso_date(
+                value.get("rate_period_end"),
+                "profile monetary-conversion rate_period_end",
+            ),
+            target_price_period_start=_parse_iso_date(
+                value.get("target_price_period_start"),
+                "profile monetary-conversion target_price_period_start",
+            ),
+            target_price_period_end=_parse_iso_date(
+                value.get("target_price_period_end"),
+                "profile monetary-conversion target_price_period_end",
+            ),
+            estimand=value.get("estimand"),
+            population_base=value.get("population_base"),
+            comparison_group=value.get("comparison_group"),
+            rounding_method=value.get("rounding_method"),
+            rounding_scope=rounding_scope,
+            aggregation_unit=value.get("aggregation_unit"),
+            status=_provenance_status_from_snapshot(
+                value.get("status"),
+                context="profile monetary-conversion status",
+            ),
+            source_ids=tuple(source_ids),
+            retrieved_on=_parse_iso_date(
+                value.get("retrieved_on"),
+                "profile monetary-conversion retrieved_on",
+            ),
+            notes=value.get("notes"),
+            conversion_id=value.get("conversion_id"),
+            rate_binding_id=value.get("rate_binding_id"),
+        )
+    except (AttributeError, TypeError) as exc:
+        raise ProfileValidationError(
+            "profile monetary-conversion snapshot values are malformed"
+        ) from exc
+    if (
+        value.get("rate_numerator_decimal") != str(conversion.rate_numerator)
+        or value.get("rate_denominator_decimal")
+        != str(conversion.rate_denominator)
+    ):
+        raise ProfileValidationError(
+            "profile monetary decimal mirrors are malformed"
+        )
+    return conversion
+
+
+def _provenance_status_from_snapshot(
+    value: object,
+    *,
+    context: str,
+) -> ProvenanceStatus:
+    try:
+        return ProvenanceStatus(value)
+    except (TypeError, ValueError) as exc:
+        raise ProfileValidationError(f"{context} is malformed") from exc
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileBundle:
     """Validated inputs needed to initialise players and jurisdiction agents."""
 
@@ -537,6 +1205,9 @@ class ProfileBundle:
     source_registry_path: Path | None = None
     jurisdictions_sha256: str | None = None
     source_registry_sha256: str | None = None
+    source_evidence_bundle: RateEvidenceBundle | None = None
+    jurisdiction_schema_version: int = 2
+    source_catalogue_schema_version: int = 1
 
     def __post_init__(self) -> None:
         for name in (
@@ -560,6 +1231,11 @@ class ProfileBundle:
         conversion_codes = tuple(
             contract.jurisdiction_code for contract in self.monetary_conversions
         )
+        conversion_ids = tuple(
+            contract.conversion_id
+            for contract in self.monetary_conversions
+            if contract.conversion_id is not None
+        )
         if profile_codes != _EXPECTED_CODES:
             raise ProfileValidationError(
                 f"expected country profiles {_EXPECTED_CODES}; got {profile_codes}"
@@ -571,6 +1247,10 @@ class ProfileBundle:
         if len(set(conversion_codes)) != len(conversion_codes):
             raise ProfileValidationError(
                 "monetary conversion contracts repeat a jurisdiction"
+            )
+        if len(set(conversion_ids)) != len(conversion_ids):
+            raise ProfileValidationError(
+                "monetary conversion contracts repeat a conversion id"
             )
         unknown_conversion_codes = sorted(set(conversion_codes).difference(profile_codes))
         if unknown_conversion_codes:
@@ -584,6 +1264,32 @@ class ProfileBundle:
             raise ProfileValidationError("profile_status is invalid")
         if any(not caveat.strip() for caveat in self.caveats):
             raise ProfileValidationError("bundle caveats cannot be empty")
+        if (
+            type(self.jurisdiction_schema_version) is not int
+            or self.jurisdiction_schema_version not in {1, 2, 3}
+        ):
+            raise ProfileValidationError(
+                "profile bundle has an unsupported jurisdiction schema version"
+            )
+        if (
+            type(self.source_catalogue_schema_version) is not int
+            or self.source_catalogue_schema_version != 1
+        ):
+            raise ProfileValidationError(
+                "profile bundle has an unsupported source-catalogue schema version"
+            )
+        if self.jurisdiction_schema_version < 3 and conversion_ids:
+            raise ProfileValidationError(
+                "jurisdiction schema versions 1/2 cannot claim rate bindings"
+            )
+        if self.jurisdiction_schema_version == 3 and any(
+            conversion.conversion_id is None
+            or conversion.rate_binding_id is None
+            for conversion in self.monetary_conversions
+        ):
+            raise ProfileValidationError(
+                "jurisdiction schema version 3 requires conversion and rate-binding ids"
+            )
 
         retrieval_dates = {source.retrieved_on for source in frozen_sources.values()}
         if len(retrieval_dates) > 1:
@@ -599,6 +1305,24 @@ class ProfileBundle:
             if value is not None and not _is_sha256(value):
                 raise ProfileValidationError(
                     f"{name} must be a lowercase SHA-256 digest when supplied"
+                )
+        if self.source_evidence_bundle is not None:
+            from .rate_evidence import RateEvidenceBundle
+
+            if type(self.source_evidence_bundle) is not RateEvidenceBundle:
+                raise ProfileValidationError(
+                    "source evidence must be a typed RateEvidenceBundle"
+                )
+            unknown_evidence_sources = sorted(
+                {
+                    binding.source_id
+                    for binding in self.source_evidence_bundle.bindings
+                }.difference(frozen_sources)
+            )
+            if unknown_evidence_sources:
+                raise ProfileValidationError(
+                    "rate evidence references unknown source ids: "
+                    + ", ".join(unknown_evidence_sources)
                 )
 
         referenced = {
@@ -678,6 +1402,8 @@ class ProfileBundle:
                     f"{conversion.jurisdiction_code} monetary conversion retrieval "
                     "date does not match its source records"
                 )
+        if self.jurisdiction_schema_version == 3 and self.monetary_conversions:
+            _validate_monetary_rate_bindings(self)
 
     @property
     def provenance(self) -> tuple[MetricContract, ...]:
@@ -714,6 +1440,11 @@ class ProfileBundle:
             loaded = load_profile_bundle(
                 self.jurisdictions_path,
                 self.source_registry_path,
+                source_bundle_path=(
+                    self.source_evidence_bundle.bundle_path
+                    if self.source_evidence_bundle is not None
+                    else None
+                ),
                 campaign=False,
             )
         except (OSError, ProfileValidationError):
@@ -731,6 +1462,11 @@ class ProfileBundle:
             and loaded.source_registry_path == self.source_registry_path
             and loaded.jurisdictions_sha256 == self.jurisdictions_sha256
             and loaded.source_registry_sha256 == self.source_registry_sha256
+            and loaded.source_evidence_bundle == self.source_evidence_bundle
+            and loaded.jurisdiction_schema_version
+            == self.jurisdiction_schema_version
+            and loaded.source_catalogue_schema_version
+            == self.source_catalogue_schema_version
             and loaded.source_retrieved_on == self.source_retrieved_on
         )
 
@@ -798,13 +1534,14 @@ class ProfileBundle:
                 failures.append(f"source:{source_id}={source.status.value}")
 
         if failures:
-            preview = ", ".join(failures[:8])
-            if len(failures) > 8:
-                preview += f", ... ({len(failures) - 8} more)"
+            preview_limit = 16
+            preview = ", ".join(failures[:preview_limit])
+            if len(failures) > preview_limit:
+                preview += f", ... ({len(failures) - preview_limit} more)"
             hidden_monetary = [
                 failure
                 for failure in monetary_failures
-                if failure not in failures[:8]
+                if failure not in failures[:preview_limit]
             ]
             if hidden_monetary:
                 preview += "; monetary comparability: " + ", ".join(
@@ -858,16 +1595,72 @@ class ProfileBundle:
     def _monetary_campaign_failures(self) -> list[str]:
         """Return fail-closed substantive comparability failures."""
 
-        failures = self._monetary_contract_structure_failures()
-        if not failures and len(self.money_scales) > 1:
-            failures.append("monetary_conversion.source_rate_binding=missing")
-        return failures
+        return list(self.monetary_evidence_assessment().blockers)
+
+    def monetary_evidence_assessment(
+        self,
+        *,
+        registered: bool | None = None,
+    ) -> MonetaryEvidenceAssessment:
+        """Assess independent monetary evidence gates without self-promotion."""
+
+        structure_failures = self._monetary_contract_structure_failures()
+        structure_coherent = not structure_failures and len(self.money_scales) > 1
+        if registered is None:
+            registered = self.matches_registered_files()
+        source_bound = (
+            structure_coherent
+            and registered
+            and self.jurisdiction_schema_version == 3
+            and self.source_evidence_bundle is not None
+            and _rate_bindings_cover_conversions(self)
+        )
+        # Schema-v1 bundles deliberately have no verified trust-root signature.
+        source_signature_bound = False
+
+        # These require future run-specific output bindings, a calibrated
+        # population specification, and an externally immutable preregistration.
+        # They cannot be promoted by configuration-file booleans.
+        output_design_bound = False
+        population_bound = False
+        preregistration_bound = False
+        blockers = list(structure_failures)
+        if not source_bound:
+            blockers.append("monetary_conversion.source_rate_binding=missing")
+        if not source_signature_bound:
+            blockers.append("monetary_conversion.source_bundle_signature=missing")
+        if not output_design_bound:
+            blockers.append("monetary_conversion.output_design_binding=missing")
+        if not population_bound:
+            blockers.append("monetary_conversion.population_binding=missing")
+        if not preregistration_bound:
+            blockers.append("monetary_conversion.preregistration_binding=missing")
+        public_comparable = all(
+            (
+                structure_coherent,
+                source_bound,
+                source_signature_bound,
+                output_design_bound,
+                population_bound,
+                preregistration_bound,
+            )
+        )
+        return MonetaryEvidenceAssessment(
+            structure_coherent=structure_coherent,
+            source_rate_evidence_bound=source_bound,
+            source_bundle_signature_bound=source_signature_bound,
+            output_design_binding_bound=output_design_bound,
+            population_binding_bound=population_bound,
+            preregistration_bound=preregistration_bound,
+            public_output_comparability=public_comparable,
+            blockers=tuple(blockers),
+        )
 
     def _monetary_contract_structure_failures(self) -> list[str]:
         """Return exact-rate structural failures without promoting evidence."""
 
         if len(self.money_scales) <= 1:
-            return []
+            return ["monetary_conversion.structure=unavailable"]
         failures: list[str] = []
         conversions = {
             contract.jurisdiction_code: contract
@@ -937,6 +1730,7 @@ def load_profile_bundle(
     jurisdictions_path: str | Path = DEFAULT_JURISDICTIONS_PATH,
     sources_path: str | Path = DEFAULT_SOURCES_PATH,
     *,
+    source_bundle_path: str | Path | None | object = _USE_REGISTERED_SOURCE_BUNDLE,
     campaign: bool = False,
 ) -> ProfileBundle:
     """Load, validate, and harmonise the four jurisdiction profiles."""
@@ -953,10 +1747,24 @@ def load_profile_bundle(
     )
     sources = _parse_sources(sources_raw, sources_file)
 
+    selected_source_bundle_path: Path | None
+    if source_bundle_path is _USE_REGISTERED_SOURCE_BUNDLE:
+        selected_source_bundle_path = (
+            DEFAULT_SOURCE_BUNDLE_PATH
+            if sources_file.resolve() == DEFAULT_SOURCES_PATH.resolve()
+            else None
+        )
+    elif source_bundle_path is None:
+        selected_source_bundle_path = None
+    elif isinstance(source_bundle_path, (str, Path)):
+        selected_source_bundle_path = Path(source_bundle_path)
+    else:
+        raise TypeError("source_bundle_path must be a path or None")
+
     jurisdiction_schema_version = jurisdiction_raw.get("schema_version")
     if (
         type(jurisdiction_schema_version) is not int
-        or jurisdiction_schema_version not in {1, 2}
+        or jurisdiction_schema_version not in {1, 2, 3}
     ):
         raise ProfileValidationError(
             f"{jurisdiction_file}: unsupported jurisdiction schema_version"
@@ -1003,6 +1811,22 @@ def load_profile_bundle(
                 "version-2 monetary fields: "
                 + ", ".join(sorted(present_v2_fields))
             )
+    elif jurisdiction_schema_version == 2:
+        raw_conversions = jurisdiction_raw.get("monetary_conversion", [])
+        if isinstance(raw_conversions, list):
+            present_v3_fields = {
+                field
+                for row in raw_conversions
+                if isinstance(row, dict)
+                for field in ("conversion_id", "rate_binding_id")
+                if field in row
+            }
+            if present_v3_fields:
+                raise ProfileValidationError(
+                    f"{jurisdiction_file}: profile schema_version 2 cannot contain "
+                    "version-3 evidence fields: "
+                    + ", ".join(sorted(present_v3_fields))
+                )
 
     shared = jurisdiction_raw.get("shared_assumptions")
     if not isinstance(shared, dict):
@@ -1041,6 +1865,7 @@ def load_profile_bundle(
     monetary_conversions = _parse_monetary_conversions(
         jurisdiction_raw.get("monetary_conversion", []),
         jurisdiction_file,
+        schema_version=jurisdiction_schema_version,
     )
 
     contracts.extend(_shared_contracts(shared))
@@ -1115,6 +1940,13 @@ def load_profile_bundle(
         source_registry_path=sources_file.resolve(),
         jurisdictions_sha256=jurisdiction_sha256,
         source_registry_sha256=source_registry_sha256,
+        source_evidence_bundle=_load_source_evidence_bundle(
+            selected_source_bundle_path,
+            sources=sources,
+            source_registry_sha256=source_registry_sha256,
+        ),
+        jurisdiction_schema_version=jurisdiction_schema_version,
+        source_catalogue_schema_version=1,
     )
     if campaign:
         bundle.validate_for_campaign()
@@ -1125,6 +1957,7 @@ def load_country_profiles(
     jurisdictions_path: str | Path = DEFAULT_JURISDICTIONS_PATH,
     sources_path: str | Path = DEFAULT_SOURCES_PATH,
     *,
+    source_bundle_path: str | Path | None | object = _USE_REGISTERED_SOURCE_BUNDLE,
     campaign: bool = False,
 ) -> tuple[CountryProfile, ...]:
     """Convenience wrapper returning only the player-initialisation profiles."""
@@ -1132,6 +1965,7 @@ def load_country_profiles(
     return load_profile_bundle(
         jurisdictions_path,
         sources_path,
+        source_bundle_path=source_bundle_path,
         campaign=campaign,
     ).country_profiles
 
@@ -1140,6 +1974,7 @@ def load_state_agents(
     jurisdictions_path: str | Path = DEFAULT_JURISDICTIONS_PATH,
     sources_path: str | Path = DEFAULT_SOURCES_PATH,
     *,
+    source_bundle_path: str | Path | None | object = _USE_REGISTERED_SOURCE_BUNDLE,
     campaign: bool = False,
 ) -> tuple[StateAgent, ...]:
     """Convenience wrapper returning only the jurisdiction agents."""
@@ -1147,6 +1982,7 @@ def load_state_agents(
     return load_profile_bundle(
         jurisdictions_path,
         sources_path,
+        source_bundle_path=source_bundle_path,
         campaign=campaign,
     ).state_agents
 
@@ -1162,9 +1998,173 @@ def _read_toml(path: Path, label: str) -> tuple[dict[str, Any], str]:
     return raw, sha256(encoded).hexdigest()
 
 
+def _load_source_evidence_bundle(
+    path: Path | None,
+    *,
+    sources: Mapping[str, SourceProvenance],
+    source_registry_sha256: str,
+) -> RateEvidenceBundle | None:
+    """Load and verify a bundle against the exact source catalogue in use."""
+
+    if path is None:
+        return None
+    from .rate_evidence import (
+        RateEvidenceValidationError,
+        load_and_verify_rate_evidence_bundle,
+    )
+
+    try:
+        bundle, _results = load_and_verify_rate_evidence_bundle(
+            path,
+            required_source_registry_sha256=source_registry_sha256,
+        )
+    except RateEvidenceValidationError as exc:
+        raise ProfileValidationError(
+            f"cannot verify source evidence bundle {path}: {exc}"
+        ) from exc
+    if getattr(bundle, "source_registry_sha256", None) != source_registry_sha256:
+        raise ProfileValidationError(
+            "source evidence bundle does not bind the loaded source catalogue"
+        )
+    unknown_sources = sorted(
+        {binding.source_id for binding in bundle.bindings}.difference(sources)
+    )
+    if unknown_sources:
+        raise ProfileValidationError(
+            "source evidence bundle references unknown source ids: "
+            + ", ".join(unknown_sources)
+        )
+    return bundle
+
+
+def _validate_monetary_rate_bindings(bundle: ProfileBundle) -> None:
+    """Require every schema-v3 conversion to match verified bytes exactly."""
+
+    evidence = bundle.source_evidence_bundle
+    if evidence is None:
+        raise ProfileValidationError(
+            "jurisdiction schema version 3 monetary conversions require a "
+            "source evidence bundle"
+        )
+    if evidence.source_registry_sha256 != bundle.source_registry_sha256:
+        raise ProfileValidationError(
+            "monetary rate evidence is bound to a different source catalogue"
+        )
+    from .rate_evidence import (
+        RateEvidenceValidationError,
+        verify_rate_evidence_bundle,
+    )
+
+    try:
+        results = verify_rate_evidence_bundle(
+            evidence,
+            required_source_registry_sha256=bundle.source_registry_sha256,
+        )
+    except RateEvidenceValidationError as exc:
+        raise ProfileValidationError(
+            f"monetary rate evidence cannot be re-attested: {exc}"
+        ) from exc
+    bindings_by_id = {
+        binding.binding_id: binding for binding in evidence.bindings
+    }
+    results_by_id = {result.binding_id: result for result in results}
+    referenced_binding_ids = tuple(
+        conversion.rate_binding_id
+        for conversion in bundle.monetary_conversions
+    )
+    if len(set(referenced_binding_ids)) != len(referenced_binding_ids):
+        raise ProfileValidationError(
+            "monetary conversions repeat a rate-evidence binding"
+        )
+    for conversion in bundle.monetary_conversions:
+        assert conversion.rate_binding_id is not None
+        binding = bindings_by_id.get(conversion.rate_binding_id)
+        result = results_by_id.get(conversion.rate_binding_id)
+        if binding is None or result is None:
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} references an "
+                "unknown or unverified rate binding"
+            )
+        exact_fields = (
+            ("jurisdiction", binding.jurisdiction_code, conversion.jurisdiction_code),
+            ("source currency", binding.source_currency, conversion.source_currency),
+            ("target currency", binding.target_currency, conversion.target_currency),
+            ("method", binding.method.value, conversion.method.value),
+            ("rate period start", binding.rate_period_start, conversion.rate_period_start),
+            ("rate period end", binding.rate_period_end, conversion.rate_period_end),
+            ("retrieval date", binding.retrieved_on, conversion.retrieved_on),
+            ("rate numerator", result.rate_numerator, conversion.rate_numerator),
+            ("rate denominator", result.rate_denominator, conversion.rate_denominator),
+        )
+        mismatches = [
+            label for label, observed, declared in exact_fields
+            if observed != declared
+        ]
+        if mismatches:
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} does not match "
+                "its verified rate binding: " + ", ".join(mismatches)
+            )
+        if binding.source_id not in conversion.source_ids:
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} does not cite "
+                "the source owned by its rate binding"
+            )
+        source = bundle.sources[binding.source_id]
+        required_supports = _CONVERSION_SOURCE_SUPPORTS[conversion.method.value]
+        if not required_supports.intersection(source.supports):
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} rate-binding "
+                "source does not declare method-compatible scope"
+            )
+        if source.period != conversion.rate_period_label:
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} rate-binding "
+                "source period does not match the exact rate interval"
+            )
+        if source.retrieved_on != conversion.retrieved_on:
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} rate-binding "
+                "source retrieval date does not match"
+            )
+        if (
+            conversion.status is ProvenanceStatus.CALIBRATED
+            and (
+                evidence.provenance_status is not ProvenanceStatus.CALIBRATED
+                or source.status is not ProvenanceStatus.CALIBRATED
+            )
+        ):
+            raise ProfileValidationError(
+                f"monetary conversion {conversion.conversion_id} cannot be "
+                "CALIBRATED from non-calibrated rate evidence"
+            )
+
+
+def _rate_bindings_cover_conversions(bundle: ProfileBundle) -> bool:
+    if not bundle.monetary_conversions:
+        return False
+    try:
+        _validate_monetary_rate_bindings(bundle)
+    except ProfileValidationError:
+        return False
+    return all(
+        conversion.status is ProvenanceStatus.CALIBRATED
+        for conversion in bundle.monetary_conversions
+    )
+
+
 def _parse_sources(
     raw: Mapping[str, Any], path: Path
 ) -> Mapping[str, SourceProvenance]:
+    allowed_catalogue_fields = frozenset(
+        {"schema_version", "retrieved_on", "source"}
+    )
+    unknown_catalogue_fields = sorted(set(raw).difference(allowed_catalogue_fields))
+    if unknown_catalogue_fields:
+        raise ProfileValidationError(
+            f"{path}: source catalogue contains unknown fields: "
+            + ", ".join(unknown_catalogue_fields)
+        )
     source_schema_version = raw.get("schema_version")
     if type(source_schema_version) is not int or source_schema_version != 1:
         raise ProfileValidationError(f"{path}: unsupported source schema_version")
@@ -1174,8 +2174,26 @@ def _parse_sources(
         raise ProfileValidationError(f"{path}: source must be an array of tables")
 
     parsed: dict[str, SourceProvenance] = {}
+    allowed_source_fields = frozenset(
+        {
+            "id",
+            "publisher",
+            "title",
+            "url",
+            "period",
+            "geography",
+            "supports",
+            "calibration_status",
+        }
+    )
     for index, row in enumerate(records):
         context = f"{path}: source[{index}]"
+        unknown_source_fields = sorted(set(row).difference(allowed_source_fields))
+        if unknown_source_fields:
+            raise ProfileValidationError(
+                f"{context} contains unknown fields: "
+                + ", ".join(unknown_source_fields)
+            )
         source_id = _required_string(row, "id", context)
         supports_raw = row.get("supports")
         if not isinstance(supports_raw, list) or any(
@@ -1207,8 +2225,10 @@ def _parse_sources(
 def _parse_monetary_conversions(
     value: object,
     path: Path,
+    *,
+    schema_version: int,
 ) -> tuple[MonetaryConversionContract, ...]:
-    """Parse optional v2 FX/PPP contracts without supplying fallback rates."""
+    """Parse optional v2/v3 FX/PPP contracts without fallback rates."""
 
     if not isinstance(value, list) or any(not isinstance(row, dict) for row in value):
         raise ProfileValidationError(
@@ -1218,7 +2238,12 @@ def _parse_monetary_conversions(
     for index, raw_row in enumerate(value):
         row = raw_row
         context = f"{path}: monetary_conversion[{index}]"
-        unknown_fields = sorted(set(row).difference(_MONETARY_CONVERSION_FIELDS))
+        allowed_fields = (
+            _MONETARY_CONVERSION_V3_FIELDS
+            if schema_version == 3
+            else _MONETARY_CONVERSION_V2_FIELDS
+        )
+        unknown_fields = sorted(set(row).difference(allowed_fields))
         if unknown_fields:
             raise ProfileValidationError(
                 f"{context} contains unknown fields: {', '.join(unknown_fields)}"
@@ -1309,6 +2334,16 @@ def _parse_monetary_conversions(
                     f"{context}.retrieved_on",
                 ),
                 notes=notes,
+                conversion_id=(
+                    _required_string(row, "conversion_id", context)
+                    if schema_version == 3
+                    else None
+                ),
+                rate_binding_id=(
+                    _required_string(row, "rate_binding_id", context)
+                    if schema_version == 3
+                    else None
+                ),
             )
         )
     return tuple(parsed)
@@ -1951,10 +2986,12 @@ ProvenanceContract = MetricContract
 
 __all__ = [
     "DEFAULT_JURISDICTIONS_PATH",
+    "DEFAULT_SOURCE_BUNDLE_PATH",
     "DEFAULT_SOURCES_PATH",
     "MetricContract",
     "MonetaryConversionContract",
     "MonetaryConversionMethod",
+    "MonetaryEvidenceAssessment",
     "MonetaryRoundingScope",
     "MoneyScaleContract",
     "ProfileBundle",

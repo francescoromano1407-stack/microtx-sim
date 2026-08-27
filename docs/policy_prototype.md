@@ -345,9 +345,13 @@ variance fields use the squared base unit. The 95% bounds are normal Monte Carlo
 intervals for a simulation mean and are zero-width with one seed. In contrast,
 `harm_variance_players` is a within-cohort population variance (`ddof=0`).
 
-Schema `2.0` preserves the released v1 prefix and complete non-empty header
-order. Its breaking change is deliberate: empty seed, scenario-summary, and
-sensitivity files now expose the same exhaustive columns as populated files.
+CSV schema `2.0` preserves the released v1 prefix and complete non-empty header
+order. Its breaking change was deliberate: empty seed, scenario-summary, and
+sensitivity files expose the same exhaustive columns as populated files. The
+current full bundle is schema `3.0`; it preserves every v2 CSV filename and
+column while adding an independently versioned, fingerprinted, all-or-none
+manifest envelope. Standalone sensitivity export has a separate explicit
+two-file profile instead of masquerading as the full bundle.
 
 ## Assumptions requiring calibration
 

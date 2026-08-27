@@ -124,8 +124,8 @@ neither an exchange rate nor a purchasing-power-parity conversion and removes
 empirical cross-country income-level differences. Simulation cents must not be
 reported as GBP, KRW, JPY, EUR, or comparable real purchasing power.
 
-The profile schema now defines a fail-closed `MonetaryConversionContract` for
-future dated FX or PPP evidence. It retains an exact rational target-minor-unit
+The profile schema defines a fail-closed `MonetaryConversionContract` for future
+dated FX or PPP evidence. It retains an exact rational target-minor-unit
 rate, typed rate and target-price intervals, estimand, population base, one
 comparison-group identifier, method-specific source lineage, retrieval date,
 and an explicit signed rounding stage and aggregation unit. Campaign
@@ -134,6 +134,17 @@ sources, a common comparison signature, and exact coherence with the internal
 money scales. No such records or rates are checked in, so this software boundary
 does not make present outputs comparable.
 
+Schema version 3 additionally requires stable conversion and rate-binding IDs.
+The rate binding is verified from a separately versioned source bundle that
+binds the source-catalogue digest, exact artifact bytes, byte length, media type,
+and a canonical declarative extraction recipe. The version-1 interpreter reads
+strict UTF-8 CSV, matches exactly one semantic row, and parses only canonical
+positive reduced decimal integers. It rejects path escape, links/reparse
+points, file mutation, ambiguous rows, quote-direction or period mismatches,
+floats, scientific notation, and undeclared fields. Hash verification proves
+repeatability of the bytes and transformation; it is not a publisher signature
+or an endorsement of the chosen rate.
+
 Registered profile lineage is not a caller-supplied assertion. Construction and
 manifest export reload the claimed files, compare their hashes and normalized
 values, and reject missing or changed inputs. Full profile campaign validation
@@ -141,14 +152,14 @@ also rejects an unregistered programmatic bundle. Exact rate numerators and
 denominators are mirrored as decimal strings in lineage JSON so consumers that
 cannot represent integers above (2^{53}) still have a lossless encoding.
 
-These checks validate the declared contract, not whether a chosen estimand or
-population is substantively appropriate. The declared conversion design still
-needs to be bound to the future preregistered output contract and actual
-campaign population, and source snapshots/extractions still need independent
-review. Identical labels are necessary, never sufficient evidence. Accordingly,
-the public cross-country-comparability flag stays false and campaign validation
-reports `monetary_conversion.source_rate_binding=missing` until that binding is
-implemented.
+These checks validate the declared contract and reproducible extraction, not
+whether a chosen estimand or population is substantively appropriate. The
+typed assessment therefore keeps source extraction, source signature,
+output/design use, target population, and external preregistration independent.
+The checked-in bundle is empty, illustrative, and explicitly missing a
+signature; current outputs materialize no target currency. Identical labels are
+necessary, never sufficient evidence, and the public comparability flag stays
+false even when a test fixture clears only the extraction subgate.
 
 ## Legal and clinical evidence
 

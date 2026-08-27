@@ -207,7 +207,23 @@ class PolicyCliTests(unittest.TestCase):
                     ).encode("utf-8")
                 ).hexdigest(),
             )
-            self.assertEqual(sensitivity_metadata["output_schema_version"], "2.0")
+            self.assertNotIn("output_schema_version", sensitivity_metadata)
+            self.assertEqual(
+                sensitivity_metadata["output_profile"],
+                "standalone_sensitivity",
+            )
+            self.assertEqual(
+                sensitivity_metadata["output_profile_schema_version"],
+                "1.0",
+            )
+            self.assertEqual(
+                sensitivity_metadata["artifact_files"],
+                ["sensitivity.csv", "sensitivity_metadata.json"],
+            )
+            self.assertRegex(
+                sensitivity_metadata["output_profile_schema_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
             sensitivity_csv = sensitivity_output / "sensitivity.csv"
             self.assertEqual(
                 sensitivity_metadata["artifacts"]["sensitivity.csv"],

@@ -268,12 +268,16 @@ these properties when changing outputs:
    environment, equations, and scope limits in `manifest.json`;
 7. never imply that deterministic synthetic output is empirically validated.
 
-Output schema `2.0` is the first exhaustive-column contract. It retains the
+Output schema `2.0` is the frozen exhaustive-column contract. It retains the
 released v1 prefix and non-empty header order, but empty seed, scenario-summary,
 and sensitivity tables now include every declared extension column. The named
 `*_V1_PREFIX_COLUMNS` tuples are the migration boundary for compatibility tests;
 an exact schema fingerprint forces any later column or artifact change through
-an explicit versioned migration.
+an explicit versioned migration. The current full bundle is `3.0`: its v2 CSV
+surface is unchanged, while `manifest.json` now has a separate schema version,
+canonical descriptor digest, required all-or-none reserved fields, and exact
+artifact profile. The standalone sensitivity command uses a separately
+fingerprinted two-file profile.
 
 The six CSV files, manifest, Markdown summary, and five SVG charts form the
 13-file `reproduce` contract listed in [Usage](usage.md).

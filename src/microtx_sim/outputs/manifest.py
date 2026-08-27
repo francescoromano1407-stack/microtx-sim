@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date, datetime, timezone
-from fractions import Fraction
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -21,6 +20,12 @@ from ..causal.batch import (
     resolve_policy_run_inputs,
 )
 from ..causal.design import assess_causal_design
+from ..data.lineage import ProfileInputLineage
+from ..data.profiles import (
+    ProfileValidationError,
+    monetary_evidence_assessment_from_snapshot,
+    monetary_structure_assessment_from_snapshot,
+)
 from ..policy_config import PolicyPrototypeConfig
 from .metric_contracts import build_metric_contract_manifest_payload
 
@@ -60,6 +65,12 @@ def build_run_manifest(
                 "sha256": None,
                 "retrieved_on": None,
             },
+            "source_bundle": {
+                "path": None,
+                "sha256": None,
+                "source_registry_sha256": None,
+                "signature_status": None,
+            },
             "metric_contract_summary": {"count": 0, "status_counts": {}},
             "money_scale_summary": {
                 "count": 0,
@@ -84,6 +95,30 @@ def build_run_manifest(
                 "aggregation_units": [],
                 "status_counts": {},
             },
+            "source_evidence_summary": {
+                "present": False,
+                "artifact_count": 0,
+                "binding_count": 0,
+                "verified_result_count": 0,
+                "signature_status": None,
+            },
+            "monetary_evidence_assessment": {
+                "structure_coherent": False,
+                "source_rate_evidence_bound": False,
+                "source_bundle_signature_bound": False,
+                "output_design_binding_bound": False,
+                "population_binding_bound": False,
+                "preregistration_bound": False,
+                "public_output_comparability": False,
+                "blockers": [
+                    "monetary_conversion.structure=unavailable",
+                    "monetary_conversion.source_rate_binding=missing",
+                    "monetary_conversion.source_bundle_signature=missing",
+                    "monetary_conversion.output_design_binding=missing",
+                    "monetary_conversion.population_binding=missing",
+                    "monetary_conversion.preregistration_binding=missing",
+                ],
+            },
         }
     else:
         profile_inputs = profile_lineage.manifest_payload()
@@ -107,7 +142,10 @@ def build_run_manifest(
         configuration_status=config.provenance_status,
         profile_lineage_status=str(profile_inputs["lineage_status"]),
         profile_dependencies_calibrated=(
-            _profile_dependencies_calibrated(profile_inputs)
+            _profile_dependencies_calibrated(
+                profile_inputs,
+                profile_lineage=profile_lineage,
+            )
         ),
         profile_input_fingerprint_sha256=(
             str(profile_inputs["fingerprint_sha256"])
@@ -120,7 +158,10 @@ def build_run_manifest(
             else None
         ),
         monetary_outputs_cross_country_comparable=(
-            _money_outputs_cross_country_comparable(profile_inputs)
+            _money_outputs_cross_country_comparable(
+                profile_inputs,
+                profile_lineage=profile_lineage,
+            )
         ),
         run_input_sha256=run_input_sha256,
     )
@@ -150,6 +191,10 @@ def build_run_manifest(
             "retrieved_on"
         ),
         "profile_inputs": profile_inputs,
+        "monetary_comparability": _monetary_comparability_payload(
+            profile_inputs,
+            profile_lineage=profile_lineage,
+        ),
         "causal_design": causal_design,
         "output_metric_contracts": output_metric_contracts,
         "repository": {
@@ -284,18 +329,93 @@ def _canonical_sha256(snapshot: dict[str, object]) -> str:
 
 def _money_outputs_cross_country_comparable(
     profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None = None,
 ) -> bool:
-    """Keep the substantive public claim false until rate evidence is bound."""
+    """Require every independent evidence and design gate."""
 
-    return _money_conversion_structure_coherent(
-        profile_inputs
-    ) and _source_rate_evidence_is_bound(profile_inputs)
+    return all(
+        (
+            _money_conversion_structure_coherent(profile_inputs),
+            _source_rate_evidence_is_bound(
+                profile_inputs,
+                profile_lineage=profile_lineage,
+            ),
+            _source_bundle_signature_is_bound(profile_inputs),
+            _monetary_output_design_is_bound(profile_inputs),
+            _monetary_population_binding_is_bound(profile_inputs),
+            _monetary_preregistration_is_bound(profile_inputs),
+        )
+    )
+
+
+def _monetary_comparability_payload(
+    profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None = None,
+) -> dict[str, object]:
+    """Publish typed reason codes plus non-self-promotable manifest gates."""
+
+    assessment = (
+        _serialized_monetary_evidence_assessment(profile_inputs)
+        if _profile_lineage_reattests_payload(
+            profile_inputs,
+            profile_lineage=profile_lineage,
+        )
+        else None
+    )
+    if assessment is None:
+        assessment = {
+            "structure_coherent": False,
+            "source_rate_evidence_bound": False,
+            "source_bundle_signature_bound": False,
+            "output_design_binding_bound": False,
+            "population_binding_bound": False,
+            "preregistration_bound": False,
+            "public_output_comparability": False,
+            "blockers": [
+                "monetary_conversion.structure=unavailable",
+                "monetary_conversion.source_rate_binding=missing",
+                "monetary_conversion.source_bundle_signature=missing",
+                "monetary_conversion.output_design_binding=missing",
+                "monetary_conversion.population_binding=missing",
+                "monetary_conversion.preregistration_binding=missing",
+            ],
+        }
+    return {
+        "typed_assessment": dict(assessment),
+        "manifest_gate": {
+            "structure_coherent": _money_conversion_structure_coherent(
+                profile_inputs
+            ),
+            "source_rate_evidence_bound": _source_rate_evidence_is_bound(
+                profile_inputs,
+                profile_lineage=profile_lineage,
+            ),
+            "source_bundle_signature_bound": _source_bundle_signature_is_bound(
+                profile_inputs
+            ),
+            "output_design_binding_bound": _monetary_output_design_is_bound(
+                profile_inputs
+            ),
+            "population_binding_bound": _monetary_population_binding_is_bound(
+                profile_inputs
+            ),
+            "preregistration_bound": _monetary_preregistration_is_bound(
+                profile_inputs
+            ),
+            "public_output_comparability": _money_outputs_cross_country_comparable(
+                profile_inputs,
+                profile_lineage=profile_lineage,
+            ),
+        },
+    }
 
 
 def _money_conversion_structure_coherent(
     profile_inputs: dict[str, object],
 ) -> bool:
-    """Mirror exact dated-rate mechanics without promoting their evidence."""
+    """Apply the typed structural validator plus calibrated scale gates."""
 
     if profile_inputs.get("lineage_status") != "registered_profile_bundle":
         return False
@@ -305,179 +425,130 @@ def _money_conversion_structure_coherent(
     bundle = snapshot.get("profile_bundle")
     if not isinstance(bundle, dict):
         return False
+    try:
+        coherent, _blockers = monetary_structure_assessment_from_snapshot(
+            bundle
+        )
+    except ProfileValidationError:
+        return False
+    if not coherent:
+        return False
     scales = bundle.get("money_scales")
-    conversions = bundle.get("monetary_conversions")
-    sources = bundle.get("sources")
-    if (
-        not isinstance(scales, list)
-        or len(scales) <= 1
-        or not isinstance(conversions, list)
-        or len(conversions) != len(scales)
-        or not isinstance(sources, list)
-        or not sources
-        or any(not isinstance(row, dict) for row in (*scales, *conversions))
-    ):
+    if not isinstance(scales, list):
         return False
-    if any(
-        not _is_nonempty_text(row.get("jurisdiction_code"))
-        for row in (*scales, *conversions)
-    ):
-        return False
-    scales_by_code = {
-        scale["jurisdiction_code"]: scale for scale in scales
-    }
-    conversions_by_code = {
-        conversion["jurisdiction_code"]: conversion
-        for conversion in conversions
-    }
-    sources_by_id = {
-        source.get("id"): source
-        for source in sources
-        if isinstance(source, dict) and _is_nonempty_text(source.get("id"))
-    }
-    if (
-        len(scales_by_code) != len(scales)
-        or set(scales_by_code) != set(conversions_by_code)
-        or len(sources_by_id) != len(sources)
-    ):
-        return False
-
-    signatures: set[tuple[object, ...]] = set()
-    simulation_per_target: set[Fraction] = set()
-    for code, scale in scales_by_code.items():
-        conversion = conversions_by_code[code]
-        signature = (
-            conversion.get("target_currency"),
-            conversion.get("method"),
-            conversion.get("rate_period_start"),
-            conversion.get("rate_period_end"),
-            conversion.get("target_price_period_start"),
-            conversion.get("target_price_period_end"),
-            conversion.get("estimand"),
-            conversion.get("population_base"),
-            conversion.get("comparison_group"),
-            conversion.get("rounding_method"),
-            conversion.get("rounding_scope"),
-            conversion.get("aggregation_unit"),
-        )
-        source_ids = conversion.get("source_ids")
-        if (
-            conversion.get("status") != "CALIBRATED"
-            or conversion.get("source_currency") != scale.get("currency")
-            or conversion.get("method") not in {"FX", "PPP"}
-            or conversion.get("rounding_method")
-            != "nearest_minor_unit_half_away_from_zero"
-            or conversion.get("rounding_scope")
-            not in {"PER_OBSERVATION", "AFTER_AGGREGATION"}
-            or any(not _is_nonempty_text(value) for value in signature)
-            or not _is_iso_currency(conversion.get("source_currency"))
-            or not _is_iso_currency(conversion.get("target_currency"))
-            or not isinstance(source_ids, list)
-            or not source_ids
-            or any(not _is_nonempty_text(source_id) for source_id in source_ids)
-            or len(set(source_ids)) != len(source_ids)
-            or not _is_iso_date_text(conversion.get("retrieved_on"))
-            or not _retrieval_covers_period(
-                conversion.get("retrieved_on"),
-                conversion.get("rate_period_end"),
-            )
-            or not all(
-                _is_iso_date_text(conversion.get(field))
-                for field in (
-                    "rate_period_start",
-                    "rate_period_end",
-                    "target_price_period_start",
-                    "target_price_period_end",
-                )
-            )
-            or not _is_ordered_period(
-                conversion.get("rate_period_start"),
-                conversion.get("rate_period_end"),
-            )
-            or (
-                conversion.get("target_price_period_start"),
-                conversion.get("target_price_period_end"),
-            )
-            != (
-                conversion.get("rate_period_start"),
-                conversion.get("rate_period_end"),
-            )
-            or scale.get("anchor_status") != "CALIBRATED"
-            or scale.get("scale_status") != "CALIBRATED"
-        ):
-            return False
-        assert isinstance(source_ids, list)
-        source_rows = tuple(sources_by_id.get(source_id) for source_id in source_ids)
-        if any(source is None for source in source_rows):
-            return False
-        compatible_support = (
-            {"foreign_exchange_rate"}
-            if conversion.get("method") == "FX"
-            else {"purchasing_power_parity"}
-        )
-        rate_period_label = _period_label(
-            conversion["rate_period_start"],
-            conversion["rate_period_end"],
-        )
-        if (
-            any(
-                source.get("calibration_status") != "CALIBRATED"
-                or source.get("retrieved_on") != conversion.get("retrieved_on")
-                for source in source_rows
-                if isinstance(source, dict)
-            )
-            or not any(
-                isinstance(source, dict)
-                and source.get("period") == rate_period_label
-                and isinstance(source.get("supports"), list)
-                and all(
-                    isinstance(support, str)
-                    for support in source["supports"]
-                )
-                and bool(compatible_support.intersection(source["supports"]))
-                for source in source_rows
-            )
-        ):
-            return False
-        signatures.add(signature)
-        try:
-            local_to_sim = Fraction(
-                _strict_positive_int(scale.get("simulation_monthly_anchor_cents")),
-                _strict_positive_int(
-                    scale.get("nominal_monthly_anchor_minor_units")
-                ),
-            )
-            local_to_target = Fraction(
-                _strict_positive_int(conversion.get("rate_numerator")),
-                _strict_positive_int(conversion.get("rate_denominator")),
-            )
-        except (TypeError, ValueError, ZeroDivisionError):
-            return False
-        if (
-            conversion.get("rate_numerator_decimal")
-            != str(conversion.get("rate_numerator"))
-            or conversion.get("rate_denominator_decimal")
-            != str(conversion.get("rate_denominator"))
-        ):
-            return False
-        simulation_per_target.add(local_to_sim / local_to_target)
-    return len(signatures) == 1 and len(simulation_per_target) == 1
+    return all(
+        isinstance(scale, dict)
+        and scale.get("anchor_status") == "CALIBRATED"
+        and scale.get("scale_status") == "CALIBRATED"
+        for scale in scales
+    )
 
 
 def _source_rate_evidence_is_bound(
-    _profile_inputs: dict[str, object],
+    profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None = None,
 ) -> bool:
-    """Return false until immutable rate extraction and design binding exist."""
+    """Accept only the schema-v3, re-attested typed extraction subgate."""
 
-    # Registered configuration files attest what was declared, not that a source
-    # contains the declared numerical rate or that its estimand/population matches
-    # a preregistered campaign. No snapshot schema for those attestations exists
-    # yet, so accepting any caller-supplied marker here would be self-promotion.
+    if not _profile_lineage_reattests_payload(
+        profile_inputs,
+        profile_lineage=profile_lineage,
+    ):
+        return False
+    assessment = _serialized_monetary_evidence_assessment(profile_inputs)
+    return bool(
+        assessment is not None
+        and assessment["source_rate_evidence_bound"] is True
+    )
+
+
+def _profile_lineage_reattests_payload(
+    profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None,
+) -> bool:
+    if profile_lineage is None:
+        return False
+    try:
+        return profile_lineage.manifest_payload() == profile_inputs
+    except ProfileValidationError:
+        return False
+
+
+def _source_bundle_signature_is_bound(
+    profile_inputs: dict[str, object],
+) -> bool:
+    """Schema-v1 source bundles are explicitly missing a trust-root signature."""
+
+    # Do not accept a serialized true value until a future schema implements
+    # detached-signature verification against an external trust root.
+    _ = profile_inputs
     return False
+
+
+def _monetary_output_design_is_bound(
+    profile_inputs: dict[str, object],
+) -> bool:
+    """No output-contract/rate-set binding exists in the current prototype."""
+
+    _ = profile_inputs
+    return False
+
+
+def _monetary_population_binding_is_bound(
+    profile_inputs: dict[str, object],
+) -> bool:
+    """No calibrated target-population specification is bound yet."""
+
+    _ = profile_inputs
+    return False
+
+
+def _monetary_preregistration_is_bound(
+    profile_inputs: dict[str, object],
+) -> bool:
+    """The current causal design is retrospective and not preregistered."""
+
+    _ = profile_inputs
+    return False
+
+
+def _serialized_monetary_evidence_assessment(
+    profile_inputs: dict[str, object],
+) -> dict[str, object] | None:
+    """Validate the exact typed assessment mirrored by registered lineage."""
+
+    if profile_inputs.get("lineage_status") != "registered_profile_bundle":
+        return None
+    snapshot = profile_inputs.get("snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != 3:
+        return None
+    bundle = snapshot.get("profile_bundle")
+    published = profile_inputs.get("monetary_evidence_assessment")
+    if not isinstance(bundle, dict):
+        return None
+    assessment = bundle.get("monetary_evidence_assessment")
+    if (
+        not isinstance(assessment, dict)
+        or published != assessment
+    ):
+        return None
+    try:
+        monetary_evidence_assessment_from_snapshot(
+            assessment,
+            registered_lineage=True,
+            bundle_snapshot=bundle,
+        )
+    except ProfileValidationError:
+        return None
+    return assessment
 
 
 def _profile_dependencies_calibrated(
     profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None = None,
 ) -> bool:
     """Mirror the transitive profile campaign gate from fingerprinted values."""
 
@@ -545,60 +616,11 @@ def _profile_dependencies_calibrated(
             source_statuses.get(source_id) == "CALIBRATED"
             for source_id in referenced_source_ids
         )
-        and _money_outputs_cross_country_comparable(profile_inputs)
+        and _money_outputs_cross_country_comparable(
+            profile_inputs,
+            profile_lineage=profile_lineage,
+        )
     )
-
-
-def _strict_positive_int(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ValueError("expected a positive integer")
-    return value
-
-
-def _is_nonempty_text(value: object) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
-def _is_iso_currency(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 3
-        and value.upper() == value
-        and all("A" <= character <= "Z" for character in value)
-    )
-
-
-def _is_iso_date_text(value: object) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        return date.fromisoformat(value).isoformat() == value
-    except ValueError:
-        return False
-
-
-def _is_ordered_period(start: object, end: object) -> bool:
-    if not isinstance(start, str) or not isinstance(end, str):
-        return False
-    try:
-        return date.fromisoformat(start) <= date.fromisoformat(end)
-    except ValueError:
-        return False
-
-
-def _retrieval_covers_period(retrieved_on: object, period_end: object) -> bool:
-    if not isinstance(retrieved_on, str) or not isinstance(period_end, str):
-        return False
-    try:
-        return date.fromisoformat(retrieved_on) >= date.fromisoformat(period_end)
-    except ValueError:
-        return False
-
-
-def _period_label(start: object, end: object) -> str:
-    if not isinstance(start, str) or not isinstance(end, str):
-        raise ValueError("period endpoints must be text")
-    return start if start == end else f"{start}/{end}"
 
 
 def _file_digest(path: Path) -> str:

@@ -24,7 +24,7 @@ Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
 `data/provenance/sources.toml`.
 
-`jurisdictions.toml` uses profile schema version 2. It optionally accepts one
+The checked-in `jurisdictions.toml` uses profile schema version 2. It optionally accepts one
 `[[monetary_conversion]]` table per jurisdiction with `jurisdiction_code`,
 `source_currency`, `target_currency`, `method` (`FX` or `PPP`), positive exact
 `rate_numerator` and `rate_denominator`, canonical ISO
@@ -48,14 +48,29 @@ exists. Rate sources must use the method-specific `foreign_exchange_rate` or
 The retrieval date cannot predate the rate-period end. Unknown
 conversion-table keys are rejected.
 
-Those are structural checks, not a substantive comparability attestation. The
-campaign and public output flag remain fail-closed with
-`monetary_conversion.source_rate_binding=missing` until an immutable numerical
-rate extraction is bound to the preregistered output and population design.
+Profile schema version 3 adds required `conversion_id` and `rate_binding_id`
+fields. Each binding must resolve through a separately versioned
+`source_bundle.toml`, whose own digest binds the exact source catalogue. The
+bundle verifier re-reads a regular non-link CSV artifact, checks its declared
+byte length and SHA-256, executes one whitelisted canonical exact-rational CSV
+recipe, and requires the extracted currencies, direction, method, dates,
+source, jurisdiction, numerator, and denominator to match the conversion.
+Unknown fields, path traversal, links/reparse points, mutation, ambiguous rows,
+floats, scientific notation, and unreduced rationals fail closed.
 
-Legacy profile schema version 1 remains readable when it contains only its
-original fields. The loader rejects version-2 monetary fields under a version-1
-declaration and rejects unknown schema versions.
+Those are structural and reproducible-extraction checks, not a substantive
+comparability attestation. Source extraction, source-bundle signature,
+output/design, population, and external preregistration are independent gates.
+The checked-in source bundle is empty, `ILLUSTRATIVE`, and has signature status
+`MISSING`; the checked-in jurisdiction file remains version 2 with zero
+conversions. Public comparability and campaign validation therefore remain
+false even if a test fixture clears the source-extraction subgate.
+
+Legacy profile schema versions 1 and 2 remain readable on their exact historical
+surfaces. Version 1 rejects monetary fields; version 2 rejects version-3 binding
+fields. The profile-lineage snapshot has likewise advanced to version 3, with
+frozen minimal v1/v2 readability fixtures, locked registered projection
+fingerprints, and explicit downgrade rejection.
 
 Campaign validation also requires the complete bundle to match its hashed
 jurisdiction and source-registry files. Registered lineage is reloaded and

@@ -15,7 +15,10 @@ from .core.ledger import LedgerStorageError
 from .core.world import World
 from .data.profiles import ProfileBundle, ProfileValidationError, load_profile_bundle
 from .outputs import export_policy_batch
-from .outputs.schema import OUTPUT_SCHEMA_VERSION, SENSITIVITY_COLUMNS
+from .outputs.schema import (
+    SENSITIVITY_COLUMNS,
+    stamp_standalone_sensitivity_schema,
+)
 from .outputs.writers import write_csv_atomic, write_json_atomic
 from .policy_config import PolicyConfigurationError, load_policy_config
 from .simulation import SimulationOrchestrator
@@ -211,10 +214,9 @@ def _policy_sensitivity(
     csv_sha256 = sha256(csv_path.read_bytes()).hexdigest()
     metadata_path = write_json_atomic(
         destination / "sensitivity_metadata.json",
-        {
+        stamp_standalone_sensitivity_schema({
             "synthetic_only": True,
             "empirical_validation_claimed": False,
-            "output_schema_version": OUTPUT_SCHEMA_VERSION,
             "config": str(config_path.resolve()),
             "seeds": list(result.batch_spec.seeds),
             "seed_decimal_strings": [
@@ -237,7 +239,7 @@ def _policy_sensitivity(
                 if result.profile_input_lineage is not None
                 else None
             ),
-        },
+        }),
     )
     return {
         "status": "ok",
