@@ -25,6 +25,7 @@ from ..data.profiles import (
     ProfileValidationError,
     monetary_evidence_assessment_from_snapshot,
     monetary_structure_assessment_from_snapshot,
+    population_evidence_assessment_from_snapshot,
 )
 from ..policy_config import PolicyPrototypeConfig
 from .metric_contracts import build_metric_contract_manifest_payload
@@ -71,6 +72,12 @@ def build_run_manifest(
                 "source_registry_sha256": None,
                 "signature_status": None,
             },
+            "population_bundle": {
+                "path": None,
+                "sha256": None,
+                "source_registry_sha256": None,
+                "signature_status": None,
+            },
             "metric_contract_summary": {"count": 0, "status_counts": {}},
             "money_scale_summary": {
                 "count": 0,
@@ -102,6 +109,13 @@ def build_run_manifest(
                 "verified_result_count": 0,
                 "signature_status": None,
             },
+            "population_evidence_summary": {
+                "present": False,
+                "artifact_count": 0,
+                "binding_count": 0,
+                "verified_result_count": 0,
+                "signature_status": None,
+            },
             "monetary_evidence_assessment": {
                 "structure_coherent": False,
                 "source_rate_evidence_bound": False,
@@ -117,6 +131,29 @@ def build_run_manifest(
                     "monetary_conversion.output_design_binding=missing",
                     "monetary_conversion.population_binding=missing",
                     "monetary_conversion.preregistration_binding=missing",
+                ],
+            },
+            "population_evidence_assessment": {
+                "structure_coherent": False,
+                "source_population_evidence_bound": False,
+                "calibration_targets_bound": False,
+                "heldout_validation_targets_bound": False,
+                "source_bundle_signature_bound": False,
+                "sampling_plan_bound": False,
+                "runtime_projection_bound": False,
+                "output_estimand_binding_bound": False,
+                "balance_validation_bound": False,
+                "public_population_comparability": False,
+                "blockers": [
+                    "population.structure=unavailable",
+                    "population.source_evidence=missing",
+                    "population.calibration_targets=missing",
+                    "population.heldout_validation_targets=missing",
+                    "population.source_bundle_signature=missing",
+                    "population.sampling_plan=missing",
+                    "population.runtime_projection=missing",
+                    "population.output_estimand_binding=missing",
+                    "population.balance_validation=missing",
                 ],
             },
         }
@@ -192,6 +229,10 @@ def build_run_manifest(
         ),
         "profile_inputs": profile_inputs,
         "monetary_comparability": _monetary_comparability_payload(
+            profile_inputs,
+            profile_lineage=profile_lineage,
+        ),
+        "population_readiness": _population_readiness_payload(
             profile_inputs,
             profile_lineage=profile_lineage,
         ),
@@ -343,7 +384,10 @@ def _money_outputs_cross_country_comparable(
             ),
             _source_bundle_signature_is_bound(profile_inputs),
             _monetary_output_design_is_bound(profile_inputs),
-            _monetary_population_binding_is_bound(profile_inputs),
+            _monetary_population_binding_is_bound(
+                profile_inputs,
+                profile_lineage=profile_lineage,
+            ),
             _monetary_preregistration_is_bound(profile_inputs),
         )
     )
@@ -399,7 +443,8 @@ def _monetary_comparability_payload(
                 profile_inputs
             ),
             "population_binding_bound": _monetary_population_binding_is_bound(
-                profile_inputs
+                profile_inputs,
+                profile_lineage=profile_lineage,
             ),
             "preregistration_bound": _monetary_preregistration_is_bound(
                 profile_inputs
@@ -408,6 +453,66 @@ def _monetary_comparability_payload(
                 profile_inputs,
                 profile_lineage=profile_lineage,
             ),
+        },
+    }
+
+
+def _population_readiness_payload(
+    profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None = None,
+) -> dict[str, object]:
+    """Publish population subgates only from re-attested lineage."""
+
+    assessment = (
+        _serialized_population_evidence_assessment(profile_inputs)
+        if _profile_lineage_reattests_payload(
+            profile_inputs,
+            profile_lineage=profile_lineage,
+        )
+        else None
+    )
+    if assessment is None:
+        assessment = {
+            "structure_coherent": False,
+            "source_population_evidence_bound": False,
+            "calibration_targets_bound": False,
+            "heldout_validation_targets_bound": False,
+            "source_bundle_signature_bound": False,
+            "sampling_plan_bound": False,
+            "runtime_projection_bound": False,
+            "output_estimand_binding_bound": False,
+            "balance_validation_bound": False,
+            "public_population_comparability": False,
+            "blockers": [
+                "population.structure=unavailable",
+                "population.source_evidence=missing",
+                "population.calibration_targets=missing",
+                "population.heldout_validation_targets=missing",
+                "population.source_bundle_signature=missing",
+                "population.sampling_plan=missing",
+                "population.runtime_projection=missing",
+                "population.output_estimand_binding=missing",
+                "population.balance_validation=missing",
+            ],
+        }
+    gate_fields = (
+        "structure_coherent",
+        "source_population_evidence_bound",
+        "calibration_targets_bound",
+        "heldout_validation_targets_bound",
+        "source_bundle_signature_bound",
+        "sampling_plan_bound",
+        "runtime_projection_bound",
+        "output_estimand_binding_bound",
+        "balance_validation_bound",
+        "public_population_comparability",
+    )
+    return {
+        "schema_version": "1.0",
+        "typed_assessment": dict(assessment),
+        "manifest_gate": {
+            field: assessment[field] is True for field in gate_fields
         },
     }
 
@@ -498,11 +603,21 @@ def _monetary_output_design_is_bound(
 
 def _monetary_population_binding_is_bound(
     profile_inputs: dict[str, object],
+    *,
+    profile_lineage: ProfileInputLineage | None = None,
 ) -> bool:
-    """No calibrated target-population specification is bound yet."""
+    """Require the independently validated population-readiness contract."""
 
-    _ = profile_inputs
-    return False
+    if not _profile_lineage_reattests_payload(
+        profile_inputs,
+        profile_lineage=profile_lineage,
+    ):
+        return False
+    assessment = _serialized_population_evidence_assessment(profile_inputs)
+    return bool(
+        assessment is not None
+        and assessment["public_population_comparability"] is True
+    )
 
 
 def _monetary_preregistration_is_bound(
@@ -522,7 +637,10 @@ def _serialized_monetary_evidence_assessment(
     if profile_inputs.get("lineage_status") != "registered_profile_bundle":
         return None
     snapshot = profile_inputs.get("snapshot")
-    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != 3:
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") not in {
+        3,
+        4,
+    }:
         return None
     bundle = snapshot.get("profile_bundle")
     published = profile_inputs.get("monetary_evidence_assessment")
@@ -536,6 +654,34 @@ def _serialized_monetary_evidence_assessment(
         return None
     try:
         monetary_evidence_assessment_from_snapshot(
+            assessment,
+            registered_lineage=True,
+            bundle_snapshot=bundle,
+        )
+    except ProfileValidationError:
+        return None
+    return assessment
+
+
+def _serialized_population_evidence_assessment(
+    profile_inputs: dict[str, object],
+) -> dict[str, object] | None:
+    """Validate the exact typed population assessment mirrored by lineage."""
+
+    if profile_inputs.get("lineage_status") != "registered_profile_bundle":
+        return None
+    snapshot = profile_inputs.get("snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != 4:
+        return None
+    bundle = snapshot.get("profile_bundle")
+    published = profile_inputs.get("population_evidence_assessment")
+    if not isinstance(bundle, dict):
+        return None
+    assessment = bundle.get("population_evidence_assessment")
+    if not isinstance(assessment, dict) or published != assessment:
+        return None
+    try:
+        population_evidence_assessment_from_snapshot(
             assessment,
             registered_lineage=True,
             bundle_snapshot=bundle,
@@ -567,6 +713,7 @@ def _profile_dependencies_calibrated(
     contracts = bundle.get("metric_contracts")
     scales = bundle.get("money_scales")
     conversions = bundle.get("monetary_conversions")
+    population_bundle = bundle.get("population_evidence_bundle")
     if not all(
         isinstance(rows, list) and rows
         for rows in (sources, contracts, scales, conversions)
@@ -605,11 +752,27 @@ def _profile_dependencies_calibrated(
         ):
             return False
         referenced_source_ids.update(source_ids)
+    if isinstance(population_bundle, dict):
+        population_bindings = population_bundle.get("bindings")
+        if not isinstance(population_bindings, list):
+            return False
+        for binding in population_bindings:
+            if not isinstance(binding, dict):
+                return False
+            source_ids = binding.get("source_ids")
+            if not isinstance(source_ids, list) or any(
+                not isinstance(source_id, str) for source_id in source_ids
+            ):
+                return False
+            referenced_source_ids.update(source_ids)
     source_statuses = {
         source.get("id"): source.get("calibration_status")
         for source in sources
         if isinstance(source, dict)
     }
+    population_assessment = _serialized_population_evidence_assessment(
+        profile_inputs
+    )
     return (
         bool(referenced_source_ids)
         and all(
@@ -620,6 +783,8 @@ def _profile_dependencies_calibrated(
             profile_inputs,
             profile_lineage=profile_lineage,
         )
+        and population_assessment is not None
+        and population_assessment["public_population_comparability"] is True
     )
 
 

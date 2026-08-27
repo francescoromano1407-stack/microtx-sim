@@ -7,7 +7,8 @@ a claim that the model has been empirically calibrated. The machine-readable
 source register is `data/provenance/sources.toml`; jurisdiction inputs are in
 `configs/jurisdictions.toml`; run-level assumptions are in `configs/base.toml`
 and `configs/smoke.toml`. The content-addressed rate-evidence registry is
-`data/provenance/source_bundle.toml`. The separate policy prototype reads
+`data/provenance/source_bundle.toml`; the separate population-evidence registry
+is `data/provenance/population_bundle.toml`. The policy prototype reads
 `configs/policy_prototype.toml` and reuses the jurisdiction profile loader.
 
 At this stage:
@@ -20,6 +21,9 @@ At this stage:
 - the checked-in source bundle binds the exact source-catalogue digest but has
   zero artifacts, zero bindings, `ILLUSTRATIVE` status, and signature
   `MISSING`; no fallback rates are invented;
+- population-evidence schema version 1 can verify exact-byte joint population
+  cells, but the checked-in population bundle has zero artifacts and bindings,
+  `ILLUSTRATIVE` status, signature `MISSING`, and `campaign_ready=false`;
 - population allocation, audit capacity, regulator operating budgets, and many
   agent defaults are `SYNTHETIC` or otherwise uncalibrated;
 - a scientific campaign is therefore rejected by construction.
@@ -66,6 +70,65 @@ seeded synthetic leisure, sleep, work/study, social, physical-activity,
 enjoyment, financial-sensitivity, discounting, FOMO, commitment, habit, and
 wellbeing fields. No official source record currently calibrates those added
 distributions.
+
+## Population-evidence bundle
+
+Population-evidence schema version 1 is a strict, content-addressed input
+contract for future target-population work. Each binding names a target
+population and jurisdiction, reference period, population base, universe, unit
+of analysis, eligibility and exclusion rules, age scope, household-income and
+household definitions, gaming and payer definitions, zero-spender treatment,
+source IDs, retrieval date, and either a `CALIBRATION` or `VALIDATION` role.
+The one whitelisted interpreter reads strict UTF-8 CSV with the exact declared
+header and selects rows for one binding.
+
+Every selected row is one joint
+age × household-income-band × household-type × gaming × pre-treatment
+payer-history cell. Gaming is explicitly `GAMER` or `NON_GAMER`; payer history
+is explicitly `EVER_PAYER` or `NEVER_PAYER`. Cell mass is a non-negative
+reduced integer numerator over a positive integer denominator. Cell identifiers
+must be sorted and unique, joint semantic cells may not repeat, the masses must
+sum exactly to `1/1`, every age in the binding's declared scope must be covered,
+and age intervals cannot overlap within a fixed income-band, household-type,
+gaming, and payer-history stratum. This is a joint distribution contract rather
+than a collection of independent marginal anchors.
+
+Clearing the profile structural subgate is stricter than parsing one extract:
+every observed income-band × household-type × `GAMER`/`NON_GAMER` ×
+`EVER_PAYER`/`NEVER_PAYER` stratum must cover the full declared age scope exactly
+once. A true zero therefore needs an explicit zero-mass cell; an omitted state
+cannot masquerade as a complete target. Each role must use harmonised joint-cell
+support across jurisdictions.
+
+This is not enough to certify a calibration target. Schema version 1 infers the
+income and household categories from observed rows rather than binding complete
+declared domains or income-band bounds. It also has no typed identity for a
+sample partition or independent validation dataset. Consequently the typed
+profile assessment keeps both `calibration_targets_bound` and
+`heldout_validation_targets_bound` false for every schema-v1 bundle; the role
+labels are retained as declarations for a future schema.
+
+The bundle binds the exact source-register SHA-256, bundle bytes, regular CSV
+artifact paths, byte lengths and SHA-256 digests, canonical extraction recipes,
+and extracted-cell results. Registered profile lineage reopens and re-attests
+those inputs when it is constructed and again when a manifest is emitted.
+Hashes establish which bytes and transformation were used; they do not prove
+publisher authenticity, scientific calibration, or that the selected
+population is appropriate.
+
+Profile integration accepts a population source only when its complete declared
+geography equals the binding's country and its period is either the exact date
+interval or matching full calendar year. Qualified or broader regional scope
+needs a future typed contract rather than inference from free-form text. File,
+ID, hash, or URL differences alone are deliberately not accepted as proof of a
+held-out sample.
+
+Schema version 1 deliberately cannot be campaign-ready. It supports only a
+missing signature and leaves sampling/synthesis, runtime projection,
+output-estimand binding, and balance-validation gates false. The checked-in
+bundle is empty, `ILLUSTRATIVE`, unsigned, and has `campaign_ready=false`, so it
+does not choose any target population or supply calibration or held-out
+validation cells. This milestone is provenance infrastructure only.
 
 ## Monetary units and transformations
 
@@ -202,6 +265,15 @@ population shares. The configured age range is 8–69 in the UK and Belgium and
 10–69 in Korea and Japan. Age weights and income-shape parameters are
 illustrative.
 
+Neither runtime path consumes population-evidence cells. The cohort initializer
+still samples jurisdiction and age from those legacy marginal profiles, derives
+income and household state from synthetic defaults, and gives each generated
+player one implicit analysis unit. The policy CSVs retain their frozen
+output-v2 columns and unweighted synthetic-player aggregation semantics. There
+is no target-population selection, sampling or synthesis plan, projection from
+joint cells into a cohort, output-estimand binding, or statistical balance
+validation yet.
+
 The following `CountryProfile` inputs are inherited from scaffold defaults and
 are not country estimates: adult age, the age-income curve, minor allowance,
 personal and household liquidity, credit access and limits, stored-payment
@@ -328,10 +400,12 @@ Validation occurs at several boundaries:
 
 1. `load_config` parses one run scenario and validates types, ranges, positive
    intervals, and calendar alignment with `tick_days`.
-2. `load_profile_bundle` parses both TOML data files, validates source integrity
-   and canonical ISO retrieval dates, hashes the exact files, builds metric,
-   local-money, and optional FX/PPP conversion contracts, and creates country
-   and state agents.
+2. `load_profile_bundle` parses the registered TOML inputs, validates source
+   integrity and canonical ISO retrieval dates, hashes the exact files, builds
+   metric, local-money, optional FX/PPP conversion contracts, and the separately
+   registered population-evidence assessment, and creates country and state
+   agents. Population evidence is retained in lineage but not projected into
+   those agents.
 3. `World.create` applies `allow_synthetic`, checks the duplicated shared
    behavioural values for exact equality, and applies the run-level audit
    parameters to each state.
@@ -339,6 +413,9 @@ Validation occurs at several boundaries:
    every used source, every nominal anchor, and the money scale to be
    `CALIBRATED`. Pooled money additionally requires complete, calibrated,
    common-basis conversion coverage and exact internal-scale coherence.
+   Population comparability is independently fail-closed; schema version 1
+   cannot clear its signature, synthesis, runtime, output-estimand, or balance
+   gates.
 
 `smoke.toml` permits synthetic dependencies and is the intended executable
 structural check. `base.toml` sets `allow_synthetic=false`; with the current
@@ -347,12 +424,15 @@ It is a future-scale configuration, not an authorized campaign.
 
 The policy runner retains the exact `CountryProfile` tuple it used. A canonical
 snapshot fingerprints every profile field and, for a loaded `ProfileBundle`,
-the metric contracts, money scales, and conversion contracts. Exported
-manifests identify the actual
+the metric contracts, money scales, conversion contracts, population bundle,
+verified population results, and typed population-readiness assessment.
+Registered profile-input lineage is now schema version 4; versions 1–3 remain
+readable on their historical surfaces. Exported manifests identify the actual
 profile codes, jurisdiction and source-register hashes, global source retrieval
-date, and compact contract-status summaries. A caller-supplied bare profile
-tuple is fingerprinted but marked `unregistered_custom_profiles`; it is never
-attributed to the repository's default evidence files.
+date, population-bundle digest and blockers, and compact contract-status
+summaries. A caller-supplied bare profile tuple is fingerprinted but marked
+`unregistered_custom_profiles`; it is never attributed to the repository's
+default evidence files.
 
 Output transformations have their own exhaustive registry. This keeps an input
 contract such as an age or income anchor distinct from a derived table measure
@@ -383,3 +463,10 @@ The loader performs no network request and verifies no page content. Reproducing
 a future calibrated estimate will require immutable raw artifacts, scripted
 extraction, exact environment capture, and transformation-level tests in
 addition to the current register.
+
+The population-evidence schema supplies a place to register exact local CSV
+bytes and a deterministic extraction, but the default bundle contains no such
+artifact and no publisher signature. Even a future non-empty bundle would show
+reproducibility only. Publisher authentication, reviewed calibration, a chosen
+target population, synthesis into the runtime cohort, estimand-specific output
+weights, and held-out balance checks remain separate work.

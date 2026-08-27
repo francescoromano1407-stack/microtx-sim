@@ -33,6 +33,7 @@ feedback from `microtx_sim.core.world`.
 | `microtx_sim.domain.monetisation` | Defines the explicit intervention vector, transparency/pressure summaries, cap, and cooling-off constraints. | `MonetisationVector` |
 | `microtx_sim.causal.scenarios` | Declares exactly seven stable scenarios and the safe reference-compatible catalogue. | `ScenarioId`, `ScenarioSpec`, `required_scenarios()`, `scenario_by_id()` |
 | `microtx_sim.causal.design` | Freezes the 17-factor scenario matrix and descriptive pairwise-contrast registry, detects custom factor drift, and fails campaign use closed. | `CausalDesignRegistry`, `CausalDesignAssessment`, `build_causal_design_registry()`, `assess_causal_design()` |
+| `microtx_sim.data.population_evidence` | Verifies exact-byte schema-v1 joint population evidence and retains independent campaign blockers without projecting it into the runtime cohort. | `PopulationEvidenceBundle`, `PopulationEvidenceCell`, `verify_population_evidence_bundle()` |
 | `microtx_sim.consumers.population` | Creates the seeded heterogeneous demographic and financial cohort. | `initialize_player_table()` |
 | `microtx_sim.consumers.welfare` | Creates aligned pre-treatment commitments, obligations, enjoyment, vulnerability, habit, reinforcement, sleep, and wellbeing state. | `PlayerLifeTable`, `initialize_player_life()` |
 | `microtx_sim.consumers.decision` | Evaluates the complete life-action set with interpretable utilities and counter-based Gumbel shocks. | `LifeAction`, `DecisionParameters`, `choose_life_action()` |
@@ -59,11 +60,21 @@ safe revenue, EPGC payment rules, and output options.
 Policy CLI commands load one `ProfileBundle` and pass that same immutable bundle
 to the scenario batch and sensitivity analysis. The result records a canonical
 JSON snapshot and SHA-256 fingerprint of every `CountryProfile` field plus the
-bundle's metric and money-scale contracts. The manifest also records the exact
-jurisdiction-file and source-register hashes and the validated global retrieval
-date. Programmatic callers may still supply a custom `country_profiles` tuple;
-its exact contents are fingerprinted but its lineage is explicitly labelled
+bundle's metric, money-scale, monetary-conversion, and population-evidence
+contracts. Registered profile-input lineage is now version 4; versions 1–3
+remain readable. The manifest records exact jurisdiction, source-register,
+source-bundle, and population-bundle observations plus their typed assessments.
+Programmatic callers may still supply a custom `country_profiles` tuple; its
+exact contents are fingerprinted but its lineage is explicitly labelled
 `unregistered_custom_profiles`, with no default-file provenance claimed.
+
+The default population-evidence bundle is empty, `ILLUSTRATIVE`, unsigned, and
+has `campaign_ready=false`. Schema version 1 can verify strict joint age ×
+household-income-band × household-type × gaming × pre-treatment payer-history
+cells with exact rational mass, but those hashes prove reproducibility rather
+than publisher authenticity or calibration. No target population,
+sampling/synthesis plan, runtime projection, output-estimand binding, or balance
+validation has been supplied.
 
 Validate without running a batch:
 
@@ -311,7 +322,7 @@ parameter distributions.
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden, and monetary proxies by scenario. |
 | `epgc_financing.csv` | Public revenue, minimum contribution, cap, safe profit, feasibility, sustainability, clawback, and penalty by seed. |
 | `sensitivity.csv` | Parameter levels, uncertainty, monotonicity, and instability diagnostics. |
-| `manifest.json` | Schema and export-time file digest; effective typed-config, exact execution-input, sensitivity-design, causal-factor matrix and contrast snapshots/digests/status/blockers, source and profile snapshots/digests; output-metric registry; Git/environment/command; seeds, cohorts, scenarios, equations, assumptions, and scope limits. |
+| `manifest.json` | Schema and export-time file digest; effective typed-config, exact execution-input, sensitivity-design, causal-factor matrix and contrast snapshots/digests/status/blockers, source and profile snapshots/digests including population evidence and blockers; output-metric registry; Git/environment/command; seeds, cohorts, scenarios, equations, assumptions, and scope limits. |
 | `summary.md` | Concise human-readable synthetic scenario table and interpretation warning. |
 | `harm_distribution.svg` | Baseline F2P composite-harm histogram. |
 | `spending_distribution.svg` | Baseline F2P spending histogram. |
@@ -352,6 +363,12 @@ current full bundle is schema `3.0`; it preserves every v2 CSV filename and
 column while adding an independently versioned, fingerprinted, all-or-none
 manifest envelope. Standalone sensitivity export has a separate explicit
 two-file profile instead of masquerading as the full bundle.
+
+Those v2 CSV columns retain unweighted synthetic-player aggregation semantics.
+Population-evidence lineage does not reweight a row, synthesize a cohort, or
+change an estimand: both runtime paths still call the legacy marginal synthetic
+population generator. These artifacts therefore are not target-population
+estimates and do not constitute a full campaign.
 
 ## Assumptions requiring calibration
 

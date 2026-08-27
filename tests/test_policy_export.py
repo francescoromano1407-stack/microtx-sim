@@ -794,7 +794,7 @@ class PolicyExportTests(unittest.TestCase):
                     "status_counts": {},
                 },
             )
-            self.assertEqual(lineage["snapshot"]["schema_version"], 3)
+            self.assertEqual(lineage["snapshot"]["schema_version"], 4)
             self.assertEqual(
                 lineage["snapshot"]["profile_bundle"]["monetary_conversions"],
                 [],
@@ -806,6 +806,19 @@ class PolicyExportTests(unittest.TestCase):
             self.assertEqual(
                 manifest["source_registry_sha256"],
                 lineage["source_registry"]["sha256"],
+            )
+            self.assertEqual(
+                manifest["population_readiness"]["schema_version"],
+                "1.0",
+            )
+            self.assertEqual(
+                manifest["population_readiness"]["typed_assessment"],
+                lineage["population_evidence_assessment"],
+            )
+            self.assertFalse(
+                any(
+                    manifest["population_readiness"]["manifest_gate"].values()
+                )
             )
 
     def test_export_rejects_undeclared_player_and_opportunity_fields(self) -> None:

@@ -146,6 +146,14 @@ state, and jurisdiction state before treatment, and then applies explicit
 treated and control interventions. Null-versus-null equality is a tested
 software invariant.
 
+Population-evidence schema version 1 is retained in profile lineage only; it is
+not a cohort assignment or weighting mechanism. Both runners still initialize
+players from legacy marginal synthetic jurisdiction, age, income, and household
+rules. The frozen output-v2 CSV surface gives generated players equal analysis
+weight. No target population, synthesis plan, runtime projection,
+output-estimand binding, or population-balance validation is currently part of
+the causal design.
+
 ## Repeated seeds and uncertainty summaries
 
 `PolicyBatchSpec` requires unique strict Python integer seeds in the unsigned

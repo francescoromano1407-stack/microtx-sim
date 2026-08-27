@@ -54,6 +54,25 @@ households. Household composition, within-household allocation, taxes, benefits,
 regional price levels, wealth, and real credit-market institutions are not
 calibrated.
 
+The repository now has population-evidence bundle schema version 1 for exact
+joint age × household-income-band × household-type × gaming × pre-treatment
+payer-history cells with exact rational mass. This is an input-lineage
+boundary, not a population model. The checked-in bundle is empty,
+`ILLUSTRATIVE`, unsigned, and has `campaign_ready=false`; it chooses no target
+population and contains no calibration or held-out validation cells.
+
+Even a populated schema-v1 bundle could establish only exact source-cell
+extraction. It does not bind complete declared income/household domains,
+income-band boundaries, or a disjoint validation-sample identity, so its
+calibration-target and held-out-validation gates are hard-coded false.
+
+The runtime does not sample or weight from that bundle. It still uses the legacy
+marginal synthetic generator, and the frozen output-v2 CSV tables aggregate
+synthetic players without target-population weights. There is no sampling or
+synthesis plan, runtime projection, output-estimand binding, or population-
+balance validation. Consequently the P0 comparable-populations requirement
+remains open.
+
 ### Internal money is not observed purchasing power
 
 All four monthly income anchors are mapped to the same `180000` simulation-cent
@@ -82,6 +101,11 @@ evidence review. Structural coherence or a reproducible test extraction
 therefore does not promote the public comparability flag. Source extraction,
 bundle signature, output/design binding, population binding, and external
 preregistration remain separate blockers.
+
+The same limitation applies to population evidence: a bundle or artifact hash
+can reproduce the bytes and extraction but cannot authenticate the publisher,
+establish calibration, select a defensible target population, or validate
+transport from evidence cells into simulated and reported outcomes.
 
 ### Official metrics are mostly dormant
 

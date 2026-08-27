@@ -70,7 +70,7 @@ class ProfileRateBindingTests(unittest.TestCase):
                 "monetary_conversion.output_design_binding=missing",
                 assessment.blockers,
             )
-            self.assertEqual(lineage.snapshot["schema_version"], 3)
+            self.assertEqual(lineage.snapshot["schema_version"], 4)
             self.assertEqual(
                 payload["source_evidence_summary"],
                 {

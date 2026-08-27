@@ -94,6 +94,12 @@ bounded fraction of disposable budget. These distributions are synthetic model
 assumptions, support a zero-player cohort, and are not empirical or clinical
 estimates.
 
+The separately registered population-evidence schema can attest exact joint
+age × household-income-band × household-type × gaming × pre-treatment
+payer-history cells with rational mass, but no such cells are checked in and
+the runtime does not consume them. Population initialization remains the legacy
+marginal synthetic generator, and output-v2 CSV aggregation remains unweighted.
+
 Traits and motives are continuous, heterogeneous, and partly correlated.
 Categories such as casual, competitive, and collector are overlapping
 descriptions rather than exclusive scripts. Spending segments—non-payer,

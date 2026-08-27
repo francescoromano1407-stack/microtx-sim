@@ -598,6 +598,12 @@ class ProfileLoadingTests(unittest.TestCase):
                 "source_registry_sha256": None,
                 "signature_status": None,
             }
+            file_lineage["population_bundle"] = {
+                "path": None,
+                "sha256": None,
+                "source_registry_sha256": None,
+                "signature_status": None,
+            }
             snapshot_json = json.dumps(
                 snapshot,
                 ensure_ascii=False,
@@ -669,6 +675,7 @@ class ProfileLoadingTests(unittest.TestCase):
             file_lineage = snapshot["file_lineage"]
             assert isinstance(file_lineage, dict)
             file_lineage.pop("source_bundle")
+            file_lineage.pop("population_bundle")
             bundle_snapshot = snapshot["profile_bundle"]
             assert isinstance(bundle_snapshot, dict)
             bundle_snapshot.pop("monetary_conversions")
@@ -678,6 +685,9 @@ class ProfileLoadingTests(unittest.TestCase):
                 "source_evidence_bundle",
                 "rate_evidence_results",
                 "monetary_evidence_assessment",
+                "population_evidence_bundle",
+                "population_evidence_results",
+                "population_evidence_assessment",
             ):
                 bundle_snapshot.pop(field)
             snapshot_json = json.dumps(
@@ -763,6 +773,7 @@ class ProfileLoadingTests(unittest.TestCase):
             file_lineage = snapshot["file_lineage"]
             assert isinstance(file_lineage, dict)
             file_lineage.pop("source_bundle")
+            file_lineage.pop("population_bundle")
             bundle_snapshot = snapshot["profile_bundle"]
             assert isinstance(bundle_snapshot, dict)
             for field in (
@@ -771,6 +782,9 @@ class ProfileLoadingTests(unittest.TestCase):
                 "source_evidence_bundle",
                 "rate_evidence_results",
                 "monetary_evidence_assessment",
+                "population_evidence_bundle",
+                "population_evidence_results",
+                "population_evidence_assessment",
             ):
                 bundle_snapshot.pop(field)
             conversions = bundle_snapshot["monetary_conversions"]
@@ -824,6 +838,15 @@ class ProfileLoadingTests(unittest.TestCase):
         file_lineage = snapshot["file_lineage"]
         assert isinstance(file_lineage, dict)
         file_lineage.pop("source_bundle")
+        file_lineage.pop("population_bundle")
+        bundle_snapshot = snapshot["profile_bundle"]
+        assert isinstance(bundle_snapshot, dict)
+        for field in (
+            "population_evidence_bundle",
+            "population_evidence_results",
+            "population_evidence_assessment",
+        ):
+            bundle_snapshot.pop(field)
         snapshot_json = json.dumps(
             snapshot,
             ensure_ascii=False,
@@ -843,6 +866,8 @@ class ProfileLoadingTests(unittest.TestCase):
                 ).hexdigest(),
                 source_bundle_path=None,
                 source_bundle_sha256=None,
+                population_bundle_path=None,
+                population_bundle_sha256=None,
             )
 
     def test_unregistered_lineage_cannot_forge_monetary_readiness_or_reasons(self) -> None:

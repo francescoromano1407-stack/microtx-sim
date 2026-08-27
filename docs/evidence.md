@@ -7,7 +7,9 @@ official citation cannot silently turn an illustrative equation into a
 calibrated estimate. The authoritative machine-readable register is
 `data/provenance/sources.toml`. Jurisdiction contracts are declared in
 `configs/jurisdictions.toml`, while run-level assumptions are selected by a
-scenario such as `configs/smoke.toml`.
+scenario such as `configs/smoke.toml`. Exact-byte rate and population evidence
+use separate registries in `data/provenance/source_bundle.toml` and
+`data/provenance/population_bundle.toml`.
 
 The detailed inventory, current runtime use, units, denominators, and dormant
 contracts are documented in [Data sources](data_sources.md). Interpretation and
@@ -54,6 +56,51 @@ jurisdiction-file hash, and source-register hash to that fingerprinted snapshot.
 These are software-lineage
 controls, not evidence promotion: all current illustrative and synthetic
 statuses remain unchanged.
+
+## Population-evidence contract
+
+Population-evidence bundle schema version 1 binds a source-register digest,
+the exact bytes, byte length, media type, and digest of each declared regular
+CSV artifact, and one canonical whitelisted extraction recipe per binding. A
+binding also preserves its target-population definition, jurisdiction,
+reference period, universe, analysis unit, eligibility and exclusion rules,
+age scope, household-income definition and currency, household definition,
+gaming and pre-treatment payer-history definitions, zero-spender treatment,
+sources, retrieval date, provenance status, and `CALIBRATION` or `VALIDATION`
+role.
+
+The extracted cells form a strict joint age × household-income-band ×
+household-type × gaming × pre-treatment payer-history distribution. Cell mass
+is stored as an exact reduced rational; the verified cells must be non-empty,
+canonical and unique, cover the binding's age scope, and sum exactly to `1/1`.
+Age intervals must also be disjoint within each fixed income-band,
+household-type, gaming, and payer-history stratum. The contract rejects
+undeclared columns, ambiguous selection, malformed integers, path escape,
+links/reparse points, mutation, and byte or hash drift. Profile structure
+requires every observed income-band × household-type × gaming-state ×
+payer-state stratum to cover the age scope exactly once, including explicit
+zero-mass gaming/payer cells, and harmonised cell support across jurisdictions.
+Sources must declare the exact country and matching reference period without
+free-form scope qualifiers.
+
+Schema version 1 nevertheless cannot certify calibration or holdout targets: it
+does not bind complete income/household domains, income-band boundaries, or a
+typed sample/partition identity. Both target subgates are therefore hard-coded
+false. Different labels, files, hashes, source IDs, or URLs cannot promote a
+`VALIDATION` declaration into proof of held-out observations.
+
+This attestation answers “which bytes and recipe produced these cells,” not
+“who published them” or “are they calibrated for this estimand.” Schema version
+1 supports only signature status `MISSING` and hard-codes
+`campaign_ready=false`. The checked-in bundle is empty, `ILLUSTRATIVE`, and
+unsigned. It selects no target population and supplies no calibration or
+held-out validation cells.
+
+Registered profile-input lineage has advanced to version 4 to retain the
+population bundle, verified results, and typed assessment. Historical lineage
+versions 1–3 remain readable, but they cannot contain or claim the version-4
+population fields. Hashes in any lineage version are reproducibility controls,
+not publisher signatures or scientific calibration.
 
 ## Output transformation registry
 
@@ -104,6 +151,13 @@ and funding parameters. Many official metrics—gaming reach, payer rates,
 spending distributions, deprivation, consumption propensity, and programme
 rates/caps—remain contract-only. Their presence does not calibrate current
 consumption, harm, company, audit, or subsidy outcomes.
+
+The new population-evidence bundle is also lineage-only at runtime. The legacy
+marginal synthetic generator still constructs the cohort, and neither its
+gaming nor payer-history dimensions are bound to the joint evidence contract.
+Exported v2 CSV tables still use unweighted synthetic-player summaries. No
+target-population choice, sampling/synthesis plan, runtime projection,
+output-estimand binding, or balance validation has been implemented.
 
 `behavior.household_peer_influence` is runtime-consumed but has no empirical
 source contract. It is a synthetic sensitivity-only coefficient over a
@@ -205,12 +259,20 @@ preregistration, and empirical-calibration blockers even when the canonical
 matrix is used. Custom factor values remain descriptively exportable, but add a
 canonical-matrix mismatch blocker and can never inherit the canonical claim.
 
+Population validation is a third independent fail-closed boundary. An exact
+joint-cell extraction can at most clear source-structure and source-evidence
+subgates. Schema version 1 cannot clear calibration-target,
+held-out-validation, publisher-signature, sampling/synthesis-plan,
+runtime-projection, output-estimand, or balance-validation gates.
+`public_population_comparability` therefore remains false.
+
 Passing this software gate will be necessary but not sufficient. The policy
 prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,
 and a versioned run manifest, but those are structural diagnostics. A scientific
 campaign still requires frozen inputs, independent extraction review,
 calibrated and held-out validation targets, prespecified estimands, joint
 uncertainty, power analysis, and governance for any empirical data.
+No full campaign has been run or authorised by this infrastructure milestone.
 
 ## Updating evidence
 

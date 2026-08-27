@@ -7,3 +7,4 @@ tests/fixtures/*.json text eol=lf
 # Evidence artifacts are content-addressed opaque bytes.  Never apply Git text
 # conversion; a declared digest must describe the checked-out blob exactly.
 data/provenance/rate_artifacts/** -text
+data/provenance/population_artifacts/** -text

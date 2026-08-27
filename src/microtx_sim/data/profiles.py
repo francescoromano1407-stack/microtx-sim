@@ -20,6 +20,11 @@ from ..consumers.population import CountryProfile
 from ..types import ProvenanceStatus
 
 if TYPE_CHECKING:
+    from .population_evidence import (
+        PopulationEvidenceBinding,
+        PopulationEvidenceBundle,
+        PopulationEvidenceResult,
+    )
     from .rate_evidence import RateEvidenceBundle
 
 
@@ -29,7 +34,11 @@ DEFAULT_SOURCES_PATH = _PROJECT_ROOT / "data" / "provenance" / "sources.toml"
 DEFAULT_SOURCE_BUNDLE_PATH = (
     _PROJECT_ROOT / "data" / "provenance" / "source_bundle.toml"
 )
+DEFAULT_POPULATION_BUNDLE_PATH = (
+    _PROJECT_ROOT / "data" / "provenance" / "population_bundle.toml"
+)
 _USE_REGISTERED_SOURCE_BUNDLE = object()
+_USE_REGISTERED_POPULATION_BUNDLE = object()
 
 _EXPECTED_CODES = ("UK", "KR", "JP", "BE")
 _SIMULATION_MONTHLY_INCOME_CENTS = 180_000
@@ -73,6 +82,31 @@ _NON_METRIC_FIELDS = frozenset(
 _CONVERSION_SOURCE_SUPPORTS = {
     "FX": frozenset({"foreign_exchange_rate"}),
     "PPP": frozenset({"purchasing_power_parity"}),
+}
+_POPULATION_SOURCE_SUPPORT_GROUPS = (
+    frozenset({"age_structure", "income_by_age"}),
+    frozenset(
+        {
+            "income_distribution",
+            "disposable_income_quintiles",
+            "cross_country_income",
+        }
+    ),
+    frozenset({"household_composition", "householder_age"}),
+    frozenset({"gaming_reach", "minor_gaming_reach"}),
+    frozenset(
+        {
+            "conditional_payer_rate",
+            "purchase_incidence",
+            "conditional_mobile_spend",
+        }
+    ),
+)
+_POPULATION_JURISDICTION_GEOGRAPHIES = {
+    "UK": "United Kingdom",
+    "KR": "South Korea",
+    "JP": "Japan",
+    "BE": "Belgium",
 }
 _MONETARY_CONVERSION_V2_FIELDS = frozenset(
     {
@@ -132,6 +166,55 @@ _MONETARY_ASSESSMENT_FIELDS = frozenset(
         "population_binding_bound",
         "preregistration_bound",
         "public_output_comparability",
+        "blockers",
+    }
+)
+_POPULATION_FIXED_BLOCKERS = (
+    (
+        "source_population_evidence_bound",
+        "population.source_evidence=missing",
+    ),
+    (
+        "calibration_targets_bound",
+        "population.calibration_targets=missing",
+    ),
+    (
+        "heldout_validation_targets_bound",
+        "population.heldout_validation_targets=missing",
+    ),
+    (
+        "source_bundle_signature_bound",
+        "population.source_bundle_signature=missing",
+    ),
+    (
+        "sampling_plan_bound",
+        "population.sampling_plan=missing",
+    ),
+    (
+        "runtime_projection_bound",
+        "population.runtime_projection=missing",
+    ),
+    (
+        "output_estimand_binding_bound",
+        "population.output_estimand_binding=missing",
+    ),
+    (
+        "balance_validation_bound",
+        "population.balance_validation=missing",
+    ),
+)
+_POPULATION_ASSESSMENT_FIELDS = frozenset(
+    {
+        "structure_coherent",
+        "source_population_evidence_bound",
+        "calibration_targets_bound",
+        "heldout_validation_targets_bound",
+        "source_bundle_signature_bound",
+        "sampling_plan_bound",
+        "runtime_projection_bound",
+        "output_estimand_binding_bound",
+        "balance_validation_bound",
+        "public_population_comparability",
         "blockers",
     }
 )
@@ -776,6 +859,174 @@ def monetary_evidence_assessment_from_snapshot(
     return assessment
 
 
+@dataclass(frozen=True, slots=True)
+class PopulationEvidenceAssessment:
+    """Typed population-evidence gates shared by campaign and manifest checks.
+
+    Schema v1 can prove exact joint-cell extraction from registered bytes.  It
+    deliberately cannot prove publisher authenticity, a sampling/synthesis
+    plan, runtime projection, output-estimand linkage, or balance validation.
+    It also lacks declared income/household domains and a typed disjoint-sample
+    identity, so calibration-target and held-out-validation gates stay false.
+    The remaining gates are independent so a content hash cannot self-promote a
+    synthetic cohort into a target-population result.
+    """
+
+    structure_coherent: bool
+    source_population_evidence_bound: bool
+    calibration_targets_bound: bool
+    heldout_validation_targets_bound: bool
+    source_bundle_signature_bound: bool
+    sampling_plan_bound: bool
+    runtime_projection_bound: bool
+    output_estimand_binding_bound: bool
+    balance_validation_bound: bool
+    public_population_comparability: bool
+    blockers: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        boolean_fields = tuple(
+            sorted(_POPULATION_ASSESSMENT_FIELDS.difference({"blockers"}))
+        )
+        if any(type(getattr(self, field)) is not bool for field in boolean_fields):
+            raise ProfileValidationError(
+                "population evidence assessment flags must be booleans"
+            )
+        if not isinstance(self.blockers, tuple) or any(
+            not isinstance(blocker, str) or not blocker
+            for blocker in self.blockers
+        ):
+            raise ProfileValidationError(
+                "population evidence blockers must be immutable non-empty text"
+            )
+        if len(set(self.blockers)) != len(self.blockers):
+            raise ProfileValidationError(
+                "population evidence blockers must be unique"
+            )
+        if any(
+            getattr(self, field)
+            for field in (
+                "calibration_targets_bound",
+                "heldout_validation_targets_bound",
+                "source_bundle_signature_bound",
+                "sampling_plan_bound",
+                "runtime_projection_bound",
+                "output_estimand_binding_bound",
+                "balance_validation_bound",
+            )
+        ):
+            raise ProfileValidationError(
+                "population evidence schema v1 cannot promote target, signature, "
+                "sampling-plan, runtime, output-estimand, or balance gates"
+            )
+        if self.source_population_evidence_bound and not self.structure_coherent:
+            raise ProfileValidationError(
+                "bound population source evidence requires coherent structure"
+            )
+        if (
+            self.calibration_targets_bound
+            or self.heldout_validation_targets_bound
+        ) and not self.source_population_evidence_bound:
+            raise ProfileValidationError(
+                "bound population targets require bound source evidence"
+            )
+        expected_suffix = tuple(
+            blocker
+            for field, blocker in _POPULATION_FIXED_BLOCKERS
+            if not getattr(self, field)
+        )
+        if len(self.blockers) < len(expected_suffix) or (
+            self.blockers[-len(expected_suffix) :] != expected_suffix
+        ):
+            raise ProfileValidationError(
+                "population evidence blocker codes do not match their flags"
+            )
+        structural = self.blockers[: -len(expected_suffix)]
+        if self.structure_coherent and structural:
+            raise ProfileValidationError(
+                "coherent population structure cannot carry structural blockers"
+            )
+        if not self.structure_coherent and not structural:
+            raise ProfileValidationError(
+                "incoherent population structure requires a typed blocker"
+            )
+        if any(not blocker.startswith("population.structure=") for blocker in structural):
+            raise ProfileValidationError(
+                "population evidence contains an unknown structural blocker"
+            )
+        expected_public = all(
+            (
+                self.structure_coherent,
+                self.source_population_evidence_bound,
+                self.calibration_targets_bound,
+                self.heldout_validation_targets_bound,
+                self.source_bundle_signature_bound,
+                self.sampling_plan_bound,
+                self.runtime_projection_bound,
+                self.output_estimand_binding_bound,
+                self.balance_validation_bound,
+            )
+        )
+        if self.public_population_comparability is not expected_public:
+            raise ProfileValidationError(
+                "population public-comparability flag is inconsistent"
+            )
+
+
+def population_evidence_assessment_from_snapshot(
+    value: object,
+    *,
+    registered_lineage: bool,
+    bundle_snapshot: object,
+) -> PopulationEvidenceAssessment:
+    """Rebuild and compare a serialized population assessment fail-closed."""
+
+    if not isinstance(value, Mapping) or set(value) != _POPULATION_ASSESSMENT_FIELDS:
+        raise ProfileValidationError(
+            "profile snapshot population evidence assessment is malformed"
+        )
+    boolean_fields = _POPULATION_ASSESSMENT_FIELDS.difference({"blockers"})
+    if any(type(value[field]) is not bool for field in boolean_fields):
+        raise ProfileValidationError(
+            "profile snapshot population evidence flags must be booleans"
+        )
+    blockers = value["blockers"]
+    if not isinstance(blockers, (list, tuple)) or any(
+        not isinstance(blocker, str) or not blocker for blocker in blockers
+    ):
+        raise ProfileValidationError(
+            "profile snapshot population evidence blockers are malformed"
+        )
+    observed = PopulationEvidenceAssessment(
+        structure_coherent=value["structure_coherent"],
+        source_population_evidence_bound=value[
+            "source_population_evidence_bound"
+        ],
+        calibration_targets_bound=value["calibration_targets_bound"],
+        heldout_validation_targets_bound=value[
+            "heldout_validation_targets_bound"
+        ],
+        source_bundle_signature_bound=value["source_bundle_signature_bound"],
+        sampling_plan_bound=value["sampling_plan_bound"],
+        runtime_projection_bound=value["runtime_projection_bound"],
+        output_estimand_binding_bound=value["output_estimand_binding_bound"],
+        balance_validation_bound=value["balance_validation_bound"],
+        public_population_comparability=value[
+            "public_population_comparability"
+        ],
+        blockers=tuple(blockers),
+    )
+    expected = _population_assessment_from_bundle_snapshot(
+        bundle_snapshot,
+        registered=registered_lineage,
+    )
+    if observed != expected:
+        raise ProfileValidationError(
+            "profile population assessment does not match its evidence snapshot"
+        )
+    return observed
+
+
 def _valid_structural_monetary_blockers(blockers: tuple[str, ...]) -> bool:
     jurisdiction_blockers: list[str] = []
     for code in _EXPECTED_CODES:
@@ -1206,6 +1457,7 @@ class ProfileBundle:
     jurisdictions_sha256: str | None = None
     source_registry_sha256: str | None = None
     source_evidence_bundle: RateEvidenceBundle | None = None
+    population_evidence_bundle: PopulationEvidenceBundle | None = None
     jurisdiction_schema_version: int = 2
     source_catalogue_schema_version: int = 1
 
@@ -1324,6 +1576,25 @@ class ProfileBundle:
                     "rate evidence references unknown source ids: "
                     + ", ".join(unknown_evidence_sources)
                 )
+        if self.population_evidence_bundle is not None:
+            from .population_evidence import PopulationEvidenceBundle
+
+            if type(self.population_evidence_bundle) is not PopulationEvidenceBundle:
+                raise ProfileValidationError(
+                    "population evidence must be a typed PopulationEvidenceBundle"
+                )
+            unknown_population_sources = sorted(
+                {
+                    source_id
+                    for binding in self.population_evidence_bundle.bindings
+                    for source_id in binding.source_ids
+                }.difference(frozen_sources)
+            )
+            if unknown_population_sources:
+                raise ProfileValidationError(
+                    "population evidence references unknown source ids: "
+                    + ", ".join(unknown_population_sources)
+                )
 
         referenced = {
             source_id
@@ -1341,6 +1612,12 @@ class ProfileBundle:
             for conversion in self.monetary_conversions
             for source_id in conversion.source_ids
         )
+        if self.population_evidence_bundle is not None:
+            referenced.update(
+                source_id
+                for binding in self.population_evidence_bundle.bindings
+                for source_id in binding.source_ids
+            )
         missing = sorted(referenced.difference(frozen_sources))
         if missing:
             raise ProfileValidationError(
@@ -1404,6 +1681,8 @@ class ProfileBundle:
                 )
         if self.jurisdiction_schema_version == 3 and self.monetary_conversions:
             _validate_monetary_rate_bindings(self)
+        if self.population_evidence_bundle is not None:
+            _validate_population_evidence_bindings(self)
 
     @property
     def provenance(self) -> tuple[MetricContract, ...]:
@@ -1445,6 +1724,11 @@ class ProfileBundle:
                     if self.source_evidence_bundle is not None
                     else None
                 ),
+                population_bundle_path=(
+                    self.population_evidence_bundle.bundle_path
+                    if self.population_evidence_bundle is not None
+                    else None
+                ),
                 campaign=False,
             )
         except (OSError, ProfileValidationError):
@@ -1463,6 +1747,8 @@ class ProfileBundle:
             and loaded.jurisdictions_sha256 == self.jurisdictions_sha256
             and loaded.source_registry_sha256 == self.source_registry_sha256
             and loaded.source_evidence_bundle == self.source_evidence_bundle
+            and loaded.population_evidence_bundle
+            == self.population_evidence_bundle
             and loaded.jurisdiction_schema_version
             == self.jurisdiction_schema_version
             and loaded.source_catalogue_schema_version
@@ -1511,6 +1797,8 @@ class ProfileBundle:
                 )
         monetary_failures = self._monetary_campaign_failures()
         failures.extend(monetary_failures)
+        population_failures = list(self.population_evidence_assessment().blockers)
+        failures.extend(population_failures)
 
         used_source_ids = {
             source_id
@@ -1528,10 +1816,18 @@ class ProfileBundle:
             for conversion in self.monetary_conversions
             for source_id in conversion.source_ids
         )
+        if self.population_evidence_bundle is not None:
+            used_source_ids.update(
+                source_id
+                for binding in self.population_evidence_bundle.bindings
+                for source_id in binding.source_ids
+            )
+        source_failures: list[str] = []
         for source_id in sorted(used_source_ids):
             source = self.sources[source_id]
             if source.status is not ProvenanceStatus.CALIBRATED:
-                failures.append(f"source:{source_id}={source.status.value}")
+                source_failures.append(f"source:{source_id}={source.status.value}")
+        failures.extend(source_failures)
 
         if failures:
             preview_limit = 16
@@ -1547,9 +1843,35 @@ class ProfileBundle:
                 preview += "; monetary comparability: " + ", ".join(
                     hidden_monetary
                 )
+            hidden_population = [
+                failure
+                for failure in population_failures
+                if failure not in failures[:preview_limit]
+            ]
+            if hidden_population:
+                preview += "; population comparability: " + ", ".join(
+                    hidden_population
+                )
+            hidden_sources = [
+                failure
+                for failure in source_failures
+                if failure not in failures[:preview_limit]
+            ]
+            if hidden_sources:
+                preview += "; source status: " + ", ".join(hidden_sources)
             raise ProfileValidationError(
                 "Scientific campaigns require CALIBRATED profile dependencies "
                 f"and bound comparability evidence; found {preview}"
+            )
+
+    def validate_population_for_campaign(self) -> None:
+        """Reject target-population claims until every independent gate is bound."""
+
+        failures = self.population_evidence_assessment().blockers
+        if failures:
+            raise ProfileValidationError(
+                "Population inputs are not campaign-comparable: "
+                + ", ".join(failures)
             )
 
     def validate_monetary_comparability_for_campaign(self) -> None:
@@ -1618,11 +1940,14 @@ class ProfileBundle:
         # Schema-v1 bundles deliberately have no verified trust-root signature.
         source_signature_bound = False
 
-        # These require future run-specific output bindings, a calibrated
-        # population specification, and an externally immutable preregistration.
-        # They cannot be promoted by configuration-file booleans.
+        # These require future run-specific output bindings and an externally
+        # immutable preregistration.  Population readiness is independently
+        # derived from the exact population evidence contract; schema v1 still
+        # leaves its downstream synthesis/output gates false.
         output_design_bound = False
-        population_bound = False
+        population_bound = self.population_evidence_assessment(
+            registered=registered
+        ).public_population_comparability
         preregistration_bound = False
         blockers = list(structure_failures)
         if not source_bound:
@@ -1654,6 +1979,47 @@ class ProfileBundle:
             preregistration_bound=preregistration_bound,
             public_output_comparability=public_comparable,
             blockers=tuple(blockers),
+        )
+
+    def population_evidence_assessment(
+        self,
+        *,
+        registered: bool | None = None,
+    ) -> PopulationEvidenceAssessment:
+        """Assess exact population evidence without claiming runtime readiness."""
+
+        if registered is None:
+            registered = self.matches_registered_files()
+        elif type(registered) is not bool:
+            raise ProfileValidationError(
+                "population registered override must be boolean"
+            )
+        elif registered and not self.matches_registered_files():
+            raise ProfileValidationError(
+                "unregistered profile bundle cannot claim registered population "
+                "evidence"
+            )
+        results: tuple[object, ...] = ()
+        if self.population_evidence_bundle is not None:
+            from .population_evidence import (
+                PopulationEvidenceValidationError,
+                verify_population_evidence_bundle,
+            )
+
+            try:
+                results = verify_population_evidence_bundle(
+                    self.population_evidence_bundle,
+                    expected_source_registry_sha256=self.source_registry_sha256,
+                )
+            except PopulationEvidenceValidationError as exc:
+                raise ProfileValidationError(
+                    f"population evidence cannot be re-attested: {exc}"
+                ) from exc
+        return _build_population_evidence_assessment(
+            sources=self.sources,
+            evidence_bundle=self.population_evidence_bundle,
+            results=results,
+            registered=registered,
         )
 
     def _monetary_contract_structure_failures(self) -> list[str]:
@@ -1719,6 +2085,17 @@ class ProfileBundle:
             for conversion in self.monetary_conversions
             if conversion.status is ProvenanceStatus.SYNTHETIC
         )
+        if self.population_evidence_bundle is not None:
+            if (
+                self.population_evidence_bundle.provenance_status
+                is ProvenanceStatus.SYNTHETIC
+            ):
+                synthetic.append("population_evidence_bundle")
+            synthetic.extend(
+                f"population_binding:{binding.binding_id}"
+                for binding in self.population_evidence_bundle.bindings
+                if binding.status is ProvenanceStatus.SYNTHETIC
+            )
         if synthetic:
             raise ProfileValidationError(
                 "Profile bundle contains SYNTHETIC dependencies while "
@@ -1731,6 +2108,9 @@ def load_profile_bundle(
     sources_path: str | Path = DEFAULT_SOURCES_PATH,
     *,
     source_bundle_path: str | Path | None | object = _USE_REGISTERED_SOURCE_BUNDLE,
+    population_bundle_path: str | Path | None | object = (
+        _USE_REGISTERED_POPULATION_BUNDLE
+    ),
     campaign: bool = False,
 ) -> ProfileBundle:
     """Load, validate, and harmonise the four jurisdiction profiles."""
@@ -1760,6 +2140,20 @@ def load_profile_bundle(
         selected_source_bundle_path = Path(source_bundle_path)
     else:
         raise TypeError("source_bundle_path must be a path or None")
+
+    selected_population_bundle_path: Path | None
+    if population_bundle_path is _USE_REGISTERED_POPULATION_BUNDLE:
+        selected_population_bundle_path = (
+            DEFAULT_POPULATION_BUNDLE_PATH
+            if sources_file.resolve() == DEFAULT_SOURCES_PATH.resolve()
+            else None
+        )
+    elif population_bundle_path is None:
+        selected_population_bundle_path = None
+    elif isinstance(population_bundle_path, (str, Path)):
+        selected_population_bundle_path = Path(population_bundle_path)
+    else:
+        raise TypeError("population_bundle_path must be a path or None")
 
     jurisdiction_schema_version = jurisdiction_raw.get("schema_version")
     if (
@@ -1945,6 +2339,10 @@ def load_profile_bundle(
             sources=sources,
             source_registry_sha256=source_registry_sha256,
         ),
+        population_evidence_bundle=_load_population_evidence_bundle(
+            selected_population_bundle_path,
+            source_registry_sha256=source_registry_sha256,
+        ),
         jurisdiction_schema_version=jurisdiction_schema_version,
         source_catalogue_schema_version=1,
     )
@@ -1958,6 +2356,9 @@ def load_country_profiles(
     sources_path: str | Path = DEFAULT_SOURCES_PATH,
     *,
     source_bundle_path: str | Path | None | object = _USE_REGISTERED_SOURCE_BUNDLE,
+    population_bundle_path: str | Path | None | object = (
+        _USE_REGISTERED_POPULATION_BUNDLE
+    ),
     campaign: bool = False,
 ) -> tuple[CountryProfile, ...]:
     """Convenience wrapper returning only the player-initialisation profiles."""
@@ -1966,6 +2367,7 @@ def load_country_profiles(
         jurisdictions_path,
         sources_path,
         source_bundle_path=source_bundle_path,
+        population_bundle_path=population_bundle_path,
         campaign=campaign,
     ).country_profiles
 
@@ -1975,6 +2377,9 @@ def load_state_agents(
     sources_path: str | Path = DEFAULT_SOURCES_PATH,
     *,
     source_bundle_path: str | Path | None | object = _USE_REGISTERED_SOURCE_BUNDLE,
+    population_bundle_path: str | Path | None | object = (
+        _USE_REGISTERED_POPULATION_BUNDLE
+    ),
     campaign: bool = False,
 ) -> tuple[StateAgent, ...]:
     """Convenience wrapper returning only the jurisdiction agents."""
@@ -1983,6 +2388,7 @@ def load_state_agents(
         jurisdictions_path,
         sources_path,
         source_bundle_path=source_bundle_path,
+        population_bundle_path=population_bundle_path,
         campaign=campaign,
     ).state_agents
 
@@ -2035,6 +2441,491 @@ def _load_source_evidence_bundle(
             + ", ".join(unknown_sources)
         )
     return bundle
+
+
+def _load_population_evidence_bundle(
+    path: Path | None,
+    *,
+    source_registry_sha256: str,
+) -> PopulationEvidenceBundle | None:
+    """Load and verify joint population cells against the source catalogue."""
+
+    if path is None:
+        return None
+    from .population_evidence import (
+        PopulationEvidenceValidationError,
+        load_and_verify_population_evidence_bundle,
+    )
+
+    try:
+        bundle, _results = load_and_verify_population_evidence_bundle(
+            path,
+            expected_source_registry_sha256=source_registry_sha256,
+        )
+    except PopulationEvidenceValidationError as exc:
+        raise ProfileValidationError(
+            f"cannot verify population evidence bundle {path}: {exc}"
+        ) from exc
+    if bundle.source_registry_sha256 != source_registry_sha256:
+        raise ProfileValidationError(
+            "population evidence bundle does not bind the loaded source catalogue"
+        )
+    return bundle
+
+
+def _validate_population_evidence_bindings(bundle: ProfileBundle) -> None:
+    """Validate source ownership and semantic coverage for joint-cell evidence."""
+
+    evidence = bundle.population_evidence_bundle
+    if evidence is None:
+        return
+    if (
+        bundle.source_registry_sha256 is not None
+        and evidence.source_registry_sha256 != bundle.source_registry_sha256
+    ):
+        raise ProfileValidationError(
+            "population evidence does not bind the loaded source catalogue"
+        )
+    scales = {scale.jurisdiction_code: scale for scale in bundle.money_scales}
+    for binding in evidence.bindings:
+        if binding.jurisdiction_code not in _EXPECTED_CODES:
+            raise ProfileValidationError(
+                "population evidence references an unsupported jurisdiction: "
+                f"{binding.jurisdiction_code}"
+            )
+        sources = tuple(bundle.sources[source_id] for source_id in binding.source_ids)
+        _validate_population_binding_geography(binding, sources)
+        source_dates = {source.retrieved_on for source in sources}
+        if source_dates != {binding.retrieved_on}:
+            raise ProfileValidationError(
+                f"population binding {binding.binding_id} retrieval date does not "
+                "match its source records"
+            )
+        supports = frozenset(
+            support for source in sources for support in source.supports
+        )
+        missing_scopes = tuple(
+            "|".join(sorted(group))
+            for group in _POPULATION_SOURCE_SUPPORT_GROUPS
+            if not group.intersection(supports)
+        )
+        if missing_scopes:
+            raise ProfileValidationError(
+                f"population binding {binding.binding_id} sources do not cover "
+                "required scopes: " + ", ".join(missing_scopes)
+            )
+        if (
+            binding.status is ProvenanceStatus.CALIBRATED
+            and any(
+                source.status is not ProvenanceStatus.CALIBRATED
+                for source in sources
+            )
+        ):
+            raise ProfileValidationError(
+                f"population binding {binding.binding_id} cannot be CALIBRATED "
+                "from a non-calibrated source"
+            )
+        scale = scales[binding.jurisdiction_code]
+        if binding.household_income_currency != scale.currency:
+            raise ProfileValidationError(
+                f"population binding {binding.binding_id} household-income currency "
+                f"{binding.household_income_currency} does not match "
+                f"{binding.jurisdiction_code} money-scale currency {scale.currency}"
+            )
+
+
+def _validate_population_binding_geography(
+    binding: PopulationEvidenceBinding,
+    sources: tuple[SourceProvenance, ...],
+) -> None:
+    """Require explicit country applicability until broader scopes are typed."""
+
+    expected = _POPULATION_JURISDICTION_GEOGRAPHIES.get(
+        binding.jurisdiction_code
+    )
+    if expected is None:
+        raise ProfileValidationError(
+            "population evidence references an unsupported jurisdiction: "
+            f"{binding.jurisdiction_code}"
+        )
+    binding_geography = binding.geography.strip()
+    if binding_geography.casefold() != expected.casefold():
+        raise ProfileValidationError(
+            f"population binding {binding.binding_id} geography "
+            f"{binding.geography!r} does not match {expected}"
+        )
+    incompatible = tuple(
+        source.id
+        for source in sources
+        if source.geography.strip().casefold() != expected.casefold()
+    )
+    if incompatible:
+        raise ProfileValidationError(
+            f"population binding {binding.binding_id} has sources without "
+            f"explicit {expected} applicability: " + ", ".join(incompatible)
+        )
+    expected_interval = (
+        f"{binding.reference_period_start.isoformat()}/"
+        f"{binding.reference_period_end.isoformat()}"
+    )
+    allowed_periods = {expected_interval}
+    if (
+        binding.reference_period_start.month,
+        binding.reference_period_start.day,
+        binding.reference_period_end.month,
+        binding.reference_period_end.day,
+    ) == (1, 1, 12, 31) and (
+        binding.reference_period_start.year
+        == binding.reference_period_end.year
+    ):
+        allowed_periods.add(str(binding.reference_period_start.year))
+    period_mismatches = tuple(
+        source.id for source in sources if source.period not in allowed_periods
+    )
+    if period_mismatches:
+        raise ProfileValidationError(
+            f"population binding {binding.binding_id} has sources without an "
+            "exact reference-period declaration: "
+            + ", ".join(period_mismatches)
+        )
+
+
+def _population_cross_country_basis(
+    binding: PopulationEvidenceBinding,
+) -> tuple[object, ...]:
+    """Comparable semantics which must be shared across jurisdictions."""
+
+    return (
+        binding.reference_period_start,
+        binding.reference_period_end,
+        binding.population_base,
+        binding.universe,
+        binding.unit_of_analysis,
+        binding.eligibility,
+        binding.exclusion,
+        binding.age_min_inclusive,
+        binding.age_max_exclusive,
+        binding.household_income_definition,
+        binding.household_income_period,
+        binding.household_income_equivalisation,
+        binding.household_definition,
+        binding.gaming_definition,
+        binding.payer_definition,
+        binding.zero_spender_treatment,
+    )
+
+
+def _population_result_has_complete_joint_support(
+    binding: PopulationEvidenceBinding,
+    result: PopulationEvidenceResult,
+) -> bool:
+    """Require explicit cells, including zero masses, for every joint stratum."""
+
+    from .population_evidence import (
+        PopulationGamingState,
+        PopulationPayerHistoryState,
+    )
+
+    income_bands = {cell.household_income_band for cell in result.cells}
+    household_types = {cell.household_type for cell in result.cells}
+    for income_band in income_bands:
+        for household_type in household_types:
+            for gaming_state in PopulationGamingState:
+                for payer_state in PopulationPayerHistoryState:
+                    stratum_cells = tuple(
+                        cell
+                        for cell in result.cells
+                        if cell.household_income_band == income_band
+                        and cell.household_type == household_type
+                        and cell.gaming_state is gaming_state
+                        and cell.payer_history_state is payer_state
+                    )
+                    if not stratum_cells:
+                        return False
+                    for age in range(
+                        binding.age_min_inclusive,
+                        binding.age_max_exclusive,
+                    ):
+                        if sum(
+                            cell.age_min_inclusive
+                            <= age
+                            < cell.age_max_exclusive
+                            for cell in stratum_cells
+                        ) != 1:
+                            return False
+    return True
+
+
+def _build_population_evidence_assessment(
+    *,
+    sources: Mapping[str, SourceProvenance],
+    evidence_bundle: object,
+    results: Iterable[object],
+    registered: bool,
+) -> PopulationEvidenceAssessment:
+    """Derive population gates only from typed, re-attested evidence."""
+
+    from .population_evidence import (
+        PopulationEvidenceBundle,
+        PopulationEvidenceResult,
+        PopulationEstimandRole,
+    )
+
+    if type(registered) is not bool:
+        raise ProfileValidationError("population registered flag must be boolean")
+    verified_results = tuple(results)
+    if evidence_bundle is not None and type(evidence_bundle) is not PopulationEvidenceBundle:
+        raise ProfileValidationError("population evidence bundle type is invalid")
+    if any(type(result) is not PopulationEvidenceResult for result in verified_results):
+        raise ProfileValidationError("population evidence results are not typed")
+    results_by_binding_id = {
+        result.binding_id: result for result in verified_results
+    }
+
+    structural: list[str] = []
+    if evidence_bundle is None or not verified_results:
+        structural.append("population.structure=unavailable")
+        bindings: tuple[object, ...] = ()
+    else:
+        bindings = evidence_bundle.bindings
+        if tuple(result.binding_id for result in verified_results) != tuple(
+            binding.binding_id for binding in bindings
+        ):
+            structural.append("population.structure=result_coverage_mismatch")
+        unexpected = sorted(
+            {binding.jurisdiction_code for binding in bindings}.difference(
+                _EXPECTED_CODES
+            )
+        )
+        if unexpected:
+            structural.append(
+                "population.structure=unexpected_jurisdictions:"
+                + ",".join(unexpected)
+            )
+        for role in PopulationEstimandRole:
+            role_bindings = tuple(
+                binding for binding in bindings if binding.estimand_role is role
+            )
+            codes = tuple(binding.jurisdiction_code for binding in role_bindings)
+            if len(codes) != len(set(codes)):
+                structural.append(
+                    "population.structure=duplicate_jurisdiction_role:"
+                    + role.value
+                )
+                continue
+            signatures = {
+                _population_cross_country_basis(binding)
+                for binding in role_bindings
+            }
+            if role_bindings and len(signatures) != 1:
+                structural.append(
+                    "population.structure=inconsistent_"
+                    + role.value.lower()
+                    + "_basis"
+                )
+            role_cell_supports = {
+                frozenset(
+                    cell.semantic_key
+                    for cell in results_by_binding_id[binding.binding_id].cells
+                )
+                for binding in role_bindings
+                if binding.binding_id in results_by_binding_id
+            }
+            if role_bindings and len(role_cell_supports) != 1:
+                structural.append(
+                    "population.structure=inconsistent_"
+                    + role.value.lower()
+                    + "_cell_support"
+                )
+            incomplete = tuple(
+                binding.binding_id
+                for binding in role_bindings
+                if binding.binding_id not in results_by_binding_id
+                or not _population_result_has_complete_joint_support(
+                    binding,
+                    results_by_binding_id[binding.binding_id],
+                )
+            )
+            if incomplete:
+                structural.append(
+                    "population.structure=incomplete_joint_support:"
+                    + ",".join(incomplete)
+                )
+
+    structure_coherent = not structural
+    if evidence_bundle is None:
+        source_bound = False
+        bindings = ()
+    else:
+        referenced_sources = tuple(
+            sources[source_id]
+            for binding in evidence_bundle.bindings
+            for source_id in binding.source_ids
+        )
+        source_bound = all(
+            (
+                structure_coherent,
+                registered,
+                bool(evidence_bundle.bindings),
+                evidence_bundle.provenance_status is ProvenanceStatus.CALIBRATED,
+                all(
+                    binding.status is ProvenanceStatus.CALIBRATED
+                    for binding in evidence_bundle.bindings
+                ),
+                bool(referenced_sources),
+                all(
+                    source.status is ProvenanceStatus.CALIBRATED
+                    for source in referenced_sources
+                ),
+            )
+        )
+
+    # Schema v1 has no declared household-income/household-type domain or typed
+    # sample-partition identity.  It can attest exact extracted source cells, but
+    # cannot certify their completeness as calibration targets or independence
+    # as held-out validation.  Those flags remain false until a future schema
+    # binds both concepts explicitly.
+    calibration_bound = False
+    validation_bound = False
+
+    # Population schema v1 also does not bind an external signature, synthesis
+    # plan, runtime cohort projection, output estimand, or balance diagnostics.
+    signature_bound = False
+    sampling_plan_bound = False
+    runtime_projection_bound = False
+    output_estimand_bound = False
+    balance_bound = False
+    flags = {
+        "source_population_evidence_bound": source_bound,
+        "calibration_targets_bound": calibration_bound,
+        "heldout_validation_targets_bound": validation_bound,
+        "source_bundle_signature_bound": signature_bound,
+        "sampling_plan_bound": sampling_plan_bound,
+        "runtime_projection_bound": runtime_projection_bound,
+        "output_estimand_binding_bound": output_estimand_bound,
+        "balance_validation_bound": balance_bound,
+    }
+    blockers = list(structural)
+    blockers.extend(
+        blocker
+        for field, blocker in _POPULATION_FIXED_BLOCKERS
+        if not flags[field]
+    )
+    public = structure_coherent and all(flags.values())
+    return PopulationEvidenceAssessment(
+        structure_coherent=structure_coherent,
+        source_population_evidence_bound=source_bound,
+        calibration_targets_bound=calibration_bound,
+        heldout_validation_targets_bound=validation_bound,
+        source_bundle_signature_bound=signature_bound,
+        sampling_plan_bound=sampling_plan_bound,
+        runtime_projection_bound=runtime_projection_bound,
+        output_estimand_binding_bound=output_estimand_bound,
+        balance_validation_bound=balance_bound,
+        public_population_comparability=public,
+        blockers=tuple(blockers),
+    )
+
+
+def _population_assessment_from_bundle_snapshot(
+    bundle_snapshot: object,
+    *,
+    registered: bool,
+) -> PopulationEvidenceAssessment:
+    """Re-attest serialized population bytes before deriving readiness flags."""
+
+    if not isinstance(bundle_snapshot, Mapping):
+        raise ProfileValidationError("profile population bundle snapshot is malformed")
+    raw_sources = bundle_snapshot.get("sources")
+    if not isinstance(raw_sources, list) or any(
+        not isinstance(source, Mapping) for source in raw_sources
+    ):
+        raise ProfileValidationError("profile snapshot sources are malformed")
+    typed_sources = tuple(_source_from_snapshot(source) for source in raw_sources)
+    sources = {source.id: source for source in typed_sources}
+    if len(sources) != len(typed_sources):
+        raise ProfileValidationError("profile snapshot repeats a source id")
+    raw_scales = bundle_snapshot.get("money_scales")
+    if not isinstance(raw_scales, list) or any(
+        not isinstance(scale, Mapping) for scale in raw_scales
+    ):
+        raise ProfileValidationError("profile snapshot money scales are malformed")
+    typed_scales = tuple(_money_scale_from_snapshot(scale) for scale in raw_scales)
+    scales = {scale.jurisdiction_code: scale for scale in typed_scales}
+    if len(scales) != len(typed_scales):
+        raise ProfileValidationError("profile snapshot repeats a money-scale jurisdiction")
+
+    from .population_evidence import (
+        PopulationEvidenceValidationError,
+        validate_population_evidence_snapshot,
+    )
+
+    try:
+        evidence, results = validate_population_evidence_snapshot(
+            bundle_snapshot.get("population_evidence_bundle"),
+            bundle_snapshot.get("population_evidence_results"),
+        )
+    except PopulationEvidenceValidationError as exc:
+        raise ProfileValidationError(
+            f"profile snapshot population evidence is malformed: {exc}"
+        ) from exc
+    if evidence is not None:
+        unknown = sorted(
+            {
+                source_id
+                for binding in evidence.bindings
+                for source_id in binding.source_ids
+            }.difference(sources)
+        )
+        if unknown:
+            raise ProfileValidationError(
+                "profile population evidence references unknown source ids: "
+                + ", ".join(unknown)
+            )
+        for binding in evidence.bindings:
+            owned_sources = tuple(sources[source_id] for source_id in binding.source_ids)
+            _validate_population_binding_geography(binding, owned_sources)
+            if {source.retrieved_on for source in owned_sources} != {
+                binding.retrieved_on
+            }:
+                raise ProfileValidationError(
+                    f"population binding {binding.binding_id} retrieval date does "
+                    "not match its source records"
+                )
+            supports = frozenset(
+                support for source in owned_sources for support in source.supports
+            )
+            if any(
+                not group.intersection(supports)
+                for group in _POPULATION_SOURCE_SUPPORT_GROUPS
+            ):
+                raise ProfileValidationError(
+                    f"population binding {binding.binding_id} sources do not cover "
+                    "required population scopes"
+                )
+            if (
+                binding.status is ProvenanceStatus.CALIBRATED
+                and any(
+                    source.status is not ProvenanceStatus.CALIBRATED
+                    for source in owned_sources
+                )
+            ):
+                raise ProfileValidationError(
+                    f"population binding {binding.binding_id} cannot be CALIBRATED "
+                    "from a non-calibrated source"
+                )
+            scale = scales.get(binding.jurisdiction_code)
+            if scale is None or binding.household_income_currency != scale.currency:
+                raise ProfileValidationError(
+                    f"population binding {binding.binding_id} household-income "
+                    "currency does not match its money-scale currency"
+                )
+    return _build_population_evidence_assessment(
+        sources=sources,
+        evidence_bundle=evidence,
+        results=results,
+        registered=registered,
+    )
 
 
 def _validate_monetary_rate_bindings(bundle: ProfileBundle) -> None:
@@ -2986,6 +3877,7 @@ ProvenanceContract = MetricContract
 
 __all__ = [
     "DEFAULT_JURISDICTIONS_PATH",
+    "DEFAULT_POPULATION_BUNDLE_PATH",
     "DEFAULT_SOURCE_BUNDLE_PATH",
     "DEFAULT_SOURCES_PATH",
     "MetricContract",
@@ -2994,6 +3886,7 @@ __all__ = [
     "MonetaryEvidenceAssessment",
     "MonetaryRoundingScope",
     "MoneyScaleContract",
+    "PopulationEvidenceAssessment",
     "ProfileBundle",
     "ProfileConfigurationError",
     "ProfileValidationError",
@@ -3003,4 +3896,5 @@ __all__ = [
     "load_country_profiles",
     "load_profile_bundle",
     "load_state_agents",
+    "population_evidence_assessment_from_snapshot",
 ]

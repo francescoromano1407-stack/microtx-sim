@@ -43,6 +43,23 @@ optimal funding policy.
   output/design, population, and preregistration gates therefore remain
   independently false, so present outputs are non-comparable across
   jurisdictions.
+- A separate population-evidence bundle schema version 1 can attest exact CSV
+  bytes and strict joint age × household-income-band × household-type × gaming
+  × pre-treatment payer-history cells whose reduced rational masses sum exactly
+  to one. The checked-in population bundle is empty, `ILLUSTRATIVE`, unsigned,
+  and always reports `campaign_ready=false`. Schema v1 does not declare complete
+  income/household domains or a disjoint sample partition, so even a populated
+  bundle cannot clear calibration-target or held-out-validation subgates.
+- Registered profile-input lineage is now version 4 and retains the population
+  bundle, extracted cells, hashes, and readiness assessment; lineage versions
+  1–3 remain readable. These hashes establish reproducibility, not publisher
+  authenticity or calibration.
+- Population evidence is not yet projected into either runtime. Cohorts still
+  come from the legacy marginal synthetic generator, and the frozen output-v2
+  CSV surface still uses unweighted synthetic-player summaries. There is no
+  chosen target population, sampling or synthesis plan, runtime projection,
+  output-estimand binding, or balance validation. Comparable populations remain
+  an open P0 item, and no full campaign has been run.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.

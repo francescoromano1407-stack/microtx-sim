@@ -138,6 +138,7 @@ from accumulating in one monolithic class.
 | `agents/companies.py` | Company observation, private state, action intent, heterogeneous firm policy. |
 | `agents/jurisdictions.py` | Regulation rules, risk signals, audit/subsidy intents, and private regulator state. |
 | `consumers/population.py` | Jurisdiction-aware construction of heterogeneous players. |
+| `data/population_evidence.py` | Exact-byte schema-v1 joint-population evidence and fail-closed readiness assessment; no runtime cohort projection. |
 | `consumers/logic.py` | Exact game choice, activity, abstract competition, purchases, rare card events, and harm transitions. |
 | `consumers/welfare.py` | Aligned immutable-baseline/dynamic `PlayerLifeTable` and deterministic synthetic priors. |
 | `consumers/decision.py` | Full eight-action Gumbel/logit choice with hard budget, consent, cap, and cooling constraints. |
@@ -214,6 +215,12 @@ vulnerability-conditioned affine priors for continuous states; and a bounded
 fraction of disposable resources for the intended spending limit. These are
 reproducible synthetic distributions, not empirical population estimates. Empty
 cohorts are valid, and alignment is checked by exact player ID.
+
+Population evidence is a separate provenance boundary. Its current schema can
+retain exact joint cells and their hashes in profile-input lineage v4, but the
+default bundle is empty and it does not feed `PlayerTable`. The generator still
+uses legacy marginal synthetic inputs and exported v2 CSV summaries remain
+unweighted.
 
 Traits are sampled with correlations and motives overlap. Age and income affect
 resources and behaviour continuously. The unauthorised-card event is possible

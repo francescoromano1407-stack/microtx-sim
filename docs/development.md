@@ -212,6 +212,11 @@ The suite is organised by contract:
   and separation of daily/orchestration logic from `World`;
 - `test_profiles.py`: source references, units, profile contracts, and campaign
   provenance gates;
+- `test_population_evidence.py`: exact-byte population-bundle parsing,
+  joint-cell validation, re-attestation, and fail-closed readiness gates;
+- `test_population_legacy_regression.py`: profile-input-lineage v1–v3
+  readability and unchanged legacy cohort/output behaviour after the v4
+  population-lineage addition;
 - `test_causal.py`: paired differences and composable interventions;
 - `test_world_integration.py`: scheduling and end-to-end system connections;
 - `test_ledger_backends.py`: memory/SQLite equality, strict domains, atomic
@@ -281,6 +286,14 @@ fingerprinted two-file profile.
 
 The six CSV files, manifest, Markdown summary, and five SVG charts form the
 13-file `reproduce` contract listed in [Usage](usage.md).
+
+Profile-input lineage is separately versioned at v4. It can retain the
+population-evidence bundle, extracted joint-cell results, and readiness
+assessment, while v1–v3 remain readable. Do not infer a CSV-schema or estimand
+change from that manifest-side addition: the output-v2 tables remain unweighted
+and the runtime still uses the legacy marginal synthetic generator. Exact-byte
+hashes are reproducibility controls, not publisher authentication or
+calibration.
 
 ## Code conventions
 

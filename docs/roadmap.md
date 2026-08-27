@@ -49,6 +49,22 @@ These tasks block scientific interpretation.
    weights and illustrative age distributions with explicit target-population
    weights. Add joint age–income–household distributions rather than assuming
    that marginal anchors are sufficient.
+
+   **Infrastructure progress only:** population-evidence bundle schema version
+   1 now attests exact CSV bytes and strict joint age × household-income-band ×
+   household-type × gaming × pre-treatment payer-history cells with exact
+   reduced rational mass. Registered profile-input lineage version 4 retains
+   the bundle, verified extraction, and independent readiness blockers while
+   versions 1–3 remain readable. The default bundle is empty, `ILLUSTRATIVE`,
+   unsigned, and `campaign_ready=false`; hashes prove reproducibility, not
+   publisher authenticity or calibration.
+
+   This P0 item remains open. No target population or population weights have
+   been selected; no sampling/synthesis plan, runtime projection,
+   output-estimand binding, or balance validation exists. Both runtimes still
+   use the legacy marginal synthetic generator, and output-v2 CSV semantics
+   remain unweighted. This milestone does not authorise or constitute a full
+   campaign.
 2. **Resolve monetary comparability.** Keep source currencies during ingestion,
    then define dated exchange-rate or purchasing-power contracts for any pooled
    estimand. Never treat nominal GBP, KRW, JPY, and EUR minor units as directly
@@ -66,10 +82,11 @@ These tasks block scientific interpretation.
    `source_rate_binding=missing` blocker even when test-only algebra clears the
    structural checks. Version 3 now additionally requires stable conversion and
    rate-binding IDs and verifies an exact rational from content-addressed CSV
-   bytes through one canonical declarative recipe. Registered lineage version 3
-   re-attests the source catalogue, bundle, artifact, recipe, and extraction;
-   minimal frozen lineage v1/v2 fixtures plus locked registered projections
-   exercise the migration boundary. The checked-in
+   bytes through one canonical declarative recipe. Registered profile-input
+   lineage version 4 re-attests the monetary source catalogue, bundle,
+   artifact, recipe, and extraction and also carries the independent population
+   assessment; lineage versions 1–3 remain readable and exercise the migration
+   boundary. The checked-in
    source bundle is empty, illustrative, and missing a signature. Even a valid
    test extraction clears only the source subgate: signature, output/design,
    population, and external-preregistration blockers remain independent.

@@ -92,7 +92,7 @@ analysis, then writes these 13 files:
 | `opportunity_cost_decomposition.csv` | Displaced-activity minutes, burden scores, and monetary proxies. |
 | `epgc_financing.csv` | Auditable public-contract components, costs, minimum contribution, and safe profit. |
 | `sensitivity.csv` | One-at-a-time sensitivity results and expected-direction checks. |
-| `manifest.json` | Export-time config-file observation, effective typed-config and exact execution-input snapshots/hashes, sensitivity design snapshot/hash, source/profile lineage, Git state, seeds, cohort digests, equations, and scope limits. |
+| `manifest.json` | Export-time config-file observation, effective typed-config and exact execution-input snapshots/hashes, sensitivity design snapshot/hash, source/profile lineage including population-evidence assessment, Git state, seeds, cohort digests, equations, and scope limits. |
 | `summary.md` | Human-readable synthetic scenario comparison. |
 | `harm_distribution.svg` | Player harm distribution. |
 | `spending_distribution.svg` | Player spending distribution. |
@@ -119,8 +119,22 @@ those values are still fingerprinted exactly, but the manifest labels their
 evidence lineage `unregistered_custom_profiles` and leaves repository input-file
 hashes unset.
 
+Registered profile-input lineage is schema version 4 and includes the
+population-evidence bundle snapshot, verified cell results, and fail-closed
+readiness assessment; historical lineage versions 1–3 remain readable. The
+checked-in population bundle is empty, `ILLUSTRATIVE`, unsigned, and reports
+`campaign_ready=false`. Its hashes attest repeatable bytes and extraction, not
+publisher authenticity or calibration.
+
+This added lineage does not change execution or table estimands. The cohort is
+still produced by the legacy marginal synthetic generator, and every frozen-v2
+CSV summary is unweighted with respect to any real target population. No target
+population, sampling/synthesis plan, runtime projection, output-estimand
+binding, or balance validation is configured.
+
 The current full output-bundle schema is `3.0`. Its CSV filenames and columns
-are unchanged from the frozen `2.0` exhaustive-column contract; version 3 adds
+and their unweighted synthetic-player semantics are unchanged from the frozen
+`2.0` exhaustive-column contract; version 3 adds
 an independently versioned and fingerprinted manifest envelope. Released
 schemas `1.0` and `2.0` remain documented legacy forms without that manifest
 version. Standalone sensitivity output uses its own two-file

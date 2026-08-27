@@ -40,6 +40,12 @@ Markdown summary, and five SVG charts. `configs/smoke.toml` remains a three-cycl
 structural check. The larger `configs/base.toml` is a future-scale architecture
 scenario and is deliberately blocked by provenance validation.
 
+Population-evidence schema version 1 and profile-input lineage version 4 are
+implemented as reproducibility infrastructure. The checked-in population bundle
+is empty, illustrative, unsigned, and not campaign-ready; it does not replace
+the legacy marginal synthetic generator or the unweighted output-v2 CSV
+semantics. Comparable population profiles remain an open P0 task.
+
 No empirical validation is claimed and no full scientific campaign has been
 run. The exported comparisons are conditional results of synthetic structural
 assumptions, not estimates of observed people, markets, or policies.

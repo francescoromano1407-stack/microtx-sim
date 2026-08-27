@@ -2,7 +2,7 @@
 
 ## Files and loading
 
-The repository has two explicit TOML schemas:
+The repository has two explicit run-configuration TOML schemas:
 
 - market-world scenarios are loaded by `microtx_sim.config.load_config()`;
 - the seven-scenario synthetic policy prototype is loaded by
@@ -22,7 +22,9 @@ Three run configurations are supplied:
 
 Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
-`data/provenance/sources.toml`.
+`data/provenance/sources.toml`; exact-byte rate and population registries are in
+`data/provenance/source_bundle.toml` and
+`data/provenance/population_bundle.toml`.
 
 The checked-in `jurisdictions.toml` uses profile schema version 2. It optionally accepts one
 `[[monetary_conversion]]` table per jurisdiction with `jurisdiction_code`,
@@ -66,16 +68,61 @@ The checked-in source bundle is empty, `ILLUSTRATIVE`, and has signature status
 conversions. Public comparability and campaign validation therefore remain
 false even if a test fixture clears the source-extraction subgate.
 
-Legacy profile schema versions 1 and 2 remain readable on their exact historical
-surfaces. Version 1 rejects monetary fields; version 2 rejects version-3 binding
-fields. The profile-lineage snapshot has likewise advanced to version 3, with
-frozen minimal v1/v2 readability fixtures, locked registered projection
-fingerprints, and explicit downgrade rejection.
+Legacy jurisdiction-profile schema versions 1 and 2 remain readable on their
+exact historical surfaces. Version 1 rejects monetary fields; version 2 rejects
+version-3 rate-binding fields. The separate profile-input-lineage snapshot has
+advanced to version 4; lineage versions 1–3 remain readable, while only version
+4 may carry the population bundle, verified cell results, and population-
+readiness assessment.
 
 Campaign validation also requires the complete bundle to match its hashed
 jurisdiction and source-registry files. Registered lineage is reloaded and
 re-attested when a manifest is built; an in-memory or changed bundle cannot
 self-promote by assigning calibrated status labels.
+
+### Population-evidence bundle schema
+
+`population_bundle.toml` uses schema version 1. It binds the exact
+source-register digest and, when populated, each regular CSV artifact's path,
+media type, byte length, and SHA-256. Each binding supplies typed target-
+population metadata, a `CALIBRATION` or `VALIDATION` role, source lineage, and a
+canonical `exact_csv_joint_population_cells/1` recipe.
+
+The CSV header is exact and exhaustive. Each row identifies one joint
+age × household-income-band × household-type × gaming × pre-treatment
+payer-history cell and stores its mass as a canonical reduced integer
+numerator/denominator. Cells must be canonically ordered and unique, cover the
+declared age scope, and sum exactly to `1/1`; age intervals cannot overlap
+within the same income-band, household-type, gaming, and payer-history stratum.
+The verifier rejects unknown fields, malformed canonical integers, ambiguous
+matches, path traversal, links/reparse points, mutation, and mismatched bytes or
+digests. Profile structure additionally requires explicit age coverage for the
+full *observed* income-band × household-type × gaming-state × payer-state
+product; zero-mass gaming/payer strata must be present rather than omitted. Each
+source must declare the exact country and reference period, without relying on
+free-form qualifiers.
+
+Those checks still do not establish a population target. Schema version 1 does
+not declare the complete income-band or household-type domains and has no typed
+sample/partition identity. It therefore hard-codes both
+`calibration_targets_bound=false` and
+`heldout_validation_targets_bound=false`, even for a populated, internally
+coherent bundle. `CALIBRATION` and `VALIDATION` remain provenance labels only
+until a future schema binds domains, band definitions, and a disjoint holdout.
+
+Schema version 1 supports only signature status `MISSING` and always emits
+`campaign_ready=false`. The checked-in bundle has zero artifacts and bindings,
+is `ILLUSTRATIVE`, and is unsigned. It therefore selects no target population
+and supplies no calibration or held-out validation targets. Hashes prove exact
+reproduction of declared bytes and recipes, not publisher authenticity or
+calibration.
+
+This registry is not a runtime population configuration. There is no target-
+population weight selection, sampling/synthesis plan, projection into
+`PlayerTable`, output-estimand binding, or population-balance validation. The
+legacy marginal synthetic generator and unweighted output-v2 CSV semantics are
+unchanged, so comparable population profiles remain P0 work and no full
+campaign is enabled.
 
 ## Synthetic policy prototype schema
 
