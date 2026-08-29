@@ -117,12 +117,46 @@ and supplies no calibration or held-out validation targets. Hashes prove exact
 reproduction of declared bytes and recipes, not publisher authenticity or
 calibration.
 
-This registry is not a runtime population configuration. There is no target-
-population weight selection, sampling/synthesis plan, projection into
-`PlayerTable`, output-estimand binding, or population-balance validation. The
-legacy marginal synthetic generator and unweighted output-v2 CSV semantics are
-unchanged, so comparable population profiles remain P0 work and no full
-campaign is enabled.
+### Static population-design schema
+
+`data/provenance/population_design.toml` uses a separate schema version 1. Its
+static contract can bind an exact population-evidence bundle and result hashes
+to complete age, jurisdiction-specific source household-income category
+bounds/currency/period, household, gaming, and payer-history domains; country
+targets; and record- and cluster-level
+calibration/validation partition declarations. It can then construct a
+deterministic `exact_rational_hamilton/1` apportionment plan with exact per-cell
+analysis and expansion weights.
+
+The checked-in design is intentionally empty and `ILLUSTRATIVE`: it declares no
+age, income, or household domains, no jurisdiction targets, no evidence results,
+and no partition records. Even a declaration-complete schema-v1 design is not
+proof that record or cluster identities are authentic or that validation units
+were independently held out. Signed immutable source-unit keys and external
+review remain absent, so `campaign_ready` is always false.
+
+Neither this design file nor the opt-in projection helper is selected by a run
+configuration, CLI, `World.create`, policy batch, or sensitivity call site.
+The helper does not accept, consume, or revalidate a
+`PopulationApportionmentPlan`: it canonicalizes separate already-resolved
+runtime cells, derives their projection digest from their content, and performs
+its own Hamilton allocation with `cell_id` tie-breaking. Those runtime cells use
+personal monthly disposable-income intervals and modeled household sizes; they
+are not the static source household-income category domain. A future adapter
+must explicitly bind the static plan counts and source-to-runtime conversion.
+
+Projected gamer and payer fields are attested sidecar-only baseline metadata and
+do not set runtime gameplay, payment access, or spending history. Consumers
+recompute the nested assignment attestation and reject stale or mutated cell
+indices. If a caller explicitly constructs a projected table, its assignment is
+included in the cohort digest; ordinary legacy tables retain their historical
+digest.
+
+The exact weighted-estimand module is likewise an isolated library primitive,
+not a configured output. It has no dedicated writer or registered target-
+population output profile. Existing output schema v3 bundles keep the frozen
+v2-compatible CSV columns and unweighted aggregation semantics. No population
+readiness gate is cleared and no full campaign is enabled by this milestone.
 
 ## Synthetic policy prototype schema
 

@@ -134,11 +134,12 @@ from accumulating in one monolithic class.
 | `config.py` | Typed TOML configuration and structural/campaign validation. |
 | `rng.py` | Stateless counter-based deterministic random field and stable named streams. |
 | `types.py` | Shared enums for motives, spending segments, mechanisms, harm, actions, events, and provenance. |
-| `agents/players.py` | Columnar player and household state plus retrospective spending classification. |
+| `agents/players.py` | Columnar player/household state, retrospective spending classification, and optional attested runtime-projection sidecar. |
 | `agents/companies.py` | Company observation, private state, action intent, heterogeneous firm policy. |
 | `agents/jurisdictions.py` | Regulation rules, risk signals, audit/subsidy intents, and private regulator state. |
-| `consumers/population.py` | Jurisdiction-aware construction of heterogeneous players. |
+| `consumers/population.py` | Legacy marginal player construction plus a separate opt-in, content-derived runtime projection helper; not a static-plan adapter. |
 | `data/population_evidence.py` | Exact-byte schema-v1 joint-population evidence and fail-closed readiness assessment; no runtime cohort projection. |
+| `data/population_design.py` | Static exact domains, declared source partitions, calibration target construction, and Hamilton counts/weights; always fail-closed for campaign use. |
 | `consumers/logic.py` | Exact game choice, activity, abstract competition, purchases, rare card events, and harm transitions. |
 | `consumers/welfare.py` | Aligned immutable-baseline/dynamic `PlayerLifeTable` and deterministic synthetic priors. |
 | `consumers/decision.py` | Full eight-action Gumbel/logit choice with hard budget, consent, cap, and cooling constraints. |
@@ -161,6 +162,7 @@ from accumulating in one monolithic class.
 | `simulation/policy_orchestrator.py` | One cloned policy branch, welfare calculation, revenue composition, and producer/EPGC result. |
 | `metrics/outcomes.py` | Legacy market diagnostics, firm viability, state outlay, summaries, and recording. |
 | `metrics/harm.py` | Pure six-component welfare harm, adult/youth opportunity valuation, and reporting weights. |
+| `metrics/population_estimands.py` | Isolated exact weighted mean, paired-difference, and weighted-quantile contract; no current writer or output-profile integration. |
 | `causal/interventions.py` | Persistent mechanism caps and composable audit/subsidy regimes. |
 | `causal/paired_worlds.py` | Structurally paired worlds, common random numbers, outcome differences, and regime effects. |
 | `causal/scenarios.py` | Seven named monetisation/public-value policy regimes. |
@@ -217,10 +219,39 @@ reproducible synthetic distributions, not empirical population estimates. Empty
 cohorts are valid, and alignment is checked by exact player ID.
 
 Population evidence is a separate provenance boundary. Its current schema can
-retain exact joint cells and their hashes in profile-input lineage v4, but the
-default bundle is empty and it does not feed `PlayerTable`. The generator still
-uses legacy marginal synthetic inputs and exported v2 CSV summaries remain
-unweighted.
+retain exact joint cells and their hashes in profile-input lineage v4. A further
+static population-design layer can bind exact evidence results to complete
+domains, declared calibration/validation source partitions, target counts, and
+deterministic exact-rational Hamilton counts and weights. Both checked-in
+defaults are empty and `ILLUSTRATIVE`. Partition record and cluster hashes are
+declarations only; they do not prove source authenticity or a genuine holdout,
+and design schema v1 is never campaign-ready.
+
+There is an explicit opt-in path from already-resolved projection cells to a
+`PlayerTable` population sidecar. Gamer and payer-history labels stay in that
+sidecar rather than being mapped to game choice, payment access, or spending
+history. This helper does not consume or revalidate a static
+`PopulationApportionmentPlan`; it derives a separate runtime projection from its
+exact cells and performs its own Hamilton allocation with `cell_id` tie-breaking.
+Static source household-income categories and runtime personal monthly
+disposable-income intervals/modeled household sizes require a future adapter
+that explicitly binds the static counts and conversion.
+
+The attested assignment digest binds the content-derived runtime projection,
+cell semantics, ordered player IDs, and cell indices. Consumers re-attest those
+nested values and reject stale or mutated indices; the digest is added to the
+policy cohort digest when present. No configuration, `World.create`, batch,
+sensitivity, or CLI path selects this initializer, so the ordinary generator
+still uses legacy marginal inputs.
+
+An isolated exact-rational estimand layer implements weighted means, paired mean
+differences, and deterministic weighted quantiles. It re-attests supplied design
+weights but only records caller-supplied evidence, projection, balance, metric-
+contract, and output-profile digest declarations; those artifacts are not
+resolved or reverified. It is not called by existing summaries or writers and
+has no dedicated registered output profile. Output schema v3 therefore retains
+the frozen v2-compatible CSV surface and unweighted semantics. No readiness gate
+is cleared and no full campaign has been run.
 
 Traits are sampled with correlations and motives overlap. Age and income affect
 resources and behaviour continuously. The unauthorised-card event is possible

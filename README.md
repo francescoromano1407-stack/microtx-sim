@@ -50,16 +50,41 @@ optimal funding policy.
   and always reports `campaign_ready=false`. Schema v1 does not declare complete
   income/household domains or a disjoint sample partition, so even a populated
   bundle cannot clear calibration-target or held-out-validation subgates.
+- A separate static population-design schema can bind those exact evidence
+  results to complete age, income, household, gaming, and payer-history domains,
+  declared calibration/validation source-unit partitions, target counts, and a
+  deterministic exact-rational Hamilton apportionment plan. The checked-in
+  `population_design.toml` is also empty and `ILLUSTRATIVE`. Partition record and
+  cluster hashes are declarations, not publisher-authenticity or independently
+  held-out proof, and population-design schema v1 remains fail-closed for
+  campaign use.
 - Registered profile-input lineage is now version 4 and retains the population
   bundle, extracted cells, hashes, and readiness assessment; lineage versions
   1–3 remain readable. These hashes establish reproducibility, not publisher
   authenticity or calibration.
-- Population evidence is not yet projected into either runtime. Cohorts still
-  come from the legacy marginal synthetic generator, and the frozen output-v2
-  CSV surface still uses unweighted synthetic-player summaries. There is no
-  chosen target population, sampling or synthesis plan, runtime projection,
-  output-estimand binding, or balance validation. Comparable populations remain
-  an open P0 item, and no full campaign has been run.
+- An opt-in library helper can materialize already-resolved projection cells as
+  a `PlayerTable` sidecar using Hamilton allocation. No run configuration, CLI,
+  world, batch, or sensitivity call site selects it. Baseline gamer and payer
+  labels remain attested sidecar metadata only; they do not set gameplay,
+  payment access, or spending history. Static source household-income category
+  bounds/currency/period are distinct from the helper's runtime personal monthly
+  disposable-income intervals and modeled household sizes.
+- The helper does not consume or revalidate a `PopulationApportionmentPlan`. It
+  derives a separate runtime projection from its exact cells and performs its own
+  Hamilton allocation with `cell_id` tie-breaking. A future adapter must bind
+  static counts and source-to-runtime conversion explicitly. Consumers recompute
+  the nested assignment attestation and reject stale or mutated indices. When
+  present, the projected assignment is included in the cohort digest; without
+  it, legacy cohort digests are unchanged.
+- An isolated exact-rational estimand primitive implements weighted means,
+  paired mean differences, and deterministic weighted quantiles. It re-attests
+  supplied design weights and records caller-supplied projection, balance,
+  metric-contract, evidence, and output-profile digest declarations; it does not
+  resolve those declarations to verified artifacts. No dedicated writer or
+  output profile invokes it yet. Output schema v3 therefore retains the frozen
+  v2-compatible CSV columns and their unweighted synthetic-player semantics. No
+  population readiness gate has been cleared, comparable populations remain an
+  open P0 item, and no full campaign has been run.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.

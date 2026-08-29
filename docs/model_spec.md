@@ -96,9 +96,36 @@ estimates.
 
 The separately registered population-evidence schema can attest exact joint
 age × household-income-band × household-type × gaming × pre-treatment
-payer-history cells with rational mass, but no such cells are checked in and
-the runtime does not consume them. Population initialization remains the legacy
-marginal synthetic generator, and output-v2 CSV aggregation remains unweighted.
+payer-history cells with rational mass. A further static population-design
+schema can bind verified evidence to complete domains, declared source-unit
+partitions and target counts, then produce deterministic exact-rational Hamilton
+cell counts and analysis/expansion weights. Its partition identities remain
+declarations, not proof of publisher authenticity or independent holdout.
+
+Both checked-in population defaults are empty and `ILLUSTRATIVE`. The optional
+`initialize_projected_player_table` helper can construct a table from already-
+resolved projection cells, but no config, world, batch, sensitivity, or CLI path
+selects it. The helper does not consume or revalidate a static
+`PopulationApportionmentPlan`; it derives a separate runtime projection and uses
+its own exact-mass Hamilton allocation with `cell_id` tie-breaking. Static source
+household-income categories and runtime personal monthly disposable-income
+intervals/modeled household sizes therefore require an explicit future adapter.
+
+Gamer and payer-history labels stay in an attested population sidecar; they do
+not set current game, payment access, or spending history. Consumers recompute
+the nested assignment attestation and reject stale or mutated indices. The
+sidecar assignment is included in the cohort digest when present, while ordinary
+tables retain the legacy digest.
+
+Exact weighted-mean, paired-difference, and deterministic weighted-quantile
+algorithms now exist as an isolated estimand primitive. The specification binds
+the supplied design weights and records evidence, projection, balance, metric-
+contract, and dedicated output-profile digest declarations. It does not resolve
+or reverify those declared artifacts. No existing reducer or writer invokes it,
+and there is no registered target-population output profile. Configured runs
+therefore still use the legacy marginal generator; output schema v3 preserves
+the frozen v2-compatible CSV columns and unweighted synthetic-player semantics.
+No population readiness gate is cleared and no full campaign has been run.
 
 Traits and motives are continuous, heterogeneous, and partly correlated.
 Categories such as casual, competitive, and collector are overlapping

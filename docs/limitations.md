@@ -66,12 +66,37 @@ extraction. It does not bind complete declared income/household domains,
 income-band boundaries, or a disjoint validation-sample identity, so its
 calibration-target and held-out-validation gates are hard-coded false.
 
-The runtime does not sample or weight from that bundle. It still uses the legacy
-marginal synthetic generator, and the frozen output-v2 CSV tables aggregate
-synthetic players without target-population weights. There is no sampling or
-synthesis plan, runtime projection, output-estimand binding, or population-
-balance validation. Consequently the P0 comparable-populations requirement
-remains open.
+A separate static population-design contract can fill those declaration-level
+gaps: it binds complete domains, target counts, evidence-result identities, and
+deterministic calibration/validation cluster assignments, and can create an
+exact-rational Hamilton plan. The checked-in design is nevertheless empty and
+`ILLUSTRATIVE`. Its record and cluster hashes are caller-supplied declarations;
+without signed immutable source-unit keys, they do not prove publisher
+authenticity, prevent aliases or role-specific salting, or establish genuine
+held-out data. Static design schema v1 is therefore always fail-closed for
+campaign readiness.
+
+An opt-in library helper can construct a projected `PlayerTable` and retains its
+assignment as a content-addressed sidecar. No runtime configuration or ordinary
+call site selects that helper. It does not consume or revalidate a static
+`PopulationApportionmentPlan`; it derives a separate projection and performs its
+own exact-mass Hamilton allocation with `cell_id` tie-breaking. A future adapter
+must bind static counts and the conversion from source household-income
+categories to runtime personal monthly disposable-income intervals and modeled
+household sizes.
+
+Projected gamer and payer-history labels remain attested sidecar-only and do not
+initialize behaviour or payment state. Consumers recompute the nested
+attestation and reject stale or mutated assignment indices. The assignment is
+included in the cohort digest when present, but this identity check is not a
+balance or calibration result.
+
+The exact weighted-estimand primitive is also isolated: it has no dedicated
+writer or registered target-population output profile. Configured runs still use
+the legacy marginal synthetic generator, and output schema v3 retains the frozen
+v2-compatible CSV tables and unweighted synthetic-player semantics. No
+population readiness gate has been cleared, the P0 comparable-populations
+requirement remains open, and no full campaign has been run.
 
 ### Internal money is not observed purchasing power
 

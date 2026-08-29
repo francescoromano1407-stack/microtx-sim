@@ -102,6 +102,29 @@ versions 1–3 remain readable, but they cannot contain or claim the version-4
 population fields. Hashes in any lineage version are reproducibility controls,
 not publisher signatures or scientific calibration.
 
+### Static population-design contract
+
+Population-design schema version 1 is a separate static layer. It can bind the
+exact population-evidence bundle and verified result digests to complete age,
+jurisdiction-specific source household-income category bounds/currency/period,
+household, gaming, and payer-history domains;
+jurisdiction target counts; and declared record- and cluster-level
+calibration/validation partitions. From a complete calibration target it uses
+`exact_rational_hamilton/1` to produce deterministic integer cell counts and
+exact rational analysis and expansion weights.
+
+Partition validity here means that the declared records cover their bound
+evidence cells and clusters do not cross roles. It does not authenticate the
+publisher or prove that validation observations were independently held out.
+Record and cluster hashes are declarations and can conceal aliases or role-
+specific salting unless immutable source-unit keys are signed and independently
+verified. The schema therefore keeps authenticity and held-out readiness false
+and cannot be promoted by declaration completeness alone.
+
+The checked-in `population_design.toml` is empty and `ILLUSTRATIVE`. It declares
+no age, income, or household domain rows, jurisdiction targets, evidence-result
+hashes, or partition records. Its `campaign_ready` property is always false.
+
 ## Output transformation registry
 
 Versioned policy outputs have a separate column-level registry in
@@ -152,12 +175,31 @@ spending distributions, deprivation, consumption propensity, and programme
 rates/caps—remain contract-only. Their presence does not calibrate current
 consumption, harm, company, audit, or subsidy outcomes.
 
-The new population-evidence bundle is also lineage-only at runtime. The legacy
-marginal synthetic generator still constructs the cohort, and neither its
-gaming nor payer-history dimensions are bound to the joint evidence contract.
-Exported v2 CSV tables still use unweighted synthetic-player summaries. No
-target-population choice, sampling/synthesis plan, runtime projection,
-output-estimand binding, or balance validation has been implemented.
+The population-evidence bundle remains lineage-only for configured runs. An
+opt-in library helper can build a `PlayerTable` from already-resolved projection
+cells using deterministic Hamilton allocation, but no checked-in configuration,
+CLI, `World.create`, batch, or sensitivity call site selects it. The helper does
+not consume or revalidate `PopulationApportionmentPlan`; it derives a separate
+runtime projection and performs its own exact-mass Hamilton allocation with
+`cell_id` tie-breaking. A future adapter must bind static counts and conversion
+from source household-income categories to runtime personal monthly disposable-
+income intervals and modeled household sizes.
+
+The projected gamer and payer-history fields remain attested sidecar metadata
+and do not set current game, payment access, or historical spending. Consumers
+recompute the nested assignment attestation and reject stale or mutated indices.
+When present, the sidecar assignment is included in the cohort digest; when
+absent, the legacy digest is unchanged.
+
+An isolated exact-rational estimand primitive implements weighted means, paired
+treated-minus-control mean differences, and deterministic lower inverse-CDF
+weighted quantiles. It re-attests supplied design weights and includes caller-
+supplied target-evidence, runtime-projection, balance, metric-contract, and
+dedicated output-profile digest declarations in estimand and result identity; it
+does not resolve those declarations to verified artifacts. There is no dedicated
+writer or registered target-population output profile yet, and no current batch
+or world reducer invokes it. Output schema v3 therefore preserves the frozen
+v2-compatible CSV columns and their unweighted synthetic-player semantics.
 
 `behavior.household_peer_influence` is runtime-consumed but has no empirical
 source contract. It is a synthetic sensitivity-only coefficient over a
@@ -260,11 +302,15 @@ matrix is used. Custom factor values remain descriptively exportable, but add a
 canonical-matrix mismatch blocker and can never inherit the canonical claim.
 
 Population validation is a third independent fail-closed boundary. An exact
-joint-cell extraction can at most clear source-structure and source-evidence
-subgates. Schema version 1 cannot clear calibration-target,
-held-out-validation, publisher-signature, sampling/synthesis-plan,
-runtime-projection, output-estimand, or balance-validation gates.
-`public_population_comparability` therefore remains false.
+joint-cell extraction and a declaration-complete static design can establish
+software structure, exact domains, declared partitions, and deterministic
+Hamilton weights. They cannot establish publisher authenticity, genuine
+held-out source units, configuration/call-site selection, a validated runtime
+projection, a registered weighted-output profile, or a balance result. Evidence-
+bundle schema v1 still hard-codes its calibration-target and held-out-validation
+subgates false, and population-design schema v1 is static-only and always
+campaign-ineligible. No population readiness gate has been cleared;
+`public_population_comparability` remains false.
 
 Passing this software gate will be necessary but not sufficient. The policy
 prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,

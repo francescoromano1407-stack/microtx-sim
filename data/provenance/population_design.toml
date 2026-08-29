@@ -1,0 +1,27 @@
+schema_version = 1
+design_id = "default-empty-population-design"
+provenance_status = "ILLUSTRATIVE"
+notes = "No categorical domains, population targets, or source-unit partition identities are registered. Schema v1 records are declarations only and cannot establish authenticity or held-out readiness."
+population_evidence_bundle_sha256 = "5fe12938f50d86874d8cf26d79dc4862133bd8d08ff49cad09ec7b4469957a6a"
+population_evidence_result_sha256s = []
+hamilton_recipe = "exact_rational_hamilton/1"
+jurisdictions = []
+
+[domains]
+income_missing_policy = "REJECT"
+household_missing_policy = "REJECT"
+gaming_states = ["GAMER", "NON_GAMER"]
+payer_history_states = ["EVER_PAYER", "NEVER_PAYER"]
+age_bands = []
+income_bands = []
+household_types = []
+
+[partition]
+identity_namespace = "default.empty.population"
+record_id_recipe = "canonical_source_record_sha256/1"
+cluster_id_recipe = "canonical_source_cluster_sha256/1"
+role_assignment_recipe = "sha256_cluster_threshold/1"
+assignment_seed_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+calibration_threshold_numerator = 4
+calibration_threshold_denominator = 5
+records = []

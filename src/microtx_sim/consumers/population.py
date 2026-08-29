@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 from typing import Final, Protocol, Sequence
 
 import numpy as np
 from numpy.typing import NDArray
 
-from ..agents.players import PlayerTable, TRAIT_NAMES
+from ..agents.players import (
+    PlayerTable,
+    ProjectedPopulationAssignment,
+    ProjectedPopulationCellMetadata,
+    ProjectedPopulationMetadata,
+    TRAIT_NAMES,
+    projected_population_assignment_sha256,
+    projected_population_plan_sha256,
+)
 from ..types import HarmDimension, Motive
 
 
@@ -189,6 +198,100 @@ class CountryProfile:
             raise ValueError("trait_correlation must be positive definite") from exc
 
 
+@dataclass(frozen=True, slots=True)
+class PopulationProjectionCell:
+    """One exact target cell after upstream evidence-to-runtime conversion.
+
+    ``monthly_disposable_income_*`` is an explicit runtime interval for the
+    PlayerTable column.  This primitive intentionally does not infer it from a
+    source household-income label or perform currency/equivalisation work.
+    """
+
+    cell_id: str
+    jurisdiction_code: str
+    age_min_inclusive: int
+    age_max_exclusive: int
+    monthly_disposable_income_band_id: str
+    monthly_disposable_income_min_cents: int
+    monthly_disposable_income_max_cents_exclusive: int
+    household_type: str
+    modeled_players_per_household: int
+    baseline_gamer: bool
+    baseline_ever_payer: bool
+    global_mass: tuple[int, int]
+
+    def __post_init__(self) -> None:
+        for name in (
+            "cell_id",
+            "jurisdiction_code",
+            "monthly_disposable_income_band_id",
+            "household_type",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise TypeError(f"{name} must be a string")
+            if not value or value.strip() != value:
+                raise ValueError(
+                    f"{name} must be non-empty and have no surrounding whitespace"
+                )
+        for name in (
+            "age_min_inclusive",
+            "age_max_exclusive",
+            "monthly_disposable_income_min_cents",
+            "monthly_disposable_income_max_cents_exclusive",
+            "modeled_players_per_household",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be a Python integer")
+        if not 0 <= self.age_min_inclusive < self.age_max_exclusive <= 32_768:
+            raise ValueError("age interval must be non-empty and fit int16 ages")
+        if (
+            self.monthly_disposable_income_min_cents < 0
+            or self.monthly_disposable_income_max_cents_exclusive
+            <= self.monthly_disposable_income_min_cents
+            or self.monthly_disposable_income_max_cents_exclusive
+            > np.iinfo(np.int64).max
+        ):
+            raise ValueError(
+                "monthly disposable income interval must be non-empty, non-negative, "
+                "and fit int64 cents"
+            )
+        if self.modeled_players_per_household <= 0:
+            raise ValueError("modeled_players_per_household must be positive")
+        maximum_household_income = (
+            self.monthly_disposable_income_max_cents_exclusive - 1
+        ) * self.modeled_players_per_household
+        if maximum_household_income > 2**53:
+            raise ValueError(
+                "runtime income upper bound times modeled household size must be "
+                "at most 2**53 cents for exact float64 household-resource input"
+            )
+        if not isinstance(self.baseline_gamer, bool):
+            raise TypeError("baseline_gamer must be a bool")
+        if not isinstance(self.baseline_ever_payer, bool):
+            raise TypeError("baseline_ever_payer must be a bool")
+        if not isinstance(self.global_mass, tuple) or len(self.global_mass) != 2:
+            raise TypeError("global_mass must be a (numerator, denominator) tuple")
+        numerator, denominator = self.global_mass
+        if (
+            isinstance(numerator, bool)
+            or not isinstance(numerator, int)
+            or isinstance(denominator, bool)
+            or not isinstance(denominator, int)
+        ):
+            raise TypeError(
+                "global_mass numerator and denominator must be Python integers"
+            )
+        if numerator < 0:
+            raise ValueError("global_mass numerator cannot be negative")
+        if denominator <= 0:
+            raise ValueError("global_mass denominator must be positive")
+        reduced = Fraction(numerator, denominator)
+        if (reduced.numerator, reduced.denominator) != self.global_mass:
+            raise ValueError("global_mass must be in lowest terms")
+
+
 class _Stream:
     JURISDICTION = 100
     AGE_BAND = 101
@@ -205,6 +308,25 @@ class _Stream:
     TRAITS = 112
     MOTIVES = 113
     AWARENESS = 114
+
+
+class _ProjectionStream:
+    """Reserved counter coordinates for the opt-in projection primitive."""
+
+    CELL_ASSIGNMENT = 1_100
+    AGE_WITHIN_CELL = 1_101
+    MONTHLY_DISPOSABLE_INCOME = 1_102
+    HOUSEHOLD_ORDER = 1_103
+    HOUSEHOLD_RESOURCES = 1_104
+    LIQUIDITY = 1_105
+    CREDIT_ACCESS = 1_106
+    CREDIT_LIMIT = 1_107
+    PAYMENT_ACCESS = 1_108
+    GUARDIAN_CONSENT = 1_109
+    SUPERVISION = 1_110
+    TRAITS = 1_111
+    MOTIVES = 1_112
+    AWARENESS = 1_113
 
 
 def initialize_player_table(
@@ -427,6 +549,473 @@ def initialize_player_table(
     )
 
 
+def initialize_projected_player_table(
+    player_count: int,
+    country_profiles: Sequence[CountryProfile],
+    rng: CounterRNGLike,
+    projection_cells: Sequence[PopulationProjectionCell],
+    *,
+    projection_id: str,
+    tick: int = 0,
+    first_player_id: int = 0,
+) -> PlayerTable:
+    """Create an opt-in population from exact, already-resolved target cells.
+
+    This is deliberately separate from :func:`initialize_player_table`, whose
+    legacy marginal generator and RNG coordinates remain unchanged.  The
+    caller is responsible for verifying evidence and resolving source concepts
+    into the explicit runtime cell fields accepted here. The returned runtime
+    projection digest is computed from those exact cells; callers cannot attach
+    an unrelated upstream plan digest. Baseline gamer and payer-history labels
+    remain immutable sidecar metadata; this initializer does not map them into
+    current games, payment access, or spending history.
+    """
+
+    if isinstance(player_count, bool) or not isinstance(player_count, (int, np.integer)):
+        raise TypeError("player_count must be an integer")
+    if player_count < 0:
+        raise ValueError("player_count cannot be negative")
+    if not country_profiles:
+        raise ValueError("at least one country profile is required")
+    if len(country_profiles) > np.iinfo(np.int16).max:
+        raise ValueError("too many country profiles for int16 jurisdiction codes")
+    codes = tuple(profile.code for profile in country_profiles)
+    if len(set(codes)) != len(codes):
+        raise ValueError("country profile codes must be unique")
+    if isinstance(first_player_id, bool) or not isinstance(
+        first_player_id, (int, np.integer)
+    ):
+        raise TypeError("first_player_id must be an integer")
+    if first_player_id < 0 or first_player_id + player_count > np.iinfo(np.int64).max:
+        raise ValueError("player id range is outside int64")
+
+    raw_cells = tuple(projection_cells)
+    if not raw_cells:
+        raise ValueError("at least one projection cell is required")
+    if any(type(cell) is not PopulationProjectionCell for cell in raw_cells):
+        raise TypeError("projection_cells must contain PopulationProjectionCell")
+    cell_ids = tuple(cell.cell_id for cell in raw_cells)
+    if len(set(cell_ids)) != len(cell_ids):
+        raise ValueError("projection cell_id values must be unique")
+    cells = tuple(sorted(raw_cells, key=lambda cell: cell.cell_id))
+
+    code_to_index = {code: index for index, code in enumerate(codes)}
+    unknown_codes = sorted(
+        {cell.jurisdiction_code for cell in cells}.difference(code_to_index)
+    )
+    if unknown_codes:
+        raise ValueError(
+            "projection cells reference unknown jurisdiction codes: "
+            + ", ".join(unknown_codes)
+        )
+    masses = tuple(Fraction(*cell.global_mass) for cell in cells)
+    if sum(masses, start=Fraction(0, 1)) != 1:
+        raise ValueError("projection cell global masses must sum exactly to one")
+
+    group_specification: dict[
+        tuple[str, str, str],
+        tuple[int, int, int],
+    ] = {}
+    for cell in cells:
+        key = (
+            cell.jurisdiction_code,
+            cell.monthly_disposable_income_band_id,
+            cell.household_type,
+        )
+        specification = (
+            cell.modeled_players_per_household,
+            cell.monthly_disposable_income_min_cents,
+            cell.monthly_disposable_income_max_cents_exclusive,
+        )
+        previous_specification = group_specification.setdefault(key, specification)
+        if previous_specification != specification:
+            raise ValueError(
+                "a jurisdiction/income-band/household-type group must have one "
+                "runtime income interval and modeled household size"
+            )
+
+    counts = _hamilton_cell_counts(player_count, cells, masses)
+    missing_positive = [
+        cell.cell_id
+        for cell, mass, count in zip(cells, masses, counts, strict=True)
+        if mass > 0 and count == 0
+    ]
+    if missing_positive:
+        raise ValueError(
+            "player_count is too small for every positive-mass projection cell "
+            "to be represented under Hamilton allocation: "
+            + ", ".join(missing_positive)
+        )
+
+    metadata_cells: list[ProjectedPopulationCellMetadata] = []
+    for cell, mass, count in zip(cells, masses, counts, strict=True):
+        analysis_weight = Fraction(0, 1) if mass == 0 else mass / count
+        metadata_cells.append(
+            ProjectedPopulationCellMetadata(
+                cell_id=cell.cell_id,
+                jurisdiction_code=cell.jurisdiction_code,
+                jurisdiction_index=code_to_index[cell.jurisdiction_code],
+                age_min_inclusive=cell.age_min_inclusive,
+                age_max_exclusive=cell.age_max_exclusive,
+                monthly_disposable_income_band_id=(
+                    cell.monthly_disposable_income_band_id
+                ),
+                monthly_disposable_income_min_cents=(
+                    cell.monthly_disposable_income_min_cents
+                ),
+                monthly_disposable_income_max_cents_exclusive=(
+                    cell.monthly_disposable_income_max_cents_exclusive
+                ),
+                household_type=cell.household_type,
+                modeled_players_per_household=cell.modeled_players_per_household,
+                baseline_gamer=cell.baseline_gamer,
+                baseline_ever_payer=cell.baseline_ever_payer,
+                global_mass=(mass.numerator, mass.denominator),
+                analysis_weight=(
+                    analysis_weight.numerator,
+                    analysis_weight.denominator,
+                ),
+            )
+        )
+    immutable_metadata_cells = tuple(metadata_cells)
+    metadata = ProjectedPopulationMetadata(
+        projection_id=projection_id,
+        projection_sha256=projected_population_plan_sha256(
+            projection_id,
+            immutable_metadata_cells,
+        ),
+        cells=immutable_metadata_cells,
+    )
+
+    player_id = np.arange(
+        first_player_id, first_player_id + player_count, dtype=np.int64
+    )
+    canonical_slots = np.repeat(
+        np.arange(len(cells), dtype=np.int32),
+        np.asarray(counts, dtype=np.int64),
+    )
+    assignment_draw = _uniform(
+        rng,
+        player_id,
+        tick,
+        _ProjectionStream.CELL_ASSIGNMENT,
+        0,
+    )
+    assignment_order = np.lexsort((player_id, assignment_draw))
+    cell_index = np.empty(player_count, dtype=np.int32)
+    cell_index[assignment_order] = canonical_slots
+
+    jurisdiction_by_cell = np.asarray(
+        [code_to_index[cell.jurisdiction_code] for cell in cells],
+        dtype=np.int16,
+    )
+    jurisdiction = jurisdiction_by_cell[cell_index]
+    age_years = np.empty(player_count, dtype=np.int16)
+    monthly_income = np.empty(player_count, dtype=np.int64)
+    for index, cell in enumerate(cells):
+        positions = np.flatnonzero(cell_index == index)
+        if not positions.size:
+            continue
+        entity_ids = player_id[positions]
+        age_draw = _uniform(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.AGE_WITHIN_CELL,
+            index,
+        )
+        age_width = cell.age_max_exclusive - cell.age_min_inclusive
+        age_offset = np.minimum(
+            np.floor(age_draw * age_width).astype(np.int64),
+            age_width - 1,
+        )
+        age_years[positions] = (
+            cell.age_min_inclusive + age_offset
+        ).astype(np.int16)
+
+        income_draw = _uniform(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.MONTHLY_DISPOSABLE_INCOME,
+            index,
+        )
+        income_width = (
+            cell.monthly_disposable_income_max_cents_exclusive
+            - cell.monthly_disposable_income_min_cents
+        )
+        income_offset = np.minimum(
+            np.floor(income_draw * income_width).astype(np.int64),
+            income_width - 1,
+        )
+        monthly_income[positions] = (
+            cell.monthly_disposable_income_min_cents + income_offset
+        )
+
+    household_id = np.empty(player_count, dtype=np.int64)
+    household_liquidity = np.empty(player_count, dtype=np.int64)
+    cell_group_key = tuple(
+        (
+            cell.jurisdiction_code,
+            cell.monthly_disposable_income_band_id,
+            cell.household_type,
+        )
+        for cell in cells
+    )
+    household_offset = 0
+    for group_index, key in enumerate(sorted(set(cell_group_key))):
+        group_cell_indices = np.asarray(
+            [index for index, candidate in enumerate(cell_group_key) if candidate == key],
+            dtype=np.int32,
+        )
+        positions = np.flatnonzero(np.isin(cell_index, group_cell_indices))
+        if not positions.size:
+            continue
+        size, _income_min, _income_max = group_specification[key]
+        entity_ids = player_id[positions]
+        household_draw = _uniform(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.HOUSEHOLD_ORDER,
+            group_index,
+        )
+        shuffled_positions = positions[np.lexsort((entity_ids, household_draw))]
+        local_household = np.arange(positions.size, dtype=np.int64) // size
+        number_households = int(local_household[-1]) + 1
+        household_id[shuffled_positions] = household_offset + local_household
+
+        household_income = np.bincount(
+            local_household,
+            weights=monthly_income[shuffled_positions].astype(np.float64),
+            minlength=number_households,
+        )
+        household_entities = np.arange(
+            household_offset,
+            household_offset + number_households,
+            dtype=np.int64,
+        )
+        country_index = code_to_index[key[0]]
+        profile = country_profiles[country_index]
+        resource_noise = _normal(
+            rng,
+            household_entities,
+            tick,
+            _ProjectionStream.HOUSEHOLD_RESOURCES,
+            group_index,
+        )
+        resources = _money(
+            household_income
+            * profile.household_liquidity_months
+            * np.exp(np.clip(0.65 * resource_noise, -4.0, 4.0))
+        )
+        household_liquidity[shuffled_positions] = resources[local_household]
+        household_offset += number_households
+
+    adult_ages = np.asarray(
+        [profile.adult_age for profile in country_profiles], dtype=np.int16
+    )
+    is_minor = age_years < adult_ages[jurisdiction]
+    allowance = np.where(is_minor, monthly_income, 0).astype(np.int64)
+    liquidity = np.empty(player_count, dtype=np.int64)
+    credit_limit = np.zeros(player_count, dtype=np.int64)
+    stored_payment = np.zeros(player_count, dtype=np.bool_)
+    guardian_supervision = np.zeros(player_count, dtype=np.float32)
+    guardian_consent = np.zeros(player_count, dtype=np.bool_)
+    traits = np.empty((player_count, len(TRAIT_NAMES)), dtype=np.float32)
+    motive_weights = np.empty((player_count, len(Motive)), dtype=np.float32)
+    awareness = np.empty(player_count, dtype=np.float32)
+
+    for country_index, profile in enumerate(country_profiles):
+        positions = np.flatnonzero(jurisdiction == country_index)
+        if not positions.size:
+            continue
+        entity_ids = player_id[positions]
+        minor = is_minor[positions]
+        income_for_players = monthly_income[positions]
+
+        liquidity_noise = _normal(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.LIQUIDITY,
+            0,
+        )
+        personal_months = profile.personal_liquidity_months * np.exp(
+            np.clip(0.55 * liquidity_noise, -4.0, 4.0)
+        )
+        minor_balance_fraction = 0.25 + 1.75 * _uniform(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.LIQUIDITY,
+            1,
+        )
+        liquidity[positions] = _money(
+            np.where(
+                minor,
+                income_for_players * minor_balance_fraction,
+                income_for_players * personal_months,
+            )
+        )
+
+        credit_access = (
+            _uniform(
+                rng,
+                entity_ids,
+                tick,
+                _ProjectionStream.CREDIT_ACCESS,
+                0,
+            )
+            < profile.credit_access_probability
+        ) & ~minor
+        credit_noise = _normal(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.CREDIT_LIMIT,
+            0,
+        )
+        credit_values = _money(
+            income_for_players
+            * profile.credit_limit_income_multiple
+            * np.exp(np.clip(0.30 * credit_noise, -2.0, 2.0))
+        )
+        credit_limit[positions] = np.where(credit_access, credit_values, 0)
+
+        payment_draw = _uniform(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.PAYMENT_ACCESS,
+            0,
+        )
+        stored_payment[positions] = np.where(
+            minor,
+            payment_draw < profile.minor_stored_card_probability,
+            payment_draw < profile.adult_stored_payment_probability,
+        )
+        guardian_consent[positions] = minor & (
+            _uniform(
+                rng,
+                entity_ids,
+                tick,
+                _ProjectionStream.GUARDIAN_CONSENT,
+                0,
+            )
+            < profile.minor_guardian_consent_probability
+        )
+        supervision_noise = _normal(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.SUPERVISION,
+            0,
+        )
+        supervision = _sigmoid(
+            _logit(profile.guardian_supervision_mean) + 0.85 * supervision_noise
+        )
+        guardian_supervision[positions] = np.where(
+            minor,
+            supervision,
+            0.0,
+        ).astype(np.float32)
+
+        profile_traits = _sample_projected_traits(entity_ids, profile, rng, tick)
+        traits[positions] = profile_traits
+        motive_weights[positions] = _sample_projected_motives(
+            entity_ids,
+            profile,
+            profile_traits,
+            rng,
+            tick,
+        )
+        literacy = profile_traits[:, TRAIT_NAMES.index("financial_literacy")]
+        self_control = profile_traits[:, TRAIT_NAMES.index("self_control")]
+        awareness_noise = _normal(
+            rng,
+            entity_ids,
+            tick,
+            _ProjectionStream.AWARENESS,
+            0,
+        )
+        awareness[positions] = _sigmoid(
+            _logit(profile.awareness_mean)
+            + 0.9 * (literacy - 0.5)
+            + 0.35 * (self_control - 0.5)
+            + 0.55 * awareness_noise
+        ).astype(np.float32)
+
+    baseline = _baseline_vulnerability(
+        age_years,
+        is_minor,
+        monthly_income,
+        jurisdiction,
+        country_profiles,
+        traits,
+    )
+    assignment = ProjectedPopulationAssignment(
+        metadata=metadata,
+        cell_index=cell_index,
+        assignment_sha256=projected_population_assignment_sha256(
+            metadata,
+            player_id,
+            cell_index,
+        ),
+    )
+    return PlayerTable(
+        player_id=player_id,
+        age_years=age_years,
+        jurisdiction=jurisdiction,
+        household_id=household_id,
+        is_minor=is_minor,
+        monthly_disposable_income_cents=monthly_income,
+        liquidity_cents=liquidity,
+        credit_limit_cents=credit_limit,
+        allowance_cents=allowance,
+        household_liquidity_cents=household_liquidity,
+        has_stored_payment_access=stored_payment,
+        guardian_supervision=guardian_supervision,
+        guardian_consent=guardian_consent,
+        traits=traits,
+        motive_weights=motive_weights,
+        baseline_vulnerability=baseline,
+        harm_state=np.zeros((player_count, len(HarmDimension)), dtype=np.float32),
+        current_game=np.full(player_count, -1, dtype=np.int32),
+        awareness=awareness,
+        jurisdiction_codes=codes,
+        adult_age_by_jurisdiction=tuple(
+            profile.adult_age for profile in country_profiles
+        ),
+        projected_population=assignment,
+    )
+
+
+def _hamilton_cell_counts(
+    player_count: int,
+    cells: Sequence[PopulationProjectionCell],
+    masses: Sequence[Fraction],
+) -> tuple[int, ...]:
+    quotas = tuple(player_count * mass for mass in masses)
+    floors = [quota.numerator // quota.denominator for quota in quotas]
+    remaining = player_count - sum(floors)
+    remainder_order = sorted(
+        range(len(cells)),
+        key=lambda index: (
+            -(quotas[index] - floors[index]),
+            cells[index].cell_id,
+        ),
+    )
+    for index in remainder_order[:remaining]:
+        floors[index] += 1
+    if sum(floors) != player_count:
+        raise RuntimeError("Hamilton allocation did not preserve player_count")
+    for mass, count in zip(masses, floors, strict=True):
+        if mass == 0 and count != 0:
+            raise RuntimeError("Hamilton allocation assigned a zero-mass cell")
+    return tuple(floors)
+
+
 def initialize_players(
     player_count: int,
     country_profiles: Sequence[CountryProfile],
@@ -510,6 +1099,57 @@ def _sample_motives(
     noise = np.column_stack(
         [
             _normal(rng, entity_ids, tick, _Stream.MOTIVES, draw_index)
+            for draw_index in range(len(Motive))
+        ]
+    )
+    impulsivity, reward, social, loss_aversion, literacy, self_control = traits.T
+    logits = np.broadcast_to(
+        np.asarray(profile.motive_logits, dtype=np.float64),
+        (entity_ids.size, len(Motive)),
+    ).copy()
+    logits[:, Motive.COMPETITION] += 0.75 * reward + 0.25 * self_control
+    logits[:, Motive.COLLECTION] += 0.65 * reward + 0.45 * loss_aversion
+    logits[:, Motive.SOCIAL] += 1.05 * social + 0.15 * impulsivity
+    logits[:, Motive.EXPLORATION] += 0.45 * reward + 0.30 * literacy
+    logits[:, Motive.RELAXATION] += 0.55 * self_control - 0.30 * impulsivity
+    logits += 0.45 * noise
+    logits -= logits.max(axis=1, keepdims=True)
+    weights = np.exp(logits)
+    weights /= weights.sum(axis=1, keepdims=True)
+    return weights.astype(np.float32)
+
+
+def _sample_projected_traits(
+    entity_ids: NDArray[np.int64],
+    profile: CountryProfile,
+    rng: CounterRNGLike,
+    tick: int,
+) -> NDArray[np.float32]:
+    independent = np.column_stack(
+        [
+            _normal(rng, entity_ids, tick, _ProjectionStream.TRAITS, draw_index)
+            for draw_index in range(len(TRAIT_NAMES))
+        ]
+    )
+    cholesky = np.linalg.cholesky(
+        np.asarray(profile.trait_correlation, dtype=np.float64)
+    )
+    correlated = independent @ cholesky.T
+    means = np.asarray(profile.trait_means, dtype=np.float64)
+    scales = np.asarray(profile.trait_scales, dtype=np.float64)
+    return np.clip(means + correlated * scales, 0.0, 1.0).astype(np.float32)
+
+
+def _sample_projected_motives(
+    entity_ids: NDArray[np.int64],
+    profile: CountryProfile,
+    traits: NDArray[np.float32],
+    rng: CounterRNGLike,
+    tick: int,
+) -> NDArray[np.float32]:
+    noise = np.column_stack(
+        [
+            _normal(rng, entity_ids, tick, _ProjectionStream.MOTIVES, draw_index)
             for draw_index in range(len(Motive))
         ]
     )

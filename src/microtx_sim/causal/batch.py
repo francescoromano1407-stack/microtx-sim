@@ -11,6 +11,7 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
+from ..agents.players import projected_population_assignment_sha256
 from ..consumers.decision import DecisionParameters
 from ..consumers.population import CountryProfile, initialize_player_table
 from ..consumers.welfare import initialize_player_life
@@ -978,6 +979,23 @@ def _cohort_digest(players: object, life: object) -> str:
                 digest.update(value.dtype.str.encode("ascii"))
                 digest.update(np.asarray(value.shape, dtype=np.int64).tobytes())
                 digest.update(value.tobytes(order="C"))
+    projected_population = getattr(players, "projected_population", None)
+    if projected_population is not None:
+        # The optional sidecar is nested rather than a PlayerTable ndarray so
+        # legacy cohorts retain their historical digests.  Projected cohorts
+        # must nevertheless bind the exact content-derived runtime projection,
+        # cell semantics, ordered IDs, and realized assignment.
+        observed_assignment_sha256 = projected_population_assignment_sha256(
+            projected_population.metadata,
+            players.player_id,
+            projected_population.cell_index,
+        )
+        if observed_assignment_sha256 != projected_population.assignment_sha256:
+            raise RuntimeError(
+                "projected population assignment was mutated after attestation"
+            )
+        digest.update(b"projected_population.assignment_sha256\0")
+        digest.update(bytes.fromhex(observed_assignment_sha256))
     return digest.hexdigest()
 
 

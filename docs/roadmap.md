@@ -59,12 +59,33 @@ These tasks block scientific interpretation.
    unsigned, and `campaign_ready=false`; hashes prove reproducibility, not
    publisher authenticity or calibration.
 
-   This P0 item remains open. No target population or population weights have
-   been selected; no sampling/synthesis plan, runtime projection,
-   output-estimand binding, or balance validation exists. Both runtimes still
-   use the legacy marginal synthetic generator, and output-v2 CSV semantics
-   remain unweighted. This milestone does not authorise or constitute a full
-   campaign.
+   A separate static population-design schema now binds exact evidence-result
+   identities to complete domains, declared calibration/validation source-unit
+   partitions and target counts, and implements deterministic exact-rational
+   Hamilton allocation with analysis and expansion weights. The checked-in
+   design is empty and `ILLUSTRATIVE`. Its record and cluster identities are
+   declarations, not authenticity or independently held-out proof, so static
+   schema v1 remains `campaign_ready=false` even when declarations are complete.
+
+   An opt-in runtime helper can attach a content-addressed projected-population
+   sidecar, and that assignment is included in the cohort digest when present.
+   Gamer and payer-history fields remain attested sidecar-only. Consumers reject
+   stale nested assignment indices. The helper is not a static-design adapter:
+   it does not consume or revalidate `PopulationApportionmentPlan`, and instead
+   derives separate runtime projection content and performs its own Hamilton
+   allocation with `cell_id` tie-breaking. A future adapter must bind static
+   counts and source-to-runtime income/household conversion.
+
+   An isolated exact weighted-mean, paired-difference, and weighted-quantile
+   primitive also exists, but it has no dedicated writer or registered output
+   profile. No config, CLI, world, batch, or sensitivity call site selects the
+   projection helper.
+
+   This P0 item therefore remains open. Configured runtimes still use the legacy
+   marginal synthetic generator, and output schema v3 keeps the frozen
+   v2-compatible CSV columns and unweighted semantics. No population readiness
+   gate has been cleared, and this milestone neither authorises nor constitutes
+   a full campaign.
 2. **Resolve monetary comparability.** Keep source currencies during ingestion,
    then define dated exchange-rate or purchasing-power contracts for any pooled
    estimand. Never treat nominal GBP, KRW, JPY, and EUR minor units as directly
