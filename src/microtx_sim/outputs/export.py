@@ -91,6 +91,20 @@ def export_policy_batch(
             raise ValueError(
                 "batch and sensitivity used different resolved model inputs"
             )
+        batch_population = batch.population_execution_lineage
+        sensitivity_population = sensitivity.population_execution_lineage
+        if (batch_population is None) != (sensitivity_population is None):
+            raise ValueError(
+                "batch and sensitivity used different population execution modes"
+            )
+        if batch_population is not None and sensitivity_population is not None:
+            if (
+                batch_population.manifest_payload()
+                != sensitivity_population.manifest_payload()
+            ):
+                raise ValueError(
+                    "batch and sensitivity used different population executions"
+                )
     destination = (
         Path(output_dir)
         if output_dir is not None

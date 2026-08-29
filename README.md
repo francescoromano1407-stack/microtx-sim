@@ -62,29 +62,36 @@ optimal funding policy.
   bundle, extracted cells, hashes, and readiness assessment; lineage versions
   1–3 remain readable. These hashes establish reproducibility, not publisher
   authenticity or calibration.
-- An opt-in library helper can materialize already-resolved projection cells as
-  a `PlayerTable` sidecar using Hamilton allocation. No run configuration, CLI,
-  world, batch, or sensitivity call site selects it. Baseline gamer and payer
-  labels remain attested sidecar metadata only; they do not set gameplay,
-  payment access, or spending history. Static source household-income category
-  bounds/currency/period are distinct from the helper's runtime personal monthly
-  disposable-income intervals and modeled household sizes.
-- The helper does not consume or revalidate a `PopulationApportionmentPlan`. It
-  derives a separate runtime projection from its exact cells and performs its own
-  Hamilton allocation with `cell_id` tie-breaking. A future adapter must bind
-  static counts and source-to-runtime conversion explicitly. Consumers recompute
-  the nested assignment attestation and reject stale or mutated indices. When
-  present, the projected assignment is included in the cohort digest; without
-  it, legacy cohort digests are unchanged.
+- Market and policy configurations may opt into `population.mode =
+  "projected_v1"` with exact design, runtime-mapping, and adapter identifiers.
+  The file-backed adapter re-attests the static `PopulationApportionmentPlan`,
+  consumes its exact cell counts and rational weights without reallocating them,
+  and binds the explicit conversion from source household-income/type semantics
+  to runtime personal monthly disposable-income intervals and modeled household
+  sizes. No checked-in configuration selects this path and no runtime mapping
+  bundle is checked in, so the supplied runs retain the legacy marginal
+  initializer.
+- A selected projection is content-addressed through adapter, runtime projection,
+  ordered player IDs, and assignment identities. Batch and sensitivity runs
+  record the same per-seed cohort, exact weights, and pre-treatment balance
+  lineage; the balance artifact reports planned-versus-realized full joint-cell
+  counts and masses and separately attests runtime jurisdiction, age, income,
+  and household membership. Baseline gamer and payer labels remain sidecar-only
+  metadata and do not set gameplay, payment access, or spending history.
 - An isolated exact-rational estimand primitive implements weighted means,
   paired mean differences, and deterministic weighted quantiles. It re-attests
   supplied design weights and records caller-supplied projection, balance,
   metric-contract, evidence, and output-profile digest declarations; it does not
-  resolve those declarations to verified artifacts. No dedicated writer or
-  output profile invokes it yet. Output schema v3 therefore retains the frozen
-  v2-compatible CSV columns and their unweighted synthetic-player semantics. No
-  population readiness gate has been cleared, comparable populations remain an
-  open P0 item, and no full campaign has been run.
+  resolve those declarations to verified artifacts. A dedicated standalone
+  `target_population_estimands` profile can write exact results to
+  `target_population_estimands.csv` and
+  `target_population_estimand_metadata.json`; it is not part of the 13-file
+  output-v3 bundle or invoked automatically by the CLI. Output schema v3 retains
+  the frozen v2-compatible CSV columns and their unweighted synthetic-player
+  semantics. The adapter, balance, lineage, and writer are reproducibility
+  infrastructure, not population calibration, external provenance, empirical
+  validation, public comparability, or campaign readiness. Comparable
+  populations remain an open P0 item and no full campaign has been run.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.

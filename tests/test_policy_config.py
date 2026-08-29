@@ -8,6 +8,7 @@ from microtx_sim.policy_config import (
     PolicyConfigurationError,
     load_policy_config,
 )
+from microtx_sim.config import PopulationExecutionMode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,52 @@ class PolicyConfigTests(unittest.TestCase):
             )
             with self.assertRaises(PolicyConfigurationError):
                 load_policy_config(missing)
+
+    def test_population_projection_is_strict_and_opt_in(self) -> None:
+        original = CONFIG.read_text("utf-8")
+        self.assertIsNone(load_policy_config(CONFIG).population)
+        population = """
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "inputs/design.toml"
+runtime_mapping_bundle_path = "inputs/runtime-mapping.toml"
+adapter_id = "policy.population.v1"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configured_path = root / "projected.toml"
+            configured_path.write_text(original + population, "utf-8")
+            configured = load_policy_config(configured_path)
+            self.assertIsNotNone(configured.population)
+            assert configured.population is not None
+            self.assertIs(
+                configured.population.mode,
+                PopulationExecutionMode.PROJECTED_V1,
+            )
+            self.assertEqual(
+                configured.population.design_bundle_path,
+                (root / "inputs" / "design.toml").resolve(),
+            )
+            self.assertEqual(
+                configured.population.runtime_mapping_bundle_path,
+                (root / "inputs" / "runtime-mapping.toml").resolve(),
+            )
+
+            malformed = root / "malformed.toml"
+            malformed.write_text(
+                original
+                + population.replace(
+                    'adapter_id = "policy.population.v1"',
+                    'adapter_id = "policy.population.v1"\nunknown = true',
+                ),
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "population keys differ",
+            ):
+                load_policy_config(malformed)
 
 
 if __name__ == "__main__":

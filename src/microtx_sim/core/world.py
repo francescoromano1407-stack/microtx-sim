@@ -14,6 +14,22 @@ from ..config import (
     StepHistoryRetention,
 )
 from ..data.profiles import ProfileBundle, load_profile_bundle
+from ..data.population_execution import resolve_population_projection_adapter
+from ..data.population_projection import (
+    PopulationProjectionAdapter,
+    PopulationProjectionExecution,
+    initialize_population_projection,
+    verify_population_projection_adapter,
+    verify_population_projection_execution,
+)
+from ..metrics.population_balance import (
+    PopulationBalanceArtifact,
+    build_population_balance_artifact,
+)
+from ..metrics.population_estimands import (
+    ExactPopulationWeights,
+    exact_population_weights_from_projected_players,
+)
 from ..domain.games import GameTable
 from ..metrics.outcomes import OutcomeRecorder, OutcomeSnapshot
 from ..rng import CounterRNG
@@ -56,6 +72,7 @@ class World:
         games: GameTable,
         firms: tuple[FirmAgent, ...],
         states: tuple[StateAgent, ...],
+        population_projection_execution: PopulationProjectionExecution | None = None,
         ledger: Ledger | None = None,
         ledger_path: str | Path | None = None,
     ) -> None:
@@ -67,6 +84,50 @@ class World:
         self.profiles = profiles
         self.rng = rng
         self.players = players
+        self.population_projection_execution = population_projection_execution
+        self.population_balance: PopulationBalanceArtifact | None = None
+        self.population_weights: ExactPopulationWeights | None = None
+        if config.population is not None and population_projection_execution is None:
+            raise ValueError(
+                "configured population projection requires an execution"
+            )
+        if population_projection_execution is not None:
+            if (
+                type(population_projection_execution)
+                is not PopulationProjectionExecution
+            ):
+                raise TypeError(
+                    "population_projection_execution must be "
+                    "PopulationProjectionExecution or None"
+                )
+            observed_population_execution = verify_population_projection_execution(
+                population_projection_execution
+            )
+            if observed_population_execution.players is not players:
+                raise ValueError(
+                    "population projection execution must bind the installed "
+                    "PlayerTable"
+                )
+            population_selection = config.population
+            if population_selection is not None:
+                execution_adapter = observed_population_execution.adapter
+                if (
+                    execution_adapter.adapter_id != population_selection.adapter_id
+                    or execution_adapter.verification.bundle.bundle_path
+                    != population_selection.design_bundle_path
+                    or execution_adapter.mapping_bundle.mapping_path
+                    != population_selection.runtime_mapping_bundle_path
+                ):
+                    raise ValueError(
+                        "population projection execution does not match the "
+                        "configured population files/adapter id"
+                    )
+            self.population_balance = build_population_balance_artifact(
+                observed_population_execution
+            )
+            self.population_weights = exact_population_weights_from_projected_players(
+                players
+            )
         self.games = games
         self.firms = firms
         self.states = states
@@ -174,6 +235,7 @@ class World:
         *,
         profiles: ProfileBundle | None = None,
         campaign: bool = False,
+        population_adapter: PopulationProjectionAdapter | None = None,
         ledger: Ledger | None = None,
         ledger_path: str | Path | None = None,
     ) -> "World":
@@ -223,6 +285,28 @@ class World:
         if campaign and profiles is not None:
             profile_bundle.validate_for_campaign()
         rng = CounterRNG(config.run.seed)
+        selected_population_adapter = population_adapter
+        if population_adapter is not None:
+            if type(population_adapter) is not PopulationProjectionAdapter:
+                raise TypeError(
+                    "population_adapter must be PopulationProjectionAdapter or None"
+                )
+            selected_population_adapter = verify_population_projection_adapter(
+                population_adapter
+            )
+        if config.population is not None:
+            configured_population_adapter = resolve_population_projection_adapter(
+                config.population,
+                profile_bundle,
+                player_count=config.run.player_count,
+            )
+            if selected_population_adapter is not None and (
+                selected_population_adapter != configured_population_adapter
+            ):
+                raise ConfigurationError(
+                    "explicit population adapter differs from [population] configuration"
+                )
+            selected_population_adapter = configured_population_adapter
         games = GameTable.create(
             game_count=config.market.game_count,
             company_count=config.market.company_count,
@@ -234,11 +318,27 @@ class World:
             1, len(games.game_id) + 1, dtype=np.int64
         )
         games.public_score[:] = games.quality
-        players = initialize_player_table(
-            config.run.player_count,
-            profile_bundle.country_profiles,
-            rng,
-        )
+        population_execution = None
+        if selected_population_adapter is None:
+            players = initialize_player_table(
+                config.run.player_count,
+                profile_bundle.country_profiles,
+                rng,
+            )
+        else:
+            if (
+                selected_population_adapter.apportionment_plan.player_count
+                != config.run.player_count
+            ):
+                raise ConfigurationError(
+                    "population adapter player count differs from run.player_count"
+                )
+            population_execution = initialize_population_projection(
+                selected_population_adapter,
+                profile_bundle.country_profiles,
+                rng,
+            )
+            players = population_execution.players
         firms = create_firms(
             company_count=config.market.company_count,
             games=games,
@@ -262,6 +362,7 @@ class World:
             games=games,
             firms=firms,
             states=states,
+            population_projection_execution=population_execution,
             ledger=ledger,
             ledger_path=ledger_path,
         )

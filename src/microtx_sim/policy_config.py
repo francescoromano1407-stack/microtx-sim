@@ -8,6 +8,7 @@ from typing import Mapping
 import tomllib
 
 from .causal.batch import PolicyBatchSpec
+from .config import PopulationProjectionConfig, _population_projection_config
 from .consumers.decision import DecisionParameters
 from .funding import EPGCPolicy
 from .metrics.harm import (
@@ -56,6 +57,7 @@ class PolicyPrototypeConfig:
     producer_assumptions: ProducerAssumptions
     epgc_policy: EPGCPolicy
     output: PolicyOutputConfig
+    population: PopulationProjectionConfig | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -63,6 +65,12 @@ class PolicyPrototypeConfig:
         if self.provenance_status != "synthetic":
             raise ValueError(
                 "the policy prototype accepts synthetic provenance only"
+            )
+        if self.population is not None and type(
+            self.population
+        ) is not PopulationProjectionConfig:
+            raise TypeError(
+                "population must be PopulationProjectionConfig or None"
             )
 
 
@@ -83,6 +91,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
         producer = _section(raw, "producer")
         epgc = _section(raw, "epgc")
         output = _section(raw, "output")
+        population = _population_projection_config(
+            raw.get("population"),
+            config_path=config_path,
+        )
         _exact_keys(meta, {"name", "provenance_status", "notes"}, "meta")
         _exact_keys(run, {"seeds", "days", "player_count"}, "policy_run")
         _exact_keys(
@@ -197,6 +209,7 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
                 include_player_rows=output["include_player_rows"],
                 run_sensitivity=output["run_sensitivity"],
             ),
+            population=population,
         )
     except (KeyError, TypeError, ValueError, OSError) as exc:
         if isinstance(exc, PolicyConfigurationError):
@@ -218,7 +231,15 @@ def _strict_top_level(raw: Mapping[str, object]) -> None:
         "epgc",
         "output",
     }
-    _exact_keys(raw, expected, "top level")
+    actual = set(raw)
+    if "population" in actual:
+        actual.remove("population")
+    missing = sorted(expected - actual)
+    unknown = sorted(actual - expected)
+    if missing or unknown:
+        raise PolicyConfigurationError(
+            f"top level keys differ: missing={missing}, unknown={unknown}"
+        )
 
 
 def _section(raw: Mapping[str, object], name: str) -> dict[str, object]:
@@ -244,5 +265,6 @@ __all__ = [
     "PolicyConfigurationError",
     "PolicyOutputConfig",
     "PolicyPrototypeConfig",
+    "PopulationProjectionConfig",
     "load_policy_config",
 ]

@@ -287,12 +287,13 @@ fingerprinted two-file profile.
 The six CSV files, manifest, Markdown summary, and five SVG charts form the
 13-file `reproduce` contract listed in [Usage](usage.md).
 
-Profile-input lineage is separately versioned at v4. It can retain the
-population-evidence bundle, extracted joint-cell results, and readiness
-assessment, while v1–v3 remain readable. Do not infer a CSV-schema or estimand
-change from that manifest-side addition: the output-v2 tables remain unweighted
-and the runtime still uses the legacy marginal synthetic generator. Exact-byte
-hashes are reproducibility controls, not publisher authentication or
+Profile-input lineage is separately versioned at v4. It retains population
+evidence and readiness, while optional projected execution adds a distinct
+canonical per-seed adapter/assignment/weight/balance lineage to the manifest.
+Omitting `[population]` preserves the legacy marginal generator. Neither path
+changes the output-v2-compatible tables' unweighted semantics; the standalone
+target-population writer is a different two-file profile. Exact-byte hashes and
+balance checks are reproducibility controls, not publisher authentication or
 calibration.
 
 ## Code conventions

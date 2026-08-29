@@ -67,25 +67,30 @@ These tasks block scientific interpretation.
    declarations, not authenticity or independently held-out proof, so static
    schema v1 remains `campaign_ready=false` even when declarations are complete.
 
-   An opt-in runtime helper can attach a content-addressed projected-population
-   sidecar, and that assignment is included in the cohort digest when present.
-   Gamer and payer-history fields remain attested sidecar-only. Consumers reject
-   stale nested assignment indices. The helper is not a static-design adapter:
-   it does not consume or revalidate `PopulationApportionmentPlan`, and instead
-   derives separate runtime projection content and performs its own Hamilton
-   allocation with `cell_id` tie-breaking. A future adapter must bind static
-   counts and source-to-runtime income/household conversion.
+   The executable plumbing is now implemented as an opt-in path. A strict,
+   content-addressed mapping declares the source-household-income/type to
+   runtime-personal-income/household conversion. Its adapter re-attests the
+   static `PopulationApportionmentPlan`, consumes its exact counts and rational
+   weights without a second allocation, and binds the resulting projection and
+   ordered player assignment. Market and policy configurations can select it;
+   omission preserves the legacy marginal generator. No supplied configuration
+   selects it and no runtime mapping is checked in.
 
-   An isolated exact weighted-mean, paired-difference, and weighted-quantile
-   primitive also exists, but it has no dedicated writer or registered output
-   profile. No config, CLI, world, batch, or sensitivity call site selects the
-   projection helper.
+   Policy batch and sensitivity execution now retain exact per-seed projection,
+   cohort, weight, and pre-treatment population-balance lineage. The balance
+   report covers planned versus realized counts and mass for every full joint
+   cell and separately attests runtime jurisdiction, age, income, and household
+   membership. Gamer and payer-history fields remain sidecar-only. A dedicated
+   standalone `target_population_estimands` writer/profile can serialize exact
+   weighted means, paired differences, and weighted quantiles; it does not alter
+   or join the automatic output-v3 bundle.
 
-   This P0 item therefore remains open. Configured runtimes still use the legacy
-   marginal synthetic generator, and output schema v3 keeps the frozen
-   v2-compatible CSV columns and unweighted semantics. No population readiness
-   gate has been cleared, and this milestone neither authorises nor constitutes
-   a full campaign.
+   This P0 item remains open because exact execution does not provide an
+   authenticated and calibrated target, an independently verified holdout, a
+   scientifically reviewed source-to-runtime conversion, preregistration, or a
+   campaign-ready output contract. Output-v3 CSV columns retain their unweighted
+   semantics, `public_population_comparability` and `campaign_ready` remain
+   false, and this milestone neither authorises nor constitutes a full campaign.
 2. **Resolve monetary comparability.** Keep source currencies during ingestion,
    then define dated exchange-rate or purchasing-power contracts for any pooled
    estimand. Never treat nominal GBP, KRW, JPY, and EUR minor units as directly

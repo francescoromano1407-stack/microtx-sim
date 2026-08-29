@@ -2,8 +2,10 @@
 
 Version 2 exhaustively declared every policy-table column.  Version 3 preserves
 those filenames and columns exactly and introduces a separately versioned
-manifest envelope.  Output-v2 manifests had no independent manifest version;
-they are legacy artifacts, not payloads that current writers may relabel.
+manifest envelope.  Standalone sensitivity and target-population estimand
+profiles have independent contracts and do not extend output-v3.  Output-v2
+manifests had no independent manifest version; they are legacy artifacts, not
+payloads that current writers may relabel.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import json
 from types import MappingProxyType
 from typing import Final
 
+from ..metrics.population_estimands import TARGET_POPULATION_OUTPUT_PROFILE
 from ..metrics.reporting import REPEATED_SEED_METRIC_STEMS
 
 
@@ -22,6 +25,59 @@ OUTPUT_SCHEMA_VERSION: Final[str] = "3.0"
 MANIFEST_SCHEMA_VERSION: Final[str] = "1.0"
 STANDALONE_SENSITIVITY_PROFILE: Final[str] = "standalone_sensitivity"
 STANDALONE_SENSITIVITY_SCHEMA_VERSION: Final[str] = "1.0"
+TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION: Final[str] = "1.0"
+
+TARGET_POPULATION_ESTIMAND_COLUMNS: Final[tuple[str, ...]] = (
+    "estimand_id",
+    "estimand_sha256",
+    "result_sha256",
+    "target_population_id",
+    "target_evidence_sha256",
+    "design_weights_sha256",
+    "runtime_projection_sha256",
+    "balance_report_sha256",
+    "metric_contract_sha256",
+    "output_profile_id",
+    "output_profile_schema_sha256",
+    "analysis_unit",
+    "inclusion_rule_id",
+    "inclusion_rule_sha256",
+    "metric_name",
+    "metric_kind",
+    "metric_scale",
+    "contrast",
+    "algorithm",
+    "normalization",
+    "period_start",
+    "period_end",
+    "currency_code",
+    "currency_basis_sha256",
+    "quantile_probability_numerator_decimal",
+    "quantile_probability_denominator_decimal",
+    "player_count_decimal",
+    "numerator_decimal",
+    "denominator_decimal",
+    "weight_sum_numerator_decimal",
+    "weight_sum_denominator_decimal",
+    "target_population_count_decimal",
+)
+
+TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
+    "target_population_estimands.csv",
+    "target_population_estimand_metadata.json",
+)
+
+TARGET_POPULATION_ESTIMAND_METADATA_FIELDS: Final[tuple[str, ...]] = (
+    "record_count_decimal",
+    "ordered_estimand_ids",
+    "ordered_estimand_sha256",
+    "ordered_result_sha256",
+    "record_set_sha256",
+    "records",
+    "upstream_identity_declarations",
+    "upstream_identity_scope",
+    "campaign_readiness_basis",
+)
 
 SEED_RESULT_V1_PREFIX_COLUMNS: Final[tuple[str, ...]] = (
     "scenario_id",
@@ -460,6 +516,167 @@ def stamp_standalone_sensitivity_schema(
     return payload
 
 
+def target_population_estimand_schema_descriptor() -> dict[str, object]:
+    """Return the isolated exact target-population result contract.
+
+    This two-file profile is deliberately outside output-v3.  Its upstream
+    SHA-256 values are copied from re-attested estimand declarations, but this
+    output profile does not independently resolve those artifacts and therefore
+    cannot establish calibration, empirical validation, or campaign readiness.
+    """
+
+    return {
+        "output_profile": TARGET_POPULATION_OUTPUT_PROFILE,
+        "output_profile_schema_version": (
+            TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION
+        ),
+        "artifact_files": list(
+            TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+        ),
+        "table_columns": {
+            "target_population_estimands.csv": list(
+                TARGET_POPULATION_ESTIMAND_COLUMNS
+            )
+        },
+        "metadata_filename": "target_population_estimand_metadata.json",
+        "required_writer_metadata_fields": list(
+            TARGET_POPULATION_ESTIMAND_METADATA_FIELDS
+        ),
+        "required_metadata_scope": {
+            "full_output_bundle": False,
+            "manifest_envelope": False,
+            "synthetic_only": True,
+            "empirical_validation_claimed": False,
+            "campaign_ready": False,
+            "upstream_digests_independently_resolved": False,
+        },
+        "upstream_identity_fields": [
+            "target_evidence_sha256",
+            "design_weights_sha256",
+            "runtime_projection_sha256",
+            "balance_report_sha256",
+            "metric_contract_sha256",
+        ],
+        "exact_decimal_fields": [
+            "quantile_probability_numerator_decimal",
+            "quantile_probability_denominator_decimal",
+            "player_count_decimal",
+            "numerator_decimal",
+            "denominator_decimal",
+            "weight_sum_numerator_decimal",
+            "weight_sum_denominator_decimal",
+            "target_population_count_decimal",
+        ],
+        "additional_metadata_allowed": True,
+    }
+
+
+def _target_population_estimand_schema_digest() -> str:
+    encoded = json.dumps(
+        target_population_estimand_schema_descriptor(),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256: Final[str] = (
+    _target_population_estimand_schema_digest()
+)
+
+
+def stamp_target_population_estimand_schema(
+    metadata: Mapping[str, object],
+) -> dict[str, object]:
+    """Stamp metadata for the isolated target-population estimand profile.
+
+    The current profile has no campaign-readiness gate.  Consequently its
+    scope/readiness fields are fixed false (apart from ``synthetic_only``), and
+    callers cannot attach output-v3 or manifest-envelope claims.
+    """
+
+    if not isinstance(metadata, Mapping):
+        raise TypeError("target-population estimand metadata must be a mapping")
+    payload = dict(metadata)
+    forbidden_full_bundle_fields = sorted(
+        key
+        for key in payload
+        if isinstance(key, str)
+        and (
+            key == "output_schema_version"
+            or key == "manifest"
+            or (
+                key.startswith("manifest_")
+                and key != "manifest_envelope"
+            )
+        )
+    )
+    if forbidden_full_bundle_fields:
+        raise ValueError(
+            "target-population estimand metadata cannot claim full-bundle or "
+            "manifest fields: " + ", ".join(forbidden_full_bundle_fields)
+        )
+
+    profile_reserved = {
+        "artifact_files": list(
+            TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+        ),
+        "output_profile": TARGET_POPULATION_OUTPUT_PROFILE,
+        "output_profile_schema_sha256": (
+            TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
+        ),
+        "output_profile_schema_version": (
+            TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION
+        ),
+    }
+    present_profile_fields = set(profile_reserved).intersection(payload)
+    unknown_profile_schema_fields = sorted(
+        key
+        for key in payload
+        if isinstance(key, str)
+        and key.startswith("output_profile_schema_")
+        and key not in profile_reserved
+    )
+    if unknown_profile_schema_fields:
+        raise ValueError(
+            "unknown target-population profile schema fields: "
+            + ", ".join(unknown_profile_schema_fields)
+        )
+    if present_profile_fields and present_profile_fields != set(profile_reserved):
+        raise ValueError(
+            "target-population profile schema fields must be supplied together"
+        )
+    if present_profile_fields and any(
+        payload[key] != value for key, value in profile_reserved.items()
+    ):
+        raise ValueError("target-population profile schema fields conflict")
+
+    scope_reserved = {
+        "full_output_bundle": False,
+        "manifest_envelope": False,
+        "synthetic_only": True,
+        "empirical_validation_claimed": False,
+        "campaign_ready": False,
+        "upstream_digests_independently_resolved": False,
+    }
+    conflicting_scope_fields = sorted(
+        key
+        for key, value in scope_reserved.items()
+        if key in payload and payload[key] != value
+    )
+    if conflicting_scope_fields:
+        raise ValueError(
+            "target-population profile scope fields conflict: "
+            + ", ".join(conflicting_scope_fields)
+        )
+
+    payload.update(profile_reserved)
+    payload.update(scope_reserved)
+    return payload
+
+
 __all__ = [
     "ARTIFACT_FILENAMES",
     "EPGC_FINANCING_COLUMNS",
@@ -481,9 +698,17 @@ __all__ = [
     "STANDALONE_SENSITIVITY_PROFILE",
     "STANDALONE_SENSITIVITY_SCHEMA_SHA256",
     "STANDALONE_SENSITIVITY_SCHEMA_VERSION",
+    "TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES",
+    "TARGET_POPULATION_ESTIMAND_COLUMNS",
+    "TARGET_POPULATION_ESTIMAND_METADATA_FIELDS",
+    "TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256",
+    "TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION",
+    "TARGET_POPULATION_OUTPUT_PROFILE",
     "TABLE_COLUMNS",
     "manifest_schema_descriptor",
     "standalone_sensitivity_schema_descriptor",
     "stamp_manifest_schema",
     "stamp_standalone_sensitivity_schema",
+    "stamp_target_population_estimand_schema",
+    "target_population_estimand_schema_descriptor",
 ]

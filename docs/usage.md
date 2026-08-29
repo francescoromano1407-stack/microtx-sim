@@ -37,6 +37,27 @@ JSON scope summary. It does not create a cohort, advance the simulation, or
 write artifacts. The expected mode is `synthetic_policy_prototype`, and
 `empirical_validation_claimed` is always false.
 
+### Opt into projected-population execution
+
+A custom market or policy configuration may add all four keys below:
+
+```toml
+[population]
+mode = "projected_v1"
+design_bundle_path = "../data/provenance/population_design.toml"
+runtime_mapping_bundle_path = "../data/provenance/population_runtime_mapping.json"
+adapter_id = "reviewed.population.adapter.v1"
+```
+
+Paths are relative to the configuration file unless absolute. Validation then
+loads and re-attests the design, its bound profile evidence, and the mapping
+before any cohort is created. The mapping must explicitly translate every
+static household-income/type key to runtime personal monthly disposable-income
+and modeled-household semantics. The adapter uses the design plan's exact
+counts and weights; it does not make a second allocation. The supplied configs
+omit this section and the repository contains no runtime mapping bundle, so the
+commands shown here use the legacy marginal population initializer by default.
+
 ## Run the seven-scenario batch
 
 ```text
@@ -126,11 +147,15 @@ checked-in population bundle is empty, `ILLUSTRATIVE`, unsigned, and reports
 `campaign_ready=false`. Its hashes attest repeatable bytes and extraction, not
 publisher authenticity or calibration.
 
-This added lineage does not change execution or table estimands. The cohort is
-still produced by the legacy marginal synthetic generator, and every frozen-v2
-CSV summary is unweighted with respect to any real target population. No target
-population, sampling/synthesis plan, runtime projection, output-estimand
-binding, or balance validation is configured.
+When `[population]` is selected, the batch and sensitivity analysis use the same
+content-addressed adapter. For each seed, all seven scenarios share the same
+projected assignment, and the manifest records the adapter, runtime projection,
+ordered-player-ID and assignment digests, cohort digest, exact weights, and
+pre-treatment population balance. That balance reports exact target-versus-
+realized count and mass discrepancies for every full joint cell and separately
+attests runtime jurisdiction, age, income, and household membership. Without
+the section, this conditional lineage is absent and legacy initialization is
+unchanged.
 
 The current full output-bundle schema is `3.0`. Its CSV filenames and columns
 and their unweighted synthetic-player semantics are unchanged from the frozen
@@ -140,6 +165,25 @@ schemas `1.0` and `2.0` remain documented legacy forms without that manifest
 version. Standalone sensitivity output uses its own two-file
 `standalone_sensitivity` profile at schema `1.0`, rather than claiming to be a
 13-artifact full bundle.
+
+The dedicated `target_population_estimands` profile is also separate from the
+13-file bundle. Programmatic callers may pass re-attested exact estimand
+specification/result pairs to
+`microtx_sim.outputs.write_target_population_estimands(...)`; it writes exactly
+`target_population_estimands.csv` and
+`target_population_estimand_metadata.json`. It orders records deterministically,
+preserves exact rational values as decimal integers, and rejects conflicting or
+malformed pairs before writing. Its upstream evidence, weights, projection,
+balance, and metric-contract hashes are copied declarations rather than
+independently resolved artifacts, and the profile fixes `campaign_ready=false`
+and `full_output_bundle=false`.
+
+The automatic output-v3 CSV summaries remain unweighted even when projected
+execution is selected; they are not silently reinterpreted as target-population
+estimates. Producing the standalone weighted files is an explicit additional
+library step. Neither path supplies population calibration, empirical
+validation, public comparability, or campaign readiness, and no full campaign
+has been run.
 
 Use a new or empty destination when the exact directory inventory matters. The
 exporter atomically replaces its own 13 filenames but does not delete unrelated

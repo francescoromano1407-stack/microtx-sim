@@ -292,6 +292,32 @@ class PopulationProjectionCell:
             raise ValueError("global_mass must be in lowest terms")
 
 
+@dataclass(frozen=True, slots=True)
+class PopulationProjectionSampleCount:
+    """One exact runtime sample count keyed by a stable projection cell id.
+
+    Count plans are deliberately keyed rather than position-only so a caller
+    cannot silently apply an upstream allocation to reordered runtime cells.
+    The exact-count initializer additionally requires these records in
+    canonical ``cell_id`` order.
+    """
+
+    cell_id: str
+    sample_count: int
+
+    def __post_init__(self) -> None:
+        if type(self.cell_id) is not str:
+            raise TypeError("cell_id must be a string")
+        if not self.cell_id or self.cell_id.strip() != self.cell_id:
+            raise ValueError(
+                "cell_id must be non-empty and have no surrounding whitespace"
+            )
+        if type(self.sample_count) is not int:
+            raise TypeError("sample_count must be a Python integer")
+        if self.sample_count < 0:
+            raise ValueError("sample_count cannot be negative")
+
+
 class _Stream:
     JURISDICTION = 100
     AGE_BAND = 101
@@ -571,6 +597,61 @@ def initialize_projected_player_table(
     current games, payment access, or spending history.
     """
 
+    return _initialize_projected_player_table_resolved(
+        player_count,
+        country_profiles,
+        rng,
+        projection_cells,
+        projection_id=projection_id,
+        tick=tick,
+        first_player_id=first_player_id,
+        exact_sample_counts=None,
+    )
+
+
+def initialize_projected_player_table_from_exact_counts(
+    player_count: int,
+    country_profiles: Sequence[CountryProfile],
+    rng: CounterRNGLike,
+    projection_cells: Sequence[PopulationProjectionCell],
+    exact_sample_counts: tuple[PopulationProjectionSampleCount, ...],
+    *,
+    projection_id: str,
+    tick: int = 0,
+    first_player_id: int = 0,
+) -> PlayerTable:
+    """Create a projected population from a previously attested cell allocation.
+
+    Unlike :func:`initialize_projected_player_table`, this entry point never
+    runs Hamilton apportionment. Counts must be exact, canonical records keyed
+    by ``cell_id``. The runtime projection hash binds the resulting exact
+    per-cell analysis weights; together with each exact mass those weights
+    uniquely bind the supplied positive-cell counts.
+    """
+
+    return _initialize_projected_player_table_resolved(
+        player_count,
+        country_profiles,
+        rng,
+        projection_cells,
+        projection_id=projection_id,
+        tick=tick,
+        first_player_id=first_player_id,
+        exact_sample_counts=exact_sample_counts,
+    )
+
+
+def _initialize_projected_player_table_resolved(
+    player_count: int,
+    country_profiles: Sequence[CountryProfile],
+    rng: CounterRNGLike,
+    projection_cells: Sequence[PopulationProjectionCell],
+    *,
+    projection_id: str,
+    tick: int,
+    first_player_id: int,
+    exact_sample_counts: tuple[PopulationProjectionSampleCount, ...] | None,
+) -> PlayerTable:
     if isinstance(player_count, bool) or not isinstance(player_count, (int, np.integer)):
         raise TypeError("player_count must be an integer")
     if player_count < 0:
@@ -634,7 +715,36 @@ def initialize_projected_player_table(
                 "runtime income interval and modeled household size"
             )
 
-    counts = _hamilton_cell_counts(player_count, cells, masses)
+    if exact_sample_counts is None:
+        counts = _hamilton_cell_counts(player_count, cells, masses)
+    else:
+        if type(exact_sample_counts) is not tuple or any(
+            type(item) is not PopulationProjectionSampleCount
+            for item in exact_sample_counts
+        ):
+            raise TypeError(
+                "exact_sample_counts must be an immutable tuple of "
+                "PopulationProjectionSampleCount"
+            )
+        expected_ids = tuple(cell.cell_id for cell in cells)
+        observed_ids = tuple(item.cell_id for item in exact_sample_counts)
+        if observed_ids != expected_ids:
+            raise ValueError(
+                "exact_sample_counts must contain every projection cell exactly "
+                "once in canonical cell_id order"
+            )
+        counts = tuple(item.sample_count for item in exact_sample_counts)
+        if sum(counts) != player_count:
+            raise ValueError("exact sample counts do not sum to player_count")
+        for cell, mass, count in zip(cells, masses, counts, strict=True):
+            if mass == 0 and count != 0:
+                raise ValueError(
+                    f"zero-mass projection cell {cell.cell_id} must have zero samples"
+                )
+            if mass > 0 and count == 0:
+                raise ValueError(
+                    f"positive-mass projection cell {cell.cell_id} must be represented"
+                )
     missing_positive = [
         cell.cell_id
         for cell, mass, count in zip(cells, masses, counts, strict=True)

@@ -34,17 +34,21 @@ feedback from `microtx_sim.core.world`.
 | `microtx_sim.causal.scenarios` | Declares exactly seven stable scenarios and the safe reference-compatible catalogue. | `ScenarioId`, `ScenarioSpec`, `required_scenarios()`, `scenario_by_id()` |
 | `microtx_sim.causal.design` | Freezes the 17-factor scenario matrix and descriptive pairwise-contrast registry, detects custom factor drift, and fails campaign use closed. | `CausalDesignRegistry`, `CausalDesignAssessment`, `build_causal_design_registry()`, `assess_causal_design()` |
 | `microtx_sim.data.population_evidence` | Verifies exact-byte schema-v1 joint population evidence and retains independent campaign blockers without projecting it into the runtime cohort. | `PopulationEvidenceBundle`, `PopulationEvidenceCell`, `verify_population_evidence_bundle()` |
-| `microtx_sim.consumers.population` | Creates the seeded heterogeneous demographic and financial cohort. | `initialize_player_table()` |
+| `microtx_sim.data.population_projection` | Re-attests the static apportionment plan and explicit runtime mapping, then initializes its exact counts and assignment. | `PopulationProjectionAdapter`, `PopulationProjectionExecution` |
+| `microtx_sim.data.population_execution` | Resolves optional configuration and retains canonical per-seed projection, cohort, exact-weight, and balance lineage. | `PopulationExecutionLineage` |
+| `microtx_sim.consumers.population` | Creates either the legacy marginal cohort or exact-count projected tables under the adapter. | `initialize_player_table()` |
 | `microtx_sim.consumers.welfare` | Creates aligned pre-treatment commitments, obligations, enjoyment, vulnerability, habit, reinforcement, sleep, and wellbeing state. | `PlayerLifeTable`, `initialize_player_life()` |
 | `microtx_sim.consumers.decision` | Evaluates the complete life-action set with interpretable utilities and counter-based Gumbel shocks. | `LifeAction`, `DecisionParameters`, `choose_life_action()` |
 | `microtx_sim.simulation.policy_day` | Advances branch-local time, resources, safeguards, activity, purchases, revenue source, habit, reinforcement, and wellbeing. | `PolicyState`, `advance_policy_day()` |
 | `microtx_sim.metrics.harm` | Computes multidimensional harm, harmful/unplanned spending, displaced activities, and adult/youth opportunity-cost proxies. | `HarmComponent`, `WelfareHarmResult`, `compute_welfare_harm()` |
+| `microtx_sim.metrics.population_balance` | Compares full joint-cell target/realized counts and masses and attests runtime demographic membership before treatment. | `PopulationBalanceArtifact` |
 | `microtx_sim.funding.epgc` | Evaluates the pure integer-cent EPGC payment and safe-profit equations. | `EPGCPolicy`, `EPGCFirmInputs`, `EPGCResult`, `evaluate_epgc()` |
 | `microtx_sim.simulation.policy_orchestrator` | Clones one branch, runs its days, computes welfare, revenue composition, producer viability, high-risk flags, and EPGC output. | `ProducerAssumptions`, `PolicyScenarioResult`, `run_policy_scenario()` |
 | `microtx_sim.causal.batch` | Runs all seven scenarios for every seed on the same cohort, pairs each with the safe reference, aggregates uncertainty, and retains the exact population profile tuple and its content fingerprint. | `PolicyBatchSpec`, `PolicyBatchResult`, `run_policy_batch()` |
 | `microtx_sim.analysis.sensitivity` | Runs one-at-a-time grids with common cohorts, expected-direction checks, and instability flags. | `SensitivityCase`, `SensitivityResult`, `run_sensitivity_analysis()` |
 | `microtx_sim.outputs.schema` | Fixes schema version, exhaustive CSV column contracts, and the complete artifact set. | `OUTPUT_SCHEMA_VERSION`, column tuples, `POLICY_ARTIFACT_FILENAMES` |
 | `microtx_sim.outputs.writers` | Writes deterministic UTF-8 CSV/JSON/text files through same-directory atomic replacement. | `write_csv_atomic()`, `write_json_atomic()`, `write_batch_artifacts()` |
+| `microtx_sim.outputs.population` | Writes the separate exact two-file target-population estimand profile. | `write_target_population_estimands()` |
 | `microtx_sim.outputs.manifest` | Captures configuration, profile-input and source digests, profile contracts, Git state, environment, seeds, cohort digests, scenarios, equations, and scope limits. | `build_run_manifest()` |
 | `microtx_sim.outputs.plots` | Produces dependency-free accessible SVG charts from exported values. | Harm/spending histograms, frontier, decomposition, and EPGC chart writers |
 | `microtx_sim.outputs.export` | Coordinates tables, manifest, human summary, charts, hashes, and final artifact-set verification. | `export_policy_batch()`, `render_human_summary()` |
@@ -68,13 +72,14 @@ Programmatic callers may still supply a custom `country_profiles` tuple; its
 exact contents are fingerprinted but its lineage is explicitly labelled
 `unregistered_custom_profiles`, with no default-file provenance claimed.
 
-The default population-evidence bundle is empty, `ILLUSTRATIVE`, unsigned, and
-has `campaign_ready=false`. Schema version 1 can verify strict joint age ×
-household-income-band × household-type × gaming × pre-treatment payer-history
-cells with exact rational mass, but those hashes prove reproducibility rather
-than publisher authenticity or calibration. No target population,
-sampling/synthesis plan, runtime projection, output-estimand binding, or balance
-validation has been supplied.
+The default population-evidence bundle and static design are empty,
+`ILLUSTRATIVE`, unsigned, and have `campaign_ready=false`. Schema version 1 can
+verify strict joint cells with exact rational mass, but those hashes prove
+reproducibility rather than publisher authenticity or calibration. A custom
+configuration may opt into `[population] mode="projected_v1"`; the CLI then
+re-attests an explicit runtime mapping and the design plan before using the same
+adapter for the batch and sensitivity analysis. No checked-in configuration or
+mapping enables that path.
 
 Validate without running a batch:
 
@@ -365,10 +370,19 @@ manifest envelope. Standalone sensitivity export has a separate explicit
 two-file profile instead of masquerading as the full bundle.
 
 Those v2 CSV columns retain unweighted synthetic-player aggregation semantics.
-Population-evidence lineage does not reweight a row, synthesize a cohort, or
-change an estimand: both runtime paths still call the legacy marginal synthetic
-population generator. These artifacts therefore are not target-population
-estimates and do not constitute a full campaign.
+Without `[population]`, execution uses the legacy marginal synthetic generator.
+With it, every seed has a content-addressed projected assignment shared by all
+seven scenarios, plus exact weights and a pre-treatment population balance
+record in the canonical per-seed execution lineage embedded in the manifest.
+This conditional lineage does not silently reweight the existing CSVs.
+
+Exact weighted means, paired differences, and weighted quantiles can instead be
+written explicitly through the standalone two-file
+`target_population_estimands` profile. The writer is not called by `reproduce`
+and copies, rather than independently authenticating, its upstream evidence,
+weight, projection, balance, and metric-contract identities. Neither the normal
+artifacts nor that standalone profile are calibrated target-population
+estimates or constitute a full campaign.
 
 ## Assumptions requiring calibration
 

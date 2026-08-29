@@ -19,6 +19,19 @@ from ..data.lineage import (
     ProfileInputLineage,
     resolve_profile_inputs,
 )
+from ..data.population_execution import (
+    PopulationExecutionLineage,
+    PopulationSeedExecutionRecord,
+    build_population_execution_lineage,
+    build_population_seed_execution_record,
+    population_execution_input_snapshot,
+    population_policy_pretreatment_sha256,
+)
+from ..data.population_projection import (
+    PopulationProjectionAdapter,
+    initialize_population_projection,
+    verify_population_projection_adapter,
+)
 from ..data.profiles import ProfileBundle
 from ..funding import EPGCPolicy
 from ..metrics.harm import (
@@ -208,6 +221,7 @@ def build_policy_run_input_snapshot(
     batch_spec: PolicyBatchSpec,
     run_inputs: PolicyRunInputs,
     profile_input_fingerprint_sha256: str | None,
+    population_adapter: PopulationProjectionAdapter | None = None,
 ) -> dict[str, object]:
     """Build the canonical execution-input payload shared by all exports."""
 
@@ -227,10 +241,23 @@ def build_policy_run_input_snapshot(
             raise ValueError(
                 "profile_input_fingerprint_sha256 must be lowercase SHA-256 hex"
             )
-    return {
+    legacy_payload = {
         "batch_spec": batch_spec.snapshot(),
         "model_inputs": run_inputs.snapshot(),
         "profile_input_fingerprint_sha256": fingerprint,
+    }
+    if population_adapter is None:
+        return legacy_payload
+    if type(population_adapter) is not PopulationProjectionAdapter:
+        raise TypeError(
+            "population_adapter must be PopulationProjectionAdapter or None"
+        )
+    return {
+        "run_input_schema_version": "2.0",
+        **legacy_payload,
+        "population_execution_input": population_execution_input_snapshot(
+            population_adapter
+        ),
     }
 
 
@@ -239,6 +266,7 @@ def policy_run_input_sha256(
     batch_spec: PolicyBatchSpec,
     run_inputs: PolicyRunInputs,
     profile_input_fingerprint_sha256: str | None,
+    population_adapter: PopulationProjectionAdapter | None = None,
 ) -> str:
     """Hash the canonical execution-input payload shared by all exports."""
 
@@ -249,6 +277,7 @@ def policy_run_input_sha256(
             profile_input_fingerprint_sha256=(
                 profile_input_fingerprint_sha256
             ),
+            population_adapter=population_adapter,
         )
     )
 
@@ -275,6 +304,7 @@ class PolicyBatchResult:
     run_inputs: PolicyRunInputs
     country_profiles: tuple[CountryProfile, ...] = ()
     profile_input_lineage: ProfileInputLineage | None = None
+    population_execution_lineage: PopulationExecutionLineage | None = None
 
     def __post_init__(self) -> None:
         if type(self.spec) is not PolicyBatchSpec:
@@ -373,6 +403,71 @@ class PolicyBatchResult:
             if not isinstance(self.profile_input_lineage, ProfileInputLineage):
                 raise TypeError("profile_input_lineage must be ProfileInputLineage")
             self.profile_input_lineage.validate_country_profiles(profiles)
+        population_lineage = self.population_execution_lineage
+        if population_lineage is not None:
+            if type(population_lineage) is not PopulationExecutionLineage:
+                raise TypeError(
+                    "population_execution_lineage must be "
+                    "PopulationExecutionLineage or None"
+                )
+            PopulationExecutionLineage.__post_init__(population_lineage)
+            if tuple(
+                record.seed for record in population_lineage.seed_records
+            ) != self.spec.seeds:
+                raise ValueError(
+                    "population execution seed records do not match batch seeds"
+                )
+            if (
+                population_lineage.adapter.apportionment_plan.player_count
+                != self.spec.player_count
+            ):
+                raise ValueError(
+                    "population execution player count does not match batch spec"
+                )
+            for seed in self.spec.seeds:
+                population_record = population_lineage.record_for_seed(seed)
+                if population_record.cohort_digest != digests[seed]:
+                    raise ValueError(
+                        "population execution cohort digest is inconsistent"
+                    )
+                reference = record_by_key[
+                    (seed, self.spec.reference_scenario)
+                ].result
+                observed_pretreatment_sha256 = (
+                    population_policy_pretreatment_sha256(
+                        policy_days=self.spec.days,
+                        player_ids=reference.player_ids,
+                        is_minor=reference.is_minor,
+                        age_years=reference.age_years,
+                        jurisdiction=reference.jurisdiction,
+                        baseline_vulnerability=(
+                            reference.baseline_vulnerability
+                        ),
+                        disposable_budget_cents=(
+                            reference.disposable_budget_cents
+                        ),
+                    )
+                )
+                if (
+                    population_record.policy_days != self.spec.days
+                    or population_record.policy_pretreatment_sha256
+                    != observed_pretreatment_sha256
+                ):
+                    raise ValueError(
+                        "population execution pre-treatment fields do not match "
+                        "the retained scenario cohort"
+                    )
+                expected_ids = np.asarray(
+                    population_record.exact_weights.player_ids,
+                    dtype=np.int64,
+                )
+                for scenario in self.spec.scenarios:
+                    result = record_by_key[(seed, scenario.scenario_id)].result
+                    if not np.array_equal(result.player_ids, expected_ids):
+                        raise ValueError(
+                            "population execution player ids do not match a "
+                            "scenario result"
+                        )
 
     def run_input_snapshot(self) -> dict[str, object]:
         """Return the canonical design, model inputs, and profile locator."""
@@ -383,6 +478,11 @@ class PolicyBatchResult:
             profile_input_fingerprint_sha256=(
                 self.profile_input_lineage.fingerprint_sha256
                 if self.profile_input_lineage is not None
+                else None
+            ),
+            population_adapter=(
+                self.population_execution_lineage.adapter
+                if self.population_execution_lineage is not None
                 else None
             ),
         )
@@ -594,6 +694,7 @@ def run_policy_batch(
     opportunity_valuation: OpportunityCostValuation | None = None,
     producer_assumptions: ProducerAssumptions | None = None,
     epgc_policy: EPGCPolicy | None = None,
+    population_adapter: PopulationProjectionAdapter | None = None,
 ) -> PolicyBatchResult:
     """Run all scenarios on the same seeded cohort within each replication."""
 
@@ -612,12 +713,43 @@ def run_policy_batch(
     )
     records: list[SeedScenarioRecord] = []
     digests: dict[int, str] = {}
+    population_seed_records: list[PopulationSeedExecutionRecord] = []
+    if population_adapter is not None:
+        if type(population_adapter) is not PopulationProjectionAdapter:
+            raise TypeError(
+                "population_adapter must be PopulationProjectionAdapter or None"
+            )
+        population_adapter = verify_population_projection_adapter(
+            population_adapter
+        )
+        if population_adapter.apportionment_plan.player_count != spec.player_count:
+            raise ValueError(
+                "population adapter player count does not match the batch spec"
+            )
     for seed in spec.seeds:
         rng = CounterRNG(seed)
-        players = initialize_player_table(spec.player_count, profiles, rng)
+        population_execution = None
+        if population_adapter is None:
+            players = initialize_player_table(spec.player_count, profiles, rng)
+        else:
+            population_execution = initialize_population_projection(
+                population_adapter,
+                profiles,
+                rng,
+            )
+            players = population_execution.players
         life = initialize_player_life(players, rng)
         digest = _cohort_digest(players, life)
         digests[seed] = digest
+        if population_execution is not None:
+            population_seed_records.append(
+                build_population_seed_execution_record(
+                    population_execution,
+                    seed=seed,
+                    cohort_digest=digest,
+                    policy_days=spec.days,
+                )
+            )
         scenario_results: dict[ScenarioId, PolicyScenarioResult] = {}
         for scenario in spec.scenarios:
             result = run_policy_scenario(
@@ -679,6 +811,14 @@ def run_policy_batch(
                     ),
                 )
             )
+    population_lineage = (
+        build_population_execution_lineage(
+            population_adapter,
+            population_seed_records,
+        )
+        if population_adapter is not None
+        else None
+    )
     return PolicyBatchResult(
         spec=spec,
         records=tuple(records),
@@ -686,6 +826,7 @@ def run_policy_batch(
         run_inputs=run_inputs,
         country_profiles=profiles,
         profile_input_lineage=profile_lineage,
+        population_execution_lineage=population_lineage,
     )
 
 

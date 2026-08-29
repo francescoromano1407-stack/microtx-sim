@@ -23,12 +23,15 @@ from microtx_sim.causal import (
 )
 from microtx_sim.config import (
     ConfigurationError,
+    PopulationExecutionMode,
+    PopulationProjectionConfig,
     StepHistoryRetention,
     load_config,
 )
 from microtx_sim.core.engine import SimulationEngine
 from microtx_sim.core.ledger import Ledger
 from microtx_sim.core.world import World
+from microtx_sim.data.population_design import PopulationDesignVerificationError
 from microtx_sim.data.profiles import ProfileValidationError
 from microtx_sim.types import LedgerBackend, MonetisationMechanism, ProvenanceStatus
 
@@ -92,6 +95,27 @@ class WorldIntegrationTests(unittest.TestCase):
                 for low, high in zip(low_world.firms, high_world.firms, strict=True)
             )
         )
+
+    def test_configured_population_failure_never_falls_back_to_legacy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configured = replace(
+                self.config,
+                population=PopulationProjectionConfig(
+                    mode=PopulationExecutionMode.PROJECTED_V1,
+                    design_bundle_path=(root / "missing-design.toml").resolve(),
+                    runtime_mapping_bundle_path=(
+                        root / "missing-mapping.json"
+                    ).resolve(),
+                    adapter_id="world.population.missing",
+                ),
+            )
+            with patch(
+                "microtx_sim.core.world.initialize_player_table"
+            ) as legacy_initializer:
+                with self.assertRaises(PopulationDesignVerificationError):
+                    World.create(configured)
+            legacy_initializer.assert_not_called()
 
     def test_direct_world_construction_rejects_invalid_retention_early(self) -> None:
         invalid = replace(

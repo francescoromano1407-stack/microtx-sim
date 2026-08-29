@@ -14,6 +14,7 @@ from .config import ConfigurationError, load_config
 from .core.ledger import LedgerStorageError
 from .core.world import World
 from .data.profiles import ProfileBundle, ProfileValidationError, load_profile_bundle
+from .data.population_execution import resolve_population_projection_adapter
 from .outputs import export_policy_batch
 from .outputs.schema import (
     SENSITIVITY_COLUMNS,
@@ -78,6 +79,12 @@ def _parser() -> argparse.ArgumentParser:
 def _validate(config_path: Path) -> dict[str, object]:
     config = load_config(config_path, campaign=False)
     profiles = load_profile_bundle(campaign=False)
+    if config.population is not None:
+        resolve_population_projection_adapter(
+            config.population,
+            profiles,
+            player_count=config.run.player_count,
+        )
     return {
         "status": "ok",
         "scenario": config.meta.name,
@@ -86,6 +93,11 @@ def _validate(config_path: Path) -> dict[str, object]:
         "jurisdictions": [profile.code for profile in profiles.country_profiles],
         "source_records": len(profiles.sources),
         "campaign_ready": False,
+        **(
+            {"population_mode": config.population.mode.value}
+            if config.population is not None
+            else {}
+        ),
         "caveats": list(profiles.caveats),
     }
 
@@ -112,6 +124,13 @@ def _smoke(config_path: Path) -> dict[str, object]:
 
 def _policy_validate(config_path: Path) -> dict[str, object]:
     config = load_policy_config(config_path)
+    if config.population is not None:
+        profiles = load_profile_bundle(campaign=False)
+        resolve_population_projection_adapter(
+            config.population,
+            profiles,
+            player_count=config.batch.player_count,
+        )
     return {
         "status": "ok",
         "mode": "synthetic_policy_prototype",
@@ -126,6 +145,11 @@ def _policy_validate(config_path: Path) -> dict[str, object]:
             for scenario in config.batch.scenarios
         ),
         "empirical_validation_claimed": False,
+        **(
+            {"population_mode": config.population.mode.value}
+            if config.population is not None
+            else {}
+        ),
     }
 
 
@@ -143,6 +167,15 @@ def _policy_batch(
         else run_sensitivity
     )
     profiles = load_profile_bundle(campaign=False)
+    population_adapter = (
+        resolve_population_projection_adapter(
+            config.population,
+            profiles,
+            player_count=config.batch.player_count,
+        )
+        if config.population is not None
+        else None
+    )
     batch = run_policy_batch(
         config.batch,
         profile_bundle=profiles,
@@ -151,9 +184,14 @@ def _policy_batch(
         opportunity_valuation=config.opportunity_valuation,
         producer_assumptions=config.producer_assumptions,
         epgc_policy=config.epgc_policy,
+        population_adapter=population_adapter,
     )
     sensitivity = (
-        _run_configured_sensitivity(config, profile_bundle=profiles)
+        _run_configured_sensitivity(
+            config,
+            profile_bundle=profiles,
+            population_adapter=population_adapter,
+        )
         if sensitivity_enabled
         else None
     )
@@ -188,6 +226,11 @@ def _policy_batch(
         "output_dir": str(destination.resolve()),
         "artifacts": sorted(path.name for path in paths.values()),
         "empirical_validation_claimed": False,
+        **(
+            {"population_mode": config.population.mode.value}
+            if config.population is not None
+            else {}
+        ),
     }
 
 
@@ -198,7 +241,20 @@ def _policy_sensitivity(
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
     profiles = load_profile_bundle(campaign=False)
-    result = _run_configured_sensitivity(config, profile_bundle=profiles)
+    population_adapter = (
+        resolve_population_projection_adapter(
+            config.population,
+            profiles,
+            player_count=config.batch.player_count,
+        )
+        if config.population is not None
+        else None
+    )
+    result = _run_configured_sensitivity(
+        config,
+        profile_bundle=profiles,
+        population_adapter=population_adapter,
+    )
     repository_root = Path(__file__).resolve().parents[2]
     destination = _resolve_output(
         output if output is not None else config.output.output_dir,
@@ -254,6 +310,7 @@ def _run_configured_sensitivity(
     config,
     *,
     profile_bundle: ProfileBundle | None = None,
+    population_adapter=None,
 ):
     return run_sensitivity_analysis(
         config.batch,
@@ -263,6 +320,7 @@ def _run_configured_sensitivity(
         opportunity_valuation=config.opportunity_valuation,
         producer_assumptions=config.producer_assumptions,
         epgc_policy=config.epgc_policy,
+        population_adapter=population_adapter,
     )
 
 

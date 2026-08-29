@@ -102,30 +102,38 @@ partitions and target counts, then produce deterministic exact-rational Hamilton
 cell counts and analysis/expansion weights. Its partition identities remain
 declarations, not proof of publisher authenticity or independent holdout.
 
-Both checked-in population defaults are empty and `ILLUSTRATIVE`. The optional
-`initialize_projected_player_table` helper can construct a table from already-
-resolved projection cells, but no config, world, batch, sensitivity, or CLI path
-selects it. The helper does not consume or revalidate a static
-`PopulationApportionmentPlan`; it derives a separate runtime projection and uses
-its own exact-mass Hamilton allocation with `cell_id` tie-breaking. Static source
-household-income categories and runtime personal monthly disposable-income
-intervals/modeled household sizes therefore require an explicit future adapter.
+Both checked-in population defaults are empty and `ILLUSTRATIVE`, and no
+checked-in configuration selects projected execution. An optional
+`[population]` section can select a strict file-backed runtime mapping and exact
+adapter. The mapping explicitly keeps source household-income/type semantics
+separate from runtime personal monthly disposable-income intervals and modeled
+household sizes. The adapter re-attests the static
+`PopulationApportionmentPlan` and consumes its exact cell counts and rational
+weights without performing a second allocation.
 
 Gamer and payer-history labels stay in an attested population sidecar; they do
 not set current game, payment access, or spending history. Consumers recompute
 the nested assignment attestation and reject stale or mutated indices. The
 sidecar assignment is included in the cohort digest when present, while ordinary
-tables retain the legacy digest.
+tables retain the legacy digest. Each projected seed additionally records its
+adapter, projection, ordered-player-ID, assignment, cohort, exact-weight, and
+pre-treatment balance identities. The balance artifact reports exact target
+versus realized joint-cell counts and masses and separately checks runtime
+jurisdiction, age, income, and household membership. This is structural
+conformance to a declared mapping, not empirical balance or calibration.
 
 Exact weighted-mean, paired-difference, and deterministic weighted-quantile
 algorithms now exist as an isolated estimand primitive. The specification binds
 the supplied design weights and records evidence, projection, balance, metric-
 contract, and dedicated output-profile digest declarations. It does not resolve
-or reverify those declared artifacts. No existing reducer or writer invokes it,
-and there is no registered target-population output profile. Configured runs
-therefore still use the legacy marginal generator; output schema v3 preserves
-the frozen v2-compatible CSV columns and unweighted synthetic-player semantics.
-No population readiness gate is cleared and no full campaign has been run.
+or reverify those declared artifacts. The standalone
+`target_population_estimands` writer re-attests exact specification/result pairs
+and writes one exact-decimal CSV plus metadata file; it is not invoked by the
+normal CLI output path or included in output-v3. Existing output-v3 CSVs retain
+the frozen v2-compatible columns and unweighted synthetic-player semantics.
+Projected execution, lineage, balance, and writing do not supply checked-in
+external provenance, a calibrated target, an independently verified holdout,
+public comparability, or campaign readiness. No full campaign has been run.
 
 Traits and motives are continuous, heterogeneous, and partly correlated.
 Categories such as casual, competitive, and collector are overlapping

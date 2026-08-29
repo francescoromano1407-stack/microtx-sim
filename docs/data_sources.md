@@ -123,12 +123,13 @@ needs a future typed contract rather than inference from free-form text. File,
 ID, hash, or URL differences alone are deliberately not accepted as proof of a
 held-out sample.
 
-Schema version 1 deliberately cannot be campaign-ready. It supports only a
-missing signature and leaves sampling/synthesis, runtime projection,
-output-estimand binding, and balance-validation gates false. The checked-in
-bundle is empty, `ILLUSTRATIVE`, unsigned, and has `campaign_ready=false`, so it
-does not choose any target population or supply calibration or held-out
-validation cells. This milestone is provenance infrastructure only.
+Schema version 1 deliberately cannot be campaign-ready. Its own assessment
+supports only a missing signature and leaves sampling/synthesis, runtime
+projection, output-estimand, and structural-balance fields false; optional
+execution artifacts remain separate and cannot promote the evidence bundle.
+The checked-in bundle is empty, `ILLUSTRATIVE`, unsigned, and has
+`campaign_ready=false`, so it does not choose any target population or supply
+calibration or held-out validation cells.
 
 ### Static population design and exact apportionment
 
@@ -295,21 +296,14 @@ population shares. The configured age range is 8–69 in the UK and Belgium and
 10–69 in Korea and Japan. Age weights and income-shape parameters are
 illustrative.
 
-The configured runtime paths do not consume population-evidence or population-
-design cells. They still sample jurisdiction and age from the legacy marginal
-profiles, derive income and household state from synthetic defaults, and give
-each generated player one implicit analysis unit.
-
-An opt-in `initialize_projected_player_table` library helper can instead accept
-already-resolved cells, apply deterministic Hamilton allocation, and attach a
-content-addressed population assignment to `PlayerTable`. No checked-in config,
-CLI, `World.create`, policy batch, or sensitivity path selects this helper.
-It does not consume or revalidate a `PopulationApportionmentPlan`. Instead it
-sorts its separate runtime cells by `cell_id`, derives a content-addressed
-runtime projection, and performs its own exact-mass Hamilton allocation with
-`cell_id` tie-breaking. A future adapter must bind the static plan counts and
-the source-household-category to runtime-personal-income/household conversion;
-matching labels do not provide that bridge.
+The supplied configurations use the legacy marginal profiles, derive income
+and household state from synthetic defaults, and give each generated player one
+implicit analysis unit. A custom `[population] mode="projected_v1"` section can
+instead select a verified design and strict runtime-mapping bundle. That mapping
+connects each source household-income/type key to a distinct runtime personal
+monthly disposable-income interval and modeled household size. The adapter
+re-attests the `PopulationApportionmentPlan` and uses its exact counts and
+rational weights without a second allocation.
 
 Gamer and payer-history values in projected cells remain attested sidecar
 metadata only: they do not initialize `current_game`, payment access, or
@@ -321,11 +315,12 @@ An exact-rational estimand primitive can consume the sidecar's design weights
 for a weighted mean, paired treated-minus-control mean difference, or lower
 inverse-CDF weighted quantile. It binds the target, design, projection, balance,
 metric contract, and a dedicated output-profile identity as digest declarations;
-only the supplied design weights are re-attested by this primitive. It does not
-resolve the other digests to verified artifacts. No batch reducer, world summary,
-CSV writer, or registered output profile calls it yet. Existing output schema v3
-artifacts therefore retain the frozen v2-compatible columns and unweighted
-synthetic-player aggregation semantics.
+only the supplied design weights are re-attested by this primitive. The
+standalone `target_population_estimands` writer/profile can serialize exact
+specification/result pairs, but it does not independently resolve the other
+digests and is not part of automatic output-v3 export. Existing output-v3
+artifacts retain the frozen v2-compatible columns and unweighted synthetic-
+player aggregation semantics.
 
 The following `CountryProfile` inputs are inherited from scaffold defaults and
 are not country estimates: adult age, the age-income curve, minor allowance,
@@ -457,19 +452,20 @@ Validation occurs at several boundaries:
    integrity and canonical ISO retrieval dates, hashes the exact files, builds
    metric, local-money, optional FX/PPP conversion contracts, and the separately
    registered population-evidence assessment, and creates country and state
-   agents. Population evidence is retained in lineage but not projected into
-   those agents; the separate population-design file is not selected here.
-3. `World.create` applies `allow_synthetic`, checks the duplicated shared
-   behavioural values for exact equality, and applies the run-level audit
-   parameters to each state.
+   agents. Profile-input lineage v4 remains distinct from conditional per-seed
+   population-execution lineage.
+3. When `[population]` is present, validation resolves and re-attests the design,
+   exact apportionment, and runtime mapping against that profile evidence.
+   `World.create` then uses the adapter; without it, the legacy initializer is
+   used. The usual behavioural and run-level audit checks still apply.
 4. Campaign mode separately requires the scenario, every used profile contract,
    every used source, every nominal anchor, and the money scale to be
    `CALIBRATED`. Pooled money additionally requires complete, calibrated,
    common-basis conversion coverage and exact internal-scale coherence.
-   Population comparability is independently fail-closed. Neither evidence-
-   bundle schema v1 nor static population-design schema v1 can establish the
-   missing signature, authentic held-out source units, configured runtime use,
-   dedicated output integration, or balance result.
+   Population comparability is independently fail-closed. Optional runtime use,
+   structural balance, and standalone output integration cannot establish the
+   missing signature, authentic held-out source units, calibration, or empirical
+   validity of the declared source-to-runtime transport.
 
 `smoke.toml` permits synthetic dependencies and is the intended executable
 structural check. `base.toml` sets `allow_synthetic=false`; with the current
@@ -488,12 +484,12 @@ summaries. A caller-supplied bare profile tuple is fingerprinted but marked
 `unregistered_custom_profiles`; it is never attributed to the repository's
 default evidence files.
 
-For the opt-in projected table only, policy cohort identity additionally hashes
-the projected sidecar assignment, which itself binds the content-derived runtime
-projection, cell semantics, ordered player IDs, and cell indices. Consumers
-recompute the nested attestation and reject stale or mutated indices. This
-protects paired-cohort identity in an explicit projected run; it does not make
-that run configured, calibrated, or export a target-population estimand.
+For a configured projected table, canonical per-seed lineage binds the adapter,
+runtime projection, ordered player IDs, cell assignment, cohort digest, exact
+weights, and pre-treatment joint-cell/runtime-membership balance. Consumers
+reject stale or mutated inputs. A separate explicit writer can export declared
+target-population estimands; neither identity nor writing establishes
+calibration, representativeness, public comparability, or readiness.
 
 Output transformations have their own exhaustive registry. This keeps an input
 contract such as an age or income anchor distinct from a derived table measure
@@ -530,9 +526,9 @@ bytes and a deterministic extraction, but the default bundle contains no such
 artifact and no publisher signature. The static design schema supplies exact
 domains, partition declarations, target counts, and Hamilton weights, but its
 default is also empty and illustrative. Even populated files would establish
-declared reproducibility only. Publisher authentication, independently verified
-held-out source units, reviewed calibration, configuration/call-site selection,
-an adapter binding static counts and source-to-runtime conversion, a dedicated
-weighted-output writer/profile, and held-out balance checks remain separate
-work. No population readiness gate has been cleared and no full campaign has
-been run.
+declared reproducibility only. The adapter, per-seed structural balance/lineage,
+and standalone writer are implemented, but publisher authentication,
+independently verified held-out source units, reviewed calibration and transport
+assumptions, preregistered estimands, and a campaign-ready output gate remain
+separate work. Public comparability remains false and no full campaign has been
+run.

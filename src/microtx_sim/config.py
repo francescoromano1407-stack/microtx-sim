@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from math import isfinite
+import os
 from pathlib import Path
+import re
 import tomllib
 
 from .rng import validate_seed
@@ -19,6 +21,60 @@ class StepHistoryRetention(str, Enum):
 
     FULL = "full"
     FINAL_ONLY = "final_only"
+
+
+class PopulationExecutionMode(str, Enum):
+    """Explicit population initializer selected by a run configuration."""
+
+    PROJECTED_V1 = "projected_v1"
+
+
+_POPULATION_ADAPTER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class PopulationProjectionConfig:
+    """File locators for an opt-in, separately verified population projection.
+
+    Merely parsing these locators does not verify either file or authorize a
+    campaign.  Runtime entry points must load and re-attest both bundles against
+    the selected profile evidence before initializing any players.
+    """
+
+    mode: PopulationExecutionMode
+    design_bundle_path: Path
+    runtime_mapping_bundle_path: Path
+    adapter_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.mode) is not PopulationExecutionMode:
+            raise TypeError("population mode must be PopulationExecutionMode")
+        if self.mode is not PopulationExecutionMode.PROJECTED_V1:
+            raise ValueError("unsupported population execution mode")
+        for name in ("design_bundle_path", "runtime_mapping_bundle_path"):
+            value = getattr(self, name)
+            if not isinstance(value, Path):
+                raise TypeError(f"population {name} must be a Path")
+            if not str(value):
+                raise ValueError(f"population {name} cannot be empty")
+        if type(self.adapter_id) is not str or not _POPULATION_ADAPTER_ID.fullmatch(
+            self.adapter_id
+        ):
+            raise ValueError(
+                "population adapter_id must be a stable 1-128 character identifier"
+            )
+
+    def snapshot(self) -> dict[str, str]:
+        """Return the exact, non-verifying configuration selection."""
+
+        return {
+            "mode": self.mode.value,
+            "design_bundle_path": str(self.design_bundle_path),
+            "runtime_mapping_bundle_path": str(
+                self.runtime_mapping_bundle_path
+            ),
+            "adapter_id": self.adapter_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +151,15 @@ class SimulationConfig:
     behavior: BehaviorConfig
     regulation: RegulationConfig
     causal: CausalConfig
+    population: PopulationProjectionConfig | None = None
 
     def validate(self, *, campaign: bool = False) -> None:
+        if self.population is not None and type(
+            self.population
+        ) is not PopulationProjectionConfig:
+            raise ConfigurationError(
+                "population must be PopulationProjectionConfig or None"
+            )
         try:
             validate_seed(self.run.seed, name="run.seed")
         except (TypeError, ValueError) as exc:
@@ -223,6 +286,10 @@ def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig
             raise ValueError(
                 "ledger_backend must be 'memory' or 'sqlite'"
             ) from exc
+        population = _population_projection_config(
+            raw.get("population"),
+            config_path=config_path,
+        )
         config = SimulationConfig(
             meta=MetaConfig(
                 name=str(raw["meta"]["name"]),
@@ -235,8 +302,58 @@ def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig
             behavior=BehaviorConfig(**raw["behavior"]),
             regulation=RegulationConfig(**raw["regulation"]),
             causal=CausalConfig(**raw["causal"]),
+            population=population,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ConfigurationError(f"Invalid configuration {config_path}: {exc}") from exc
     config.validate(campaign=campaign)
     return config
+
+
+def _population_projection_config(
+    value: object,
+    *,
+    config_path: Path,
+) -> PopulationProjectionConfig | None:
+    if value is None:
+        return None
+    if type(value) is not dict:
+        raise ValueError("[population] must be a TOML table")
+    expected = {
+        "mode",
+        "design_bundle_path",
+        "runtime_mapping_bundle_path",
+        "adapter_id",
+    }
+    actual = set(value)
+    if actual != expected:
+        raise ValueError(
+            "population keys differ: "
+            f"missing={sorted(expected - actual)}, "
+            f"unknown={sorted(actual - expected)}"
+        )
+    try:
+        mode = PopulationExecutionMode(value["mode"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("population mode must be 'projected_v1'") from exc
+    # Keep the configured leaf path visible to the secure population loaders.
+    # ``Path.resolve`` would dereference a symlink/reparse-point leaf here and
+    # thereby prevent those loaders from enforcing their no-alias contract.
+    root = Path(os.path.abspath(os.fspath(config_path))).parent
+
+    def resolved_path(field: str) -> Path:
+        raw_path = value[field]
+        if type(raw_path) is not str or not raw_path:
+            raise ValueError(f"population {field} must be non-empty text")
+        candidate = Path(raw_path)
+        selected = candidate if candidate.is_absolute() else root / candidate
+        return Path(os.path.abspath(os.fspath(selected)))
+
+    return PopulationProjectionConfig(
+        mode=mode,
+        design_bundle_path=resolved_path("design_bundle_path"),
+        runtime_mapping_bundle_path=resolved_path(
+            "runtime_mapping_bundle_path"
+        ),
+        adapter_id=value["adapter_id"],
+    )

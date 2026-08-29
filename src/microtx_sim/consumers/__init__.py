@@ -11,15 +11,18 @@ from .population import (
     CountryProfile,
     CounterRNGLike,
     PopulationProjectionCell,
+    PopulationProjectionSampleCount,
     initialize_player_table,
     initialize_players,
     initialize_projected_player_table,
+    initialize_projected_player_table_from_exact_counts,
 )
 
 __all__ = [
     "CountryProfile",
     "CounterRNGLike",
     "PopulationProjectionCell",
+    "PopulationProjectionSampleCount",
     "PlayerDynamicsConfig",
     "PlayerDynamicsSystem",
     "PlayerStepCounters",
@@ -27,5 +30,6 @@ __all__ = [
     "initialize_player_table",
     "initialize_players",
     "initialize_projected_player_table",
+    "initialize_projected_player_table_from_exact_counts",
     "step_player_dynamics",
 ]

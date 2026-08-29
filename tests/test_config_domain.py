@@ -9,10 +9,19 @@ import numpy as np
 
 from microtx_sim.config import (
     ConfigurationError,
+    PopulationExecutionMode,
     StepHistoryRetention,
     load_config,
 )
 from microtx_sim.core.ledger import Ledger
+from microtx_sim.data.population_design import (
+    PopulationDesignVerificationError,
+    load_population_design_bundle,
+)
+from microtx_sim.data.population_projection import (
+    PopulationProjectionVerificationError,
+    load_population_runtime_mapping_bundle,
+)
 from microtx_sim.domain.games import ContentPlanner, GameTable, OwnGameSnapshot
 from microtx_sim.types import LedgerBackend, ProvenanceStatus
 
@@ -21,6 +30,99 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ConfigAndDomainTests(unittest.TestCase):
+    def test_population_projection_is_absent_by_default_and_strict_when_selected(
+        self,
+    ) -> None:
+        source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
+        self.assertIsNone(load_config(ROOT / "configs" / "smoke.toml").population)
+        population = """
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "inputs/design.toml"
+runtime_mapping_bundle_path = "inputs/runtime-mapping.toml"
+adapter_id = "world.population.v1"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected_path = root / "selected.toml"
+            selected_path.write_text(source + population, "utf-8")
+            selected = load_config(selected_path)
+            self.assertIsNotNone(selected.population)
+            assert selected.population is not None
+            self.assertIs(
+                selected.population.mode,
+                PopulationExecutionMode.PROJECTED_V1,
+            )
+            self.assertEqual(
+                selected.population.design_bundle_path,
+                (root / "inputs" / "design.toml").resolve(),
+            )
+
+            invalid_path = root / "invalid.toml"
+            invalid_path.write_text(
+                source + population.replace("projected_v1", "implicit"),
+                "utf-8",
+            )
+            with self.assertRaisesRegex(ConfigurationError, "projected_v1"):
+                load_config(invalid_path)
+
+    def test_population_projection_paths_preserve_aliases_for_secure_rejection(
+        self,
+    ) -> None:
+        source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            design_target = root / "design-target.toml"
+            mapping_target = root / "mapping-target.json"
+            design_target.write_text("target = true\n", "utf-8")
+            mapping_target.write_text("{}", "utf-8")
+            design_alias = root / "design-alias.toml"
+            mapping_alias = root / "mapping-alias.json"
+            try:
+                design_alias.symlink_to(design_target)
+                mapping_alias.symlink_to(mapping_target)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"file symlinks are unavailable: {exc}")
+
+            configured_path = root / "aliased.toml"
+            configured_path.write_text(
+                source
+                + """
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "design-alias.toml"
+runtime_mapping_bundle_path = "mapping-alias.json"
+adapter_id = "world.population.alias-rejection.v1"
+""",
+                "utf-8",
+            )
+            selected = load_config(configured_path)
+            assert selected.population is not None
+            self.assertEqual(
+                selected.population.design_bundle_path,
+                design_alias,
+            )
+            self.assertEqual(
+                selected.population.runtime_mapping_bundle_path,
+                mapping_alias,
+            )
+            with self.assertRaisesRegex(
+                PopulationDesignVerificationError,
+                "symlink|reparse",
+            ):
+                load_population_design_bundle(
+                    selected.population.design_bundle_path
+                )
+            with self.assertRaisesRegex(
+                PopulationProjectionVerificationError,
+                "non-symlink",
+            ):
+                load_population_runtime_mapping_bundle(
+                    selected.population.runtime_mapping_bundle_path
+                )
+
     def test_ledger_backend_is_typed_and_backward_compatible(self) -> None:
         source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
         explicit = load_config(ROOT / "configs" / "smoke.toml")

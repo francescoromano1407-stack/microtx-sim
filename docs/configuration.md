@@ -135,28 +135,86 @@ proof that record or cluster identities are authentic or that validation units
 were independently held out. Signed immutable source-unit keys and external
 review remain absent, so `campaign_ready` is always false.
 
-Neither this design file nor the opt-in projection helper is selected by a run
-configuration, CLI, `World.create`, policy batch, or sensitivity call site.
-The helper does not accept, consume, or revalidate a
-`PopulationApportionmentPlan`: it canonicalizes separate already-resolved
-runtime cells, derives their projection digest from their content, and performs
-its own Hamilton allocation with `cell_id` tie-breaking. Those runtime cells use
-personal monthly disposable-income intervals and modeled household sizes; they
-are not the static source household-income category domain. A future adapter
-must explicitly bind the static plan counts and source-to-runtime conversion.
+### Optional projected-population execution
+
+Both market and policy TOML files may opt into the exact projection path with an
+all-or-none section:
+
+```toml
+[population]
+mode = "projected_v1"
+design_bundle_path = "../data/provenance/population_design.toml"
+runtime_mapping_bundle_path = "../data/provenance/population_runtime_mapping.json"
+adapter_id = "reviewed.population.adapter.v1"
+```
+
+Relative paths are resolved from the configuration file. Unknown or missing
+keys and modes other than `projected_v1` are rejected. Parsing only creates file
+locators; CLI validation and execution reopen and re-attest the files against
+the selected profile's population evidence. If the section is absent, the
+legacy marginal initializer and legacy output semantics are unchanged. None of
+the checked-in configurations contains this section, and no runtime mapping
+bundle is checked in.
+
+The strict JSON runtime-mapping bundle is the sole bridge from each static
+jurisdiction × household-income-band × household-type key to a runtime personal
+monthly disposable-income interval and modeled players-per-household value. It
+also declares a conversion-recipe ID and SHA-256 and binds the design ID, design
+bundle digest, and domain digest. Those declarations keep source household
+income distinct from runtime personal disposable income; they establish an
+exact reproducibility contract, not an externally reviewed conversion.
+
+Schema version 1 accepts exactly these JSON fields:
+
+| Object | Required fields |
+| --- | --- |
+| Bundle | `schema_version` (integer `1`), `mapping_id`, `design_id`, `design_bundle_sha256`, `domain_sha256`, `source_income_concept`, `runtime_income_concept`, and non-empty `entries` array |
+| Entry source key/meaning | `jurisdiction_code`, `source_household_income_band_id`, `source_household_income_definition`, `source_household_income_currency`, `source_household_income_period`, lower/upper unbounded flags and exact rational bound pairs, `source_household_type_id`, `source_household_type_definition` |
+| Entry runtime meaning | `runtime_personal_monthly_disposable_income_band_id`, `runtime_personal_monthly_disposable_income_currency`, inclusive minimum cents, exclusive maximum cents, positive `modeled_players_per_household`, `conversion_recipe_id`, and lowercase hexadecimal `conversion_recipe_sha256` |
+
+Entries must be in canonical source-key order, cover the design's source
+income/household keys exactly once, and cannot alias distinct source bands to
+one runtime band within a jurisdiction and household type. Rational pairs must
+be reduced integers; cents and household counts are bounded exact integers.
+The schema requires the literal concepts `source_household_income` and
+`runtime_personal_monthly_disposable_income_cents`.
+
+The adapter re-attests that mapping and the exact
+`PopulationApportionmentPlan`, retains its already-apportioned per-cell sample
+counts and rational analysis/expansion weights, and does not perform a second
+allocation. `World.create`, the policy batch, and sensitivity analysis use the
+adapter when selected. The policy CLI resolves it once and requires the batch
+and sensitivity result to share the same population-execution input.
+The configured market `run.player_count` or policy `policy_run.player_count`
+must be positive; the static target is apportioned for exactly that count, the
+adapter must retain the resulting count, and realized cell counts must sum to
+it. Projected mode has no zero-player special case.
 
 Projected gamer and payer fields are attested sidecar-only baseline metadata and
-do not set runtime gameplay, payment access, or spending history. Consumers
-recompute the nested assignment attestation and reject stale or mutated cell
-indices. If a caller explicitly constructs a projected table, its assignment is
-included in the cohort digest; ordinary legacy tables retain their historical
-digest.
+do not set runtime gameplay, payment access, or spending history. Each selected
+seed binds the adapter and runtime-projection identities, ordered player IDs,
+cell assignment, cohort digest, and exact weights. A separate pre-treatment
+population balance artifact compares every full joint cell's target mass,
+planned count, sidecar weight, and realized count/mass, then separately attests
+runtime jurisdiction, age, income, and household membership. Stale or mutated
+files, sidecars, or player columns fail closed. Ordinary legacy tables retain
+their historical digest and have no projected-population lineage.
 
-The exact weighted-estimand module is likewise an isolated library primitive,
-not a configured output. It has no dedicated writer or registered target-
-population output profile. Existing output schema v3 bundles keep the frozen
-v2-compatible CSV columns and unweighted aggregation semantics. No population
-readiness gate is cleared and no full campaign is enabled by this milestone.
+The exact weighted-estimand module has a dedicated standalone
+`target_population_estimands` output profile. Programmatic callers use
+`write_target_population_estimands(...)` to write
+`target_population_estimands.csv` and
+`target_population_estimand_metadata.json`. The writer re-attests exact
+specification/result pairs and preserves their upstream digest declarations,
+but does not independently resolve or authenticate those upstream artifacts. It
+is not invoked automatically and is not part of the full output-v3 bundle.
+Existing output-v3 CSVs keep their frozen v2-compatible columns and unweighted
+aggregation semantics.
+
+This opt-in plumbing does not supply a checked-in target, mapping, external
+provenance, calibration, independently verified holdout, or output-readiness
+gate. `campaign_ready` and `public_population_comparability` remain false, and
+no full campaign is enabled or claimed by this milestone.
 
 ## Synthetic policy prototype schema
 

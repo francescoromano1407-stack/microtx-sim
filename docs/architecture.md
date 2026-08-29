@@ -117,6 +117,10 @@ CLI / causal experiment
                                   producer / EPGC result
 
 shared foundations: players, RNG, monetisation domain, metrics, evidence profiles
+
+optional population path:
+static evidence/design -> exact runtime mapping -> projection adapter
+                       -> per-seed assignment/balance -> execution lineage
 ```
 
 `World` owns strategic-market data and intervention hooks. Its day processor owns
@@ -137,9 +141,11 @@ from accumulating in one monolithic class.
 | `agents/players.py` | Columnar player/household state, retrospective spending classification, and optional attested runtime-projection sidecar. |
 | `agents/companies.py` | Company observation, private state, action intent, heterogeneous firm policy. |
 | `agents/jurisdictions.py` | Regulation rules, risk signals, audit/subsidy intents, and private regulator state. |
-| `consumers/population.py` | Legacy marginal player construction plus a separate opt-in, content-derived runtime projection helper; not a static-plan adapter. |
+| `consumers/population.py` | Legacy marginal player construction plus exact-count projected-table initialization used by the adapter. |
 | `data/population_evidence.py` | Exact-byte schema-v1 joint-population evidence and fail-closed readiness assessment; no runtime cohort projection. |
 | `data/population_design.py` | Static exact domains, declared source partitions, calibration target construction, and Hamilton counts/weights; always fail-closed for campaign use. |
+| `data/population_projection.py` | File-backed source-to-runtime mapping, exact static-plan adapter, content-addressed runtime projection, and assignment execution. |
+| `data/population_execution.py` | Opt-in configuration resolution and immutable per-seed population execution lineage. |
 | `consumers/logic.py` | Exact game choice, activity, abstract competition, purchases, rare card events, and harm transitions. |
 | `consumers/welfare.py` | Aligned immutable-baseline/dynamic `PlayerLifeTable` and deterministic synthetic priors. |
 | `consumers/decision.py` | Full eight-action Gumbel/logit choice with hard budget, consent, cap, and cooling constraints. |
@@ -162,12 +168,14 @@ from accumulating in one monolithic class.
 | `simulation/policy_orchestrator.py` | One cloned policy branch, welfare calculation, revenue composition, and producer/EPGC result. |
 | `metrics/outcomes.py` | Legacy market diagnostics, firm viability, state outlay, summaries, and recording. |
 | `metrics/harm.py` | Pure six-component welfare harm, adult/youth opportunity valuation, and reporting weights. |
-| `metrics/population_estimands.py` | Isolated exact weighted mean, paired-difference, and weighted-quantile contract; no current writer or output-profile integration. |
+| `metrics/population_balance.py` | Fail-closed pre-treatment joint-cell count/mass comparison and separate runtime membership attestation. |
+| `metrics/population_estimands.py` | Exact weighted mean, paired-difference, and weighted-quantile specification/result contract. |
 | `causal/interventions.py` | Persistent mechanism caps and composable audit/subsidy regimes. |
 | `causal/paired_worlds.py` | Structurally paired worlds, common random numbers, outcome differences, and regime effects. |
 | `causal/scenarios.py` | Seven named monetisation/public-value policy regimes. |
 | `causal/batch.py` | Same-cohort, repeated-seed scenario comparison and uncertainty summaries. |
 | `data/profiles.py` | Source registry loading, country/state profiles, unit contracts, and provenance gates. |
+| `outputs/population.py` | Standalone two-file `target_population_estimands` writer, separate from output-v3. |
 
 The legacy `systems/` namespace contains compatibility imports. New code should
 use the domain packages above so ownership remains visible in import paths.
@@ -227,31 +235,37 @@ defaults are empty and `ILLUSTRATIVE`. Partition record and cluster hashes are
 declarations only; they do not prove source authenticity or a genuine holdout,
 and design schema v1 is never campaign-ready.
 
-There is an explicit opt-in path from already-resolved projection cells to a
-`PlayerTable` population sidecar. Gamer and payer-history labels stay in that
+An optional `[population]` configuration selects one exact projection adapter.
+Its strict file-backed mapping is the single contract that connects static
+source household-income/type semantics to runtime personal monthly disposable-
+income intervals and modeled household sizes. The adapter reopens and re-attests
+the evidence-linked design, its `PopulationApportionmentPlan`, and the mapping;
+it consumes the plan's existing per-cell counts and rational weights without
+performing another allocation. Gamer and payer-history labels stay in the
 sidecar rather than being mapped to game choice, payment access, or spending
-history. This helper does not consume or revalidate a static
-`PopulationApportionmentPlan`; it derives a separate runtime projection from its
-exact cells and performs its own Hamilton allocation with `cell_id` tie-breaking.
-Static source household-income categories and runtime personal monthly
-disposable-income intervals/modeled household sizes require a future adapter
-that explicitly binds the static counts and conversion.
+history.
 
-The attested assignment digest binds the content-derived runtime projection,
-cell semantics, ordered player IDs, and cell indices. Consumers re-attest those
-nested values and reject stale or mutated indices; the digest is added to the
-policy cohort digest when present. No configuration, `World.create`, batch,
-sensitivity, or CLI path selects this initializer, so the ordinary generator
-still uses legacy marginal inputs.
+The projection execution binds the adapter, runtime projection, ordered player
+IDs, and per-player cell assignment. Before treatment, the balance layer
+compares target and realized mass/count discrepancies for every complete joint
+cell and independently attests runtime jurisdiction, age/minor threshold,
+income, and household membership. The policy batch and sensitivity analysis
+retain a detached record for every seed and require the same population input;
+the manifest includes this lineage only when the opt-in path was executed.
+`World.create` supports the same configured adapter for the market path. With no
+`[population]` section, the ordinary legacy marginal initializer and historical
+cohort digest remain unchanged.
 
-An isolated exact-rational estimand layer implements weighted means, paired mean
-differences, and deterministic weighted quantiles. It re-attests supplied design
-weights but only records caller-supplied evidence, projection, balance, metric-
-contract, and output-profile digest declarations; those artifacts are not
-resolved or reverified. It is not called by existing summaries or writers and
-has no dedicated registered output profile. Output schema v3 therefore retains
-the frozen v2-compatible CSV surface and unweighted semantics. No readiness gate
-is cleared and no full campaign has been run.
+An exact-rational estimand layer implements weighted means, paired mean
+differences, and deterministic weighted quantiles. The separate
+`target_population_estimands` writer re-attests specification/result pairs and
+writes one CSV plus metadata file, but it copies rather than independently
+resolves the declared evidence, projection, balance, metric-contract, and weight
+identities. It is not part of the automatic output-v3 bundle, whose frozen
+v2-compatible CSV surface remains unweighted. These exact structural contracts
+do not establish publisher authenticity, calibration, empirical holdout
+performance, public comparability, or campaign readiness; no full campaign has
+been run.
 
 Traits are sampled with correlations and motives overlap. Age and income affect
 resources and behaviour continuously. The unauthorised-card event is possible

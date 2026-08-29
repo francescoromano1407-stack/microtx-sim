@@ -228,9 +228,10 @@ does not implement checkpoint/restart.
 
 1. validate structural configuration;
 2. in campaign mode, require every profile dependency to be calibrated and an
-   explicit non-temporary SQLite ledger; population comparability also fails
-   closed because schema-v1 evidence has no signature, sampling/synthesis,
-   runtime-projection, output-estimand, or balance-validation binding;
+   explicit non-temporary SQLite ledger; population comparability remains
+   fail-closed because schema-v1 evidence lacks a signature and independently
+   verified calibration/holdout support. Optional projection, structural
+   balance, and standalone output identities cannot clear those blockers;
 3. resolve the cycle count and reject non-positive values;
 4. for non-campaign runs, enforce the safety ceiling of 32 cycles and 5,000
    players;

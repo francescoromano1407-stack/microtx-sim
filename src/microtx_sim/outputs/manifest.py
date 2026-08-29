@@ -202,7 +202,7 @@ def build_run_manifest(
         ),
         run_input_sha256=run_input_sha256,
     )
-    return {
+    manifest = {
         "run_name": config.name,
         "created_utc": created_utc
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -317,6 +317,11 @@ def build_run_manifest(
             "Public financing is a policy simulation, not a legal conclusion or subsidy application.",
         ],
     }
+    if batch.population_execution_lineage is not None:
+        manifest["population_execution"] = (
+            batch.population_execution_lineage.manifest_payload()
+        )
+    return manifest
 
 
 def _validate_config_matches_batch(
@@ -334,13 +339,31 @@ def _validate_config_matches_batch(
         raise ValueError(
             "configuration model inputs do not match the executed batch"
         )
+    selection = config.population
+    lineage = batch.population_execution_lineage
+    if (selection is None) != (lineage is None):
+        raise ValueError(
+            "configuration population selection does not match executed batch"
+        )
+    if selection is not None and lineage is not None:
+        adapter = lineage.adapter
+        if (
+            adapter.adapter_id != selection.adapter_id
+            or adapter.verification.bundle.bundle_path
+            != selection.design_bundle_path
+            or adapter.mapping_bundle.mapping_path
+            != selection.runtime_mapping_bundle_path
+        ):
+            raise ValueError(
+                "configuration population files/adapter id do not match execution"
+            )
 
 
 def _effective_config_snapshot(
     config: PolicyPrototypeConfig,
     run_inputs: PolicyRunInputs,
 ) -> dict[str, object]:
-    return {
+    payload = {
         "meta": {
             "name": config.name,
             "provenance_status": config.provenance_status,
@@ -355,6 +378,9 @@ def _effective_config_snapshot(
             "run_sensitivity": config.output.run_sensitivity,
         },
     }
+    if config.population is not None:
+        payload["population"] = config.population.snapshot()
+    return payload
 
 
 def _canonical_sha256(snapshot: dict[str, object]) -> str:

@@ -146,13 +146,17 @@ state, and jurisdiction state before treatment, and then applies explicit
 treated and control interventions. Null-versus-null equality is a tested
 software invariant.
 
-Population-evidence schema version 1 is retained in profile lineage only; it is
-not a cohort assignment or weighting mechanism. Both runners still initialize
-players from legacy marginal synthetic jurisdiction, age, income, and household
-rules. The frozen output-v2 CSV surface gives generated players equal analysis
-weight. No target population, synthesis plan, runtime projection,
-output-estimand binding, or population-balance validation is currently part of
-the causal design.
+Population-evidence schema version 1 is not itself a cohort assignment or
+weighting mechanism. The policy batch can optionally use one exact projection
+adapter: for each seed all seven scenarios share its assignment, and canonical
+per-seed lineage binds the projection, ordered players, cohort, exact weights,
+and a pre-treatment population balance artifact. This checks declared joint-
+cell and runtime-membership conformance; it is distinct from the paired-world
+branch-state balance report and is not empirical covariate balance. The market
+runner supports the same optional adapter through `World.create`; omission
+preserves legacy marginal initialization. Frozen output-v2-compatible CSVs
+remain equal-player aggregates; weighted target estimands require the separate
+standalone profile.
 
 ## Repeated seeds and uncertainty summaries
 

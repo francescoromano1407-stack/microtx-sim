@@ -1,6 +1,15 @@
 """Research-facing outcomes kept separate from agent observations."""
 
 from .outcomes import HarmWeights, OutcomeRecorder, OutcomeSnapshot
+from .population_balance import (
+    POPULATION_BALANCE_SCHEMA_VERSION,
+    PopulationBalanceArtifact,
+    PopulationBalanceCellResult,
+    PopulationBalanceValidationError,
+    PopulationRuntimeMembershipAttestation,
+    build_population_balance_artifact,
+    validate_population_balance_snapshot,
+)
 from .population_estimands import (
     EXACT_POPULATION_WEIGHTS_SCHEMA_VERSION,
     POPULATION_ESTIMAND_SCHEMA_VERSION,
@@ -29,6 +38,7 @@ from .population_estimands import (
 
 __all__ = [
     "EXACT_POPULATION_WEIGHTS_SCHEMA_VERSION",
+    "POPULATION_BALANCE_SCHEMA_VERSION",
     "POPULATION_ESTIMAND_SCHEMA_VERSION",
     "TARGET_POPULATION_OUTPUT_PROFILE",
     "ExactPopulationWeights",
@@ -36,6 +46,9 @@ __all__ = [
     "OutcomeRecorder",
     "OutcomeSnapshot",
     "PopulationAnalysisUnit",
+    "PopulationBalanceArtifact",
+    "PopulationBalanceCellResult",
+    "PopulationBalanceValidationError",
     "PopulationContrast",
     "PopulationCurrencyRounding",
     "PopulationCurrencySemantics",
@@ -50,8 +63,11 @@ __all__ = [
     "PopulationMetricScale",
     "PopulationNormalization",
     "PopulationPeriodSemantics",
+    "PopulationRuntimeMembershipAttestation",
+    "build_population_balance_artifact",
     "exact_population_weights_from_projected_players",
     "paired_weighted_mean_difference",
     "weighted_mean",
     "weighted_quantile",
+    "validate_population_balance_snapshot",
 ]

@@ -175,15 +175,12 @@ spending distributions, deprivation, consumption propensity, and programme
 rates/caps—remain contract-only. Their presence does not calibrate current
 consumption, harm, company, audit, or subsidy outcomes.
 
-The population-evidence bundle remains lineage-only for configured runs. An
-opt-in library helper can build a `PlayerTable` from already-resolved projection
-cells using deterministic Hamilton allocation, but no checked-in configuration,
-CLI, `World.create`, batch, or sensitivity call site selects it. The helper does
-not consume or revalidate `PopulationApportionmentPlan`; it derives a separate
-runtime projection and performs its own exact-mass Hamilton allocation with
-`cell_id` tie-breaking. A future adapter must bind static counts and conversion
-from source household-income categories to runtime personal monthly disposable-
-income intervals and modeled household sizes.
+Population evidence remains profile lineage unless an optional `[population]`
+selection resolves a verified static design and runtime mapping. In that mode,
+the adapter re-attests the `PopulationApportionmentPlan`, consumes its exact
+counts and weights, and binds the declared source-household-income/type to
+runtime-personal-income/household conversion. No checked-in configuration or
+mapping selects this path.
 
 The projected gamer and payer-history fields remain attested sidecar metadata
 and do not set current game, payment access, or historical spending. Consumers
@@ -196,10 +193,11 @@ treated-minus-control mean differences, and deterministic lower inverse-CDF
 weighted quantiles. It re-attests supplied design weights and includes caller-
 supplied target-evidence, runtime-projection, balance, metric-contract, and
 dedicated output-profile digest declarations in estimand and result identity; it
-does not resolve those declarations to verified artifacts. There is no dedicated
-writer or registered target-population output profile yet, and no current batch
-or world reducer invokes it. Output schema v3 therefore preserves the frozen
-v2-compatible CSV columns and their unweighted synthetic-player semantics.
+does not resolve those declarations to verified artifacts. The dedicated
+standalone `target_population_estimands` writer/profile re-attests exact
+specification/result pairs but copies those upstream identities and is not part
+of automatic output-v3 export. Output-v3 preserves the frozen v2-compatible CSV
+columns and their unweighted synthetic-player semantics.
 
 `behavior.household_peer_influence` is runtime-consumed but has no empirical
 source contract. It is a synthetic sensitivity-only coefficient over a
@@ -301,16 +299,16 @@ preregistration, and empirical-calibration blockers even when the canonical
 matrix is used. Custom factor values remain descriptively exportable, but add a
 canonical-matrix mismatch blocker and can never inherit the canonical claim.
 
-Population validation is a third independent fail-closed boundary. An exact
+Population readiness is a third independent fail-closed boundary. An exact
 joint-cell extraction and a declaration-complete static design can establish
 software structure, exact domains, declared partitions, and deterministic
-Hamilton weights. They cannot establish publisher authenticity, genuine
-held-out source units, configuration/call-site selection, a validated runtime
-projection, a registered weighted-output profile, or a balance result. Evidence-
-bundle schema v1 still hard-codes its calibration-target and held-out-validation
-subgates false, and population-design schema v1 is static-only and always
-campaign-ineligible. No population readiness gate has been cleared;
-`public_population_comparability` remains false.
+Hamilton weights. The optional adapter, per-seed execution lineage, structural
+balance artifact, and standalone weighted-output profile can bind runtime use
+exactly, but cannot establish publisher authenticity, genuine held-out source
+units, calibrated transport, or empirical outcome validity. Evidence-bundle
+schema v1 still hard-codes its calibration-target and held-out-validation
+subgates false, and population-design schema v1 remains campaign-ineligible.
+`public_population_comparability` and `campaign_ready` remain false.
 
 Passing this software gate will be necessary but not sufficient. The policy
 prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,
