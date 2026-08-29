@@ -174,6 +174,8 @@ from accumulating in one monolithic class.
 | `causal/paired_worlds.py` | Structurally paired worlds, common random numbers, outcome differences, and regime effects. |
 | `causal/scenarios.py` | Seven named monetisation/public-value policy regimes. |
 | `causal/batch.py` | Same-cohort, repeated-seed scenario comparison and uncertainty summaries. |
+| `causal/analysis_plan.py` | Strict prospective estimand/stopping/exclusion schema plus bounded no-symlink JSON attestation. |
+| `causal/analysis_binding.py` | Pre-run expected-input validation and post-run exact plan-to-population/result binding. |
 | `data/profiles.py` | Source registry loading, country/state profiles, unit contracts, and provenance gates. |
 | `outputs/population.py` | Standalone two-file `target_population_estimands` writer, separate from output-v3. |
 

@@ -378,8 +378,10 @@ This conditional lineage does not silently reweight the existing CSVs.
 
 Exact weighted means, paired differences, and weighted quantiles can instead be
 written explicitly through the standalone two-file
-`target_population_estimands` profile. The writer is not called by `reproduce`
-and copies, rather than independently authenticating, its upstream evidence,
+`target_population_estimands` profile. `reproduce` calls the writer only when an
+explicit `[analysis_plan]` selection has passed pre-run validation and post-run
+binding; the files then live under `prospective_analysis/`. The writer copies,
+rather than independently authenticating, its upstream evidence,
 weight, projection, balance, and metric-contract identities. Neither the normal
 artifacts nor that standalone profile are calibrated target-population
 estimates or constitute a full campaign.

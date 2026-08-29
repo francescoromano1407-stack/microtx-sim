@@ -85,6 +85,23 @@ These tasks block scientific interpretation.
    weighted means, paired differences, and weighted quantiles; it does not alter
    or join the automatic output-v3 bundle.
 
+   An additional opt-in prospective-plan composition layer now freezes exactly
+   one `PRIMARY` estimand specification, explicit scenario direction, fixed
+   seeds, harm weights, output/metric identities, and an executable
+   pre-treatment population predicate. It validates expected inputs before
+   scenario execution and binds exact per-seed realizations afterward to
+   population weights and balance lineage in a separate output profile. It does
+   not define a run-level primary aggregate or Monte Carlo uncertainty summary.
+   Declared period dates are not executed calendar anchors; only their inclusive
+   duration is checked against the batch horizon, with one declared day for a
+   zero-day structural snapshot. No plan is checked in; schema v1 is necessarily
+   unregistered and remains `campaign_ready=false`. Money-valued planned
+   estimands fail before execution because the simulation still lacks an
+   executed currency/price-period output conversion; this layer cannot promote
+   raw simulation cents into comparable money. Calendar anchoring, cross-seed
+   aggregation/uncertainty, and model implementation/environment identity remain
+   explicit campaign blockers.
+
    This P0 item remains open because exact execution does not provide an
    authenticated and calibrated target, an independently verified holdout, a
    scientifically reviewed source-to-runtime conversion, preregistration, or a
@@ -192,7 +209,10 @@ These tasks block scientific interpretation.
 ## P2 — Validation, outputs, and reproducibility
 
 1. Evolve the implemented output schema and manifest through explicit migration
-   tests; add a fully locked environment and signed immutable source bundles.
+   tests; add signed immutable source bundles and bind a canonical model
+   implementation, interpreter, dependency lock, and build environment into
+   prospective plans and results. The existing lock file alone does not supply
+   the missing plan/result execution-identity attestation.
 2. Add streaming or columnar storage for campaign-scale outputs. The current
    aggregate and optional synthetic individual CSV writers are sufficient for
    the prototype, but real microdata would require disclosure-risk controls.

@@ -9,10 +9,20 @@ import sys
 from typing import Sequence
 
 from .analysis import run_sensitivity_analysis
-from .causal.batch import run_policy_batch
+from .causal.analysis_binding import (
+    resolve_run_analysis_binding,
+    validate_analysis_plan_inputs,
+)
+from .causal.analysis_plan import (
+    LoadedProspectiveAnalysisPlan,
+    load_prospective_analysis_plan,
+    verify_loaded_prospective_analysis_plan,
+)
+from .causal.batch import resolve_policy_run_inputs, run_policy_batch
 from .config import ConfigurationError, load_config
 from .core.ledger import LedgerStorageError
 from .core.world import World
+from .data.lineage import ProfileInputLineage, build_profile_input_lineage
 from .data.profiles import ProfileBundle, ProfileValidationError, load_profile_bundle
 from .data.population_execution import resolve_population_projection_adapter
 from .outputs import export_policy_batch
@@ -124,13 +134,24 @@ def _smoke(config_path: Path) -> dict[str, object]:
 
 def _policy_validate(config_path: Path) -> dict[str, object]:
     config = load_policy_config(config_path)
+    population_adapter = None
+    profile_input_lineage = None
     if config.population is not None:
         profiles = load_profile_bundle(campaign=False)
-        resolve_population_projection_adapter(
+        profile_input_lineage = build_profile_input_lineage(
+            profiles.country_profiles,
+            profile_bundle=profiles,
+        )
+        population_adapter = resolve_population_projection_adapter(
             config.population,
             profiles,
             player_count=config.batch.player_count,
         )
+    analysis_plan = _resolve_configured_analysis_plan(
+        config,
+        population_adapter=population_adapter,
+        profile_input_lineage=profile_input_lineage,
+    )
     return {
         "status": "ok",
         "mode": "synthetic_policy_prototype",
@@ -150,6 +171,17 @@ def _policy_validate(config_path: Path) -> dict[str, object]:
             if config.population is not None
             else {}
         ),
+        **(
+            {
+                "analysis_plan_sha256": analysis_plan.plan.plan_sha256,
+                "analysis_plan_registration_status": (
+                    analysis_plan.plan.registration_status.value
+                ),
+                "campaign_ready": False,
+            }
+            if analysis_plan is not None
+            else {}
+        ),
     }
 
 
@@ -167,6 +199,10 @@ def _policy_batch(
         else run_sensitivity
     )
     profiles = load_profile_bundle(campaign=False)
+    profile_input_lineage = build_profile_input_lineage(
+        profiles.country_profiles,
+        profile_bundle=profiles,
+    )
     population_adapter = (
         resolve_population_projection_adapter(
             config.population,
@@ -175,6 +211,11 @@ def _policy_batch(
         )
         if config.population is not None
         else None
+    )
+    analysis_plan = _resolve_configured_analysis_plan(
+        config,
+        population_adapter=population_adapter,
+        profile_input_lineage=profile_input_lineage,
     )
     batch = run_policy_batch(
         config.batch,
@@ -185,6 +226,11 @@ def _policy_batch(
         producer_assumptions=config.producer_assumptions,
         epgc_policy=config.epgc_policy,
         population_adapter=population_adapter,
+    )
+    analysis_binding = (
+        resolve_run_analysis_binding(analysis_plan.plan, batch)
+        if analysis_plan is not None
+        else None
     )
     sensitivity = (
         _run_configured_sensitivity(
@@ -208,6 +254,8 @@ def _policy_batch(
         repository_root=repository_root,
         output_dir=destination,
         command=command,
+        analysis_plan=analysis_plan,
+        analysis_binding=analysis_binding,
     )
     return {
         "status": "ok",
@@ -231,6 +279,15 @@ def _policy_batch(
             if config.population is not None
             else {}
         ),
+        **(
+            {
+                "analysis_plan_sha256": analysis_plan.plan.plan_sha256,
+                "analysis_binding_sha256": analysis_binding.binding_sha256,
+                "campaign_ready": False,
+            }
+            if analysis_plan is not None and analysis_binding is not None
+            else {}
+        ),
     }
 
 
@@ -241,6 +298,10 @@ def _policy_sensitivity(
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
     profiles = load_profile_bundle(campaign=False)
+    profile_input_lineage = build_profile_input_lineage(
+        profiles.country_profiles,
+        profile_bundle=profiles,
+    )
     population_adapter = (
         resolve_population_projection_adapter(
             config.population,
@@ -250,11 +311,18 @@ def _policy_sensitivity(
         if config.population is not None
         else None
     )
+    analysis_plan = _resolve_configured_analysis_plan(
+        config,
+        population_adapter=population_adapter,
+        profile_input_lineage=profile_input_lineage,
+    )
     result = _run_configured_sensitivity(
         config,
         profile_bundle=profiles,
         population_adapter=population_adapter,
     )
+    if analysis_plan is not None:
+        analysis_plan = verify_loaded_prospective_analysis_plan(analysis_plan)
     repository_root = Path(__file__).resolve().parents[2]
     destination = _resolve_output(
         output if output is not None else config.output.output_dir,
@@ -295,6 +363,18 @@ def _policy_sensitivity(
                 if result.profile_input_lineage is not None
                 else None
             ),
+            **(
+                {
+                    "analysis_plan": analysis_plan.manifest_payload(),
+                    "analysis_plan_scope": (
+                        "Expected execution-input identities validated before "
+                        "the sensitivity run; this standalone profile does not "
+                        "bind treatment-result estimands."
+                    ),
+                }
+                if analysis_plan is not None
+                else {}
+            ),
         }),
     )
     return {
@@ -303,7 +383,53 @@ def _policy_sensitivity(
         "rows": len(result.rows),
         "unstable_parameters": list(result.unstable_parameters),
         "artifacts": [str(csv_path.resolve()), str(metadata_path.resolve())],
+        **(
+            {
+                "analysis_plan_sha256": analysis_plan.plan.plan_sha256,
+                "campaign_ready": False,
+            }
+            if analysis_plan is not None
+            else {}
+        ),
     }
+
+
+def _resolve_configured_analysis_plan(
+    config,
+    *,
+    population_adapter,
+    profile_input_lineage: ProfileInputLineage | None,
+) -> LoadedProspectiveAnalysisPlan | None:
+    """Load, re-attest, and preflight an opt-in plan before execution."""
+
+    selection = config.analysis_plan
+    if selection is None:
+        return None
+    if population_adapter is None:
+        raise ValueError(
+            "analysis plan execution requires a projected population adapter"
+        )
+    if profile_input_lineage is None:
+        raise ValueError(
+            "analysis plan execution requires exact profile input lineage"
+        )
+    loaded = load_prospective_analysis_plan(selection.plan_path)
+    loaded = verify_loaded_prospective_analysis_plan(loaded)
+    run_inputs = resolve_policy_run_inputs(
+        harm_parameters=config.harm_parameters,
+        harm_weights=config.harm_weights,
+        opportunity_valuation=config.opportunity_valuation,
+        producer_assumptions=config.producer_assumptions,
+        epgc_policy=config.epgc_policy,
+    )
+    validate_analysis_plan_inputs(
+        loaded.plan,
+        batch_spec=config.batch,
+        run_inputs=run_inputs,
+        population_adapter=population_adapter,
+        profile_input_lineage=profile_input_lineage,
+    )
+    return loaded
 
 
 def _run_configured_sensitivity(

@@ -240,6 +240,10 @@ The suite is organised by contract:
 - `test_policy_config.py` and `test_policy_cli.py`: strict TOML parsing, command
   dispatch, output overrides, deterministic smoke execution, and error
   behaviour;
+- `test_analysis_plan.py`, `test_analysis_binding.py`, and
+  `test_analysis_composition.py`: strict prospective-plan parsing, pre-run
+  identity and population-domain checks, exact per-seed post-run binding, and
+  fail-closed optional-output composition;
 - `test_documentation.py`: local Markdown links across the README and reference
   documentation.
 
@@ -292,7 +296,9 @@ evidence and readiness, while optional projected execution adds a distinct
 canonical per-seed adapter/assignment/weight/balance lineage to the manifest.
 Omitting `[population]` preserves the legacy marginal generator. Neither path
 changes the output-v2-compatible tables' unweighted semantics; the standalone
-target-population writer is a different two-file profile. Exact-byte hashes and
+target-population writer is a different two-file profile. An explicit
+`[analysis_plan]` selection composes that profile automatically without adding
+columns or files to the root output-v3 contract. Exact-byte hashes and
 balance checks are reproducibility controls, not publisher authentication or
 calibration.
 

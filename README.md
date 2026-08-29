@@ -86,12 +86,23 @@ optimal funding policy.
   `target_population_estimands` profile can write exact results to
   `target_population_estimands.csv` and
   `target_population_estimand_metadata.json`; it is not part of the 13-file
-  output-v3 bundle or invoked automatically by the CLI. Output schema v3 retains
+  output-v3 bundle. It remains a standalone programmatic profile by default;
+  an optional prospective analysis plan can now make the policy CLI resolve and
+  write it under `prospective_analysis/` after validating all planned input
+  identities before execution. Output schema v3 retains
   the frozen v2-compatible CSV columns and their unweighted synthetic-player
   semantics. The adapter, balance, lineage, and writer are reproducibility
   infrastructure, not population calibration, external provenance, empirical
   validation, public comparability, or campaign readiness. Comparable
   populations remain an open P0 item and no full campaign has been run.
+- A strict content-addressed prospective-plan schema freezes exactly one primary
+  estimand, explicit scenario direction, fixed seeds, harm weights, metric and
+  output identities, the exact profile-input-lineage fingerprint, and an
+  executable pre-treatment population predicate. It
+  is opt-in, requires projected-population execution, and binds exact per-seed
+  results back to population execution and balance lineage. Version 1 is
+  necessarily `UNREGISTERED`, `preregistered=false`, and
+  `campaign_ready=false`; no plan is checked in.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.
@@ -134,6 +145,7 @@ See [Limitations](docs/limitations.md) before interpreting any output.
 | One simulated tick/day | `microtx_sim.simulation.day` |
 | Multi-cycle execution | `microtx_sim.simulation.orchestrator` |
 | Paired-world causal contrasts | `microtx_sim.causal` |
+| Prospective plan and exact run binding | `microtx_sim.causal.analysis_plan`, `microtx_sim.causal.analysis_binding` |
 | Seven-scenario synthetic policy batch | `microtx_sim.causal.batch` |
 | Daily life-action policy process | `microtx_sim.simulation.policy_day` |
 | Welfare harm and opportunity cost | `microtx_sim.metrics.harm` |
@@ -178,6 +190,7 @@ Start with the [documentation index](docs/index.md). The main references are:
 - [Model specification](docs/model_spec.md)
 - [Simulated lifecycle](docs/simulation_lifecycle.md)
 - [Causal design](docs/causal_design.md)
+- [Prospective analysis plan](docs/analysis_plan.md)
 - [Synthetic policy prototype](docs/policy_prototype.md)
 - [Configuration reference](docs/configuration.md)
 - [Data sources and lineage](docs/data_sources.md)

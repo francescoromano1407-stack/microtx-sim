@@ -322,6 +322,14 @@ digests and is not part of automatic output-v3 export. Existing output-v3
 artifacts retain the frozen v2-compatible columns and unweighted synthetic-
 player aggregation semantics.
 
+For an explicit `[analysis_plan]` opt-in, a separate resolver now checks every
+planned input before treatment and resolves the upstream weight, projection,
+balance, and metric identities after execution before invoking that standalone
+writer under `prospective_analysis/`. This does not change the root output-v3
+contract. Plan/binding schema v1 is unregistered and refuses money-valued
+estimands until the output path retains an executed currency/price-period
+conversion.
+
 The following `CountryProfile` inputs are inherited from scaffold defaults and
 are not country estimates: adult age, the age-income curve, minor allowance,
 personal and household liquidity, credit access and limits, stored-payment

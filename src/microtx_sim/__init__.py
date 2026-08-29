@@ -1,10 +1,15 @@
 """Causal agent-based simulation of mobile-game monetisation."""
 
 from .config import SimulationConfig, StepHistoryRetention, load_config
-from .policy_config import PolicyPrototypeConfig, load_policy_config
+from .policy_config import (
+    AnalysisPlanSelection,
+    PolicyPrototypeConfig,
+    load_policy_config,
+)
 from .types import LedgerBackend
 
 __all__ = [
+    "AnalysisPlanSelection",
     "PolicyPrototypeConfig",
     "SimulationConfig",
     "LedgerBackend",

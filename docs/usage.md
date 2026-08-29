@@ -180,8 +180,12 @@ and `full_output_bundle=false`.
 
 The automatic output-v3 CSV summaries remain unweighted even when projected
 execution is selected; they are not silently reinterpreted as target-population
-estimates. Producing the standalone weighted files is an explicit additional
-library step. Neither path supplies population calibration, empirical
+estimates. Producing the standalone weighted files is either an explicit
+additional library step or the result of an explicit `[analysis_plan]` opt-in.
+In the latter case, the CLI validates planned identities before execution,
+resolves exact results afterward, and writes the two files under
+`prospective_analysis/` while keeping the 13 root artifacts unchanged. See
+[Prospective analysis-plan composition](analysis_plan.md). Neither path supplies population calibration, empirical
 validation, public comparability, or campaign readiness, and no full campaign
 has been run.
 

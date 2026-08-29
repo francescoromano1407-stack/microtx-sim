@@ -1,0 +1,1910 @@
+"""Prospective, content-addressed analysis-plan declarations.
+
+Schema version 1 is deliberately *not* a preregistration mechanism.  It can
+freeze a proposed analysis before policy outcomes are evaluated, bind that
+proposal to exact execution inputs, and execute a canonical pre-treatment
+population predicate.  It cannot prove that the declaration existed at an
+external time or was deposited with an independent registry.  Consequently
+``registration_status``, ``preregistered``, and ``campaign_ready`` are fixed to
+their fail-closed values in this schema.
+
+No default plan is supplied.  A caller must opt in with a regular, non-symlink
+JSON file and must compare every expected digest with independently resolved
+runtime objects before using the declaration.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from enum import Enum
+from hashlib import sha256
+import json
+import os
+from pathlib import Path
+import re
+import stat
+from types import MappingProxyType
+from typing import Final, Mapping, Sequence
+
+import numpy as np
+import numpy.typing as npt
+
+from ..agents.players import ProjectedPopulationCellMetadata
+from ..data.population_evidence import (
+    PopulationEstimandRole,
+    PopulationGamingState,
+    PopulationPayerHistoryState,
+)
+from ..metrics.harm import WelfareHarmWeights
+from ..metrics.population_estimands import (
+    PopulationCurrencySemantics,
+    PopulationEstimandAlgorithm,
+    PopulationInclusionField,
+    PopulationInclusionRule,
+    PopulationInclusionTiming,
+    PopulationMetricKind,
+    PopulationMetricScale,
+    PopulationNormalization,
+    PopulationPeriodSemantics,
+)
+from ..rng import validate_seed
+from .scenarios import ScenarioId
+
+
+ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "1.0"
+MAX_ANALYSIS_PLAN_BYTES: Final[int] = 1024 * 1024
+
+_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_CONTRACT_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
+_JURISDICTION_CODE = re.compile(r"[A-Z][A-Z0-9-]{1,7}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+_CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
+    "analysis_plan.external_registration=unregistered",
+    "analysis_plan.schema_v1=campaign_ineligible",
+    "analysis_plan.execution_calendar_anchor=unbound",
+    "analysis_plan.cross_seed_aggregation_uncertainty=unresolved",
+    "analysis_plan.model_implementation_environment_identity=unbound",
+)
+_CANONICAL_INCLUSION_FIELDS: Final[tuple[PopulationInclusionField, ...]] = tuple(
+    sorted(PopulationInclusionField, key=lambda item: item.value)
+)
+
+
+class AnalysisPlanValidationError(ValueError):
+    """Raised when an analysis-plan declaration is malformed."""
+
+
+class AnalysisPlanVerificationError(AnalysisPlanValidationError):
+    """Raised when file or runtime evidence differs from a plan."""
+
+
+class AnalysisPlanCampaignError(RuntimeError):
+    """Raised because schema-v1 plans cannot claim campaign readiness."""
+
+    def __init__(self, blockers: tuple[str, ...]) -> None:
+        self.blockers = blockers
+        super().__init__(
+            "analysis plan is not campaign-ready: " + ", ".join(blockers)
+        )
+
+
+class AnalysisPlanRegistrationStatus(str, Enum):
+    """External registration status supported by schema version 1."""
+
+    UNREGISTERED = "UNREGISTERED"
+
+
+class AnalysisEstimandRole(str, Enum):
+    """Prospectively declared reporting role for an estimand."""
+
+    PRIMARY = "PRIMARY"
+    SECONDARY = "SECONDARY"
+
+
+class PopulationMinorFilter(str, Enum):
+    """Canonical minor-status restriction in an inclusion predicate."""
+
+    ANY = "ANY"
+    MINOR_ONLY = "MINOR_ONLY"
+    ADULT_ONLY = "ADULT_ONLY"
+
+
+class PopulationOutcomeMetric(str, Enum):
+    """Whitelisted one-dimensional per-player policy outcomes."""
+
+    SPENDING_CENTS = "spending_cents"
+    HARMFUL_SPENDING_CENTS = "harmful_spending_cents"
+    UNPLANNED_SPENDING_CENTS = "unplanned_spending_cents"
+    MONETARY_HARM_PROXY_CENTS = "monetary_harm_proxy_cents"
+    OPPORTUNITY_COST_PROXY_CENTS = "opportunity_cost_proxy_cents"
+    ADULT_OPPORTUNITY_COST_PROXY_CENTS = "adult_opportunity_cost_proxy_cents"
+    YOUTH_OPPORTUNITY_COST_PROXY_CENTS = "youth_opportunity_cost_proxy_cents"
+    TOTAL_MONETARY_PROXY_CENTS = "total_monetary_proxy_cents"
+    COMPOSITE_HARM = "composite_harm"
+    MONETARY_HARM_SCORE = "monetary_harm_score"
+    OPPORTUNITY_COST_SCORE = "opportunity_cost_score"
+    SLEEP_BURDEN_SCORE = "sleep_burden_score"
+    EDUCATION_WORK_BURDEN_SCORE = "education_work_burden_score"
+    FAMILY_SOCIAL_BURDEN_SCORE = "family_social_burden_score"
+    WELLBEING_BURDEN_SCORE = "wellbeing_burden_score"
+    ENJOYMENT = "enjoyment"
+    HIGH_RISK_INDICATOR = "high_risk_indicator"
+    EXCESS_PLAY_MINUTES = "excess_play_minutes"
+    DISPLACED_SLEEP_MINUTES = "displaced_sleep_minutes"
+    DISPLACED_WORK_STUDY_MINUTES = "displaced_work_study_minutes"
+    DISPLACED_SOCIAL_MINUTES = "displaced_social_minutes"
+    DISPLACED_PHYSICAL_ACTIVITY_MINUTES = (
+        "displaced_physical_activity_minutes"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PopulationOutcomeMetricSemantics:
+    """Authoritative routing and unit semantics for a whitelisted outcome."""
+
+    metric: PopulationOutcomeMetric
+    metric_name: str
+    result_path: str
+    component_index: int | None
+    metric_kind: PopulationMetricKind
+    metric_scale: PopulationMetricScale
+    storage_dtype: str
+    unit: str
+
+    def __post_init__(self) -> None:
+        if type(self.metric) is not PopulationOutcomeMetric:
+            raise TypeError("metric must be PopulationOutcomeMetric")
+        for name in ("metric_name", "result_path", "storage_dtype", "unit"):
+            _nonempty_text(getattr(self, name), name=name)
+        if self.metric_name != self.metric.value:
+            raise AnalysisPlanValidationError(
+                "outcome metric_name must equal its canonical enum value"
+            )
+        if self.component_index is not None:
+            _strict_int(
+                self.component_index,
+                name="outcome component_index",
+                minimum=0,
+                maximum=5,
+            )
+        if type(self.metric_kind) is not PopulationMetricKind:
+            raise TypeError("metric_kind must be PopulationMetricKind")
+        if type(self.metric_scale) is not PopulationMetricScale:
+            raise TypeError("metric_scale must be PopulationMetricScale")
+        if self.storage_dtype not in {"bool", "float64", "int64"}:
+            raise AnalysisPlanValidationError(
+                "outcome storage_dtype is not supported by schema v1"
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "metric": self.metric.value,
+            "metric_name": self.metric_name,
+            "result_path": self.result_path,
+            "component_index": self.component_index,
+            "metric_kind": self.metric_kind.value,
+            "metric_scale": self.metric_scale.value,
+            "storage_dtype": self.storage_dtype,
+            "unit": self.unit,
+        }
+
+
+def _outcome_semantics_registry() -> Mapping[
+    PopulationOutcomeMetric,
+    PopulationOutcomeMetricSemantics,
+]:
+    money = PopulationMetricKind.MONEY_MINOR_UNITS
+    additive = PopulationMetricScale.ADDITIVE_PER_ANALYSIS_UNIT
+    nonadditive = PopulationMetricScale.NONADDITIVE
+    score = PopulationMetricKind.SCORE
+    time = PopulationMetricKind.TIME
+
+    def item(
+        metric: PopulationOutcomeMetric,
+        result_path: str,
+        *,
+        component_index: int | None = None,
+        metric_kind: PopulationMetricKind,
+        metric_scale: PopulationMetricScale,
+        storage_dtype: str,
+        unit: str,
+    ) -> PopulationOutcomeMetricSemantics:
+        return PopulationOutcomeMetricSemantics(
+            metric=metric,
+            metric_name=metric.value,
+            result_path=result_path,
+            component_index=component_index,
+            metric_kind=metric_kind,
+            metric_scale=metric_scale,
+            storage_dtype=storage_dtype,
+            unit=unit,
+        )
+
+    entries = {
+        PopulationOutcomeMetric.SPENDING_CENTS: item(
+            PopulationOutcomeMetric.SPENDING_CENTS,
+            "PolicyScenarioResult.spending_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.HARMFUL_SPENDING_CENTS: item(
+            PopulationOutcomeMetric.HARMFUL_SPENDING_CENTS,
+            "PolicyScenarioResult.harm.harmful_spending_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.UNPLANNED_SPENDING_CENTS: item(
+            PopulationOutcomeMetric.UNPLANNED_SPENDING_CENTS,
+            "PolicyScenarioResult.harm.unplanned_spending_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.MONETARY_HARM_PROXY_CENTS: item(
+            PopulationOutcomeMetric.MONETARY_HARM_PROXY_CENTS,
+            "PolicyScenarioResult.harm.monetary_harm_proxy_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.OPPORTUNITY_COST_PROXY_CENTS: item(
+            PopulationOutcomeMetric.OPPORTUNITY_COST_PROXY_CENTS,
+            "PolicyScenarioResult.harm.opportunity_cost_proxy_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.ADULT_OPPORTUNITY_COST_PROXY_CENTS: item(
+            PopulationOutcomeMetric.ADULT_OPPORTUNITY_COST_PROXY_CENTS,
+            "PolicyScenarioResult.harm.adult_opportunity_cost_proxy_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.YOUTH_OPPORTUNITY_COST_PROXY_CENTS: item(
+            PopulationOutcomeMetric.YOUTH_OPPORTUNITY_COST_PROXY_CENTS,
+            "PolicyScenarioResult.harm.youth_opportunity_cost_proxy_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.TOTAL_MONETARY_PROXY_CENTS: item(
+            PopulationOutcomeMetric.TOTAL_MONETARY_PROXY_CENTS,
+            "PolicyScenarioResult.harm.total_monetary_proxy_cents",
+            metric_kind=money,
+            metric_scale=additive,
+            storage_dtype="int64",
+            unit="currency_minor_unit",
+        ),
+        PopulationOutcomeMetric.COMPOSITE_HARM: item(
+            PopulationOutcomeMetric.COMPOSITE_HARM,
+            "PolicyScenarioResult.composite_harm",
+            metric_kind=score,
+            metric_scale=nonadditive,
+            storage_dtype="float64",
+            unit="model_score",
+        ),
+        PopulationOutcomeMetric.ENJOYMENT: item(
+            PopulationOutcomeMetric.ENJOYMENT,
+            "PolicyScenarioResult.enjoyment",
+            metric_kind=score,
+            metric_scale=nonadditive,
+            storage_dtype="float64",
+            unit="model_score",
+        ),
+        PopulationOutcomeMetric.HIGH_RISK_INDICATOR: item(
+            PopulationOutcomeMetric.HIGH_RISK_INDICATOR,
+            "PolicyScenarioResult.high_risk",
+            metric_kind=PopulationMetricKind.RATIO,
+            metric_scale=nonadditive,
+            storage_dtype="bool",
+            unit="indicator",
+        ),
+    }
+    component_metrics = (
+        PopulationOutcomeMetric.MONETARY_HARM_SCORE,
+        PopulationOutcomeMetric.OPPORTUNITY_COST_SCORE,
+        PopulationOutcomeMetric.SLEEP_BURDEN_SCORE,
+        PopulationOutcomeMetric.EDUCATION_WORK_BURDEN_SCORE,
+        PopulationOutcomeMetric.FAMILY_SOCIAL_BURDEN_SCORE,
+        PopulationOutcomeMetric.WELLBEING_BURDEN_SCORE,
+    )
+    for index, metric in enumerate(component_metrics):
+        entries[metric] = item(
+            metric,
+            "PolicyScenarioResult.harm.component_scores",
+            component_index=index,
+            metric_kind=score,
+            metric_scale=nonadditive,
+            storage_dtype="float64",
+            unit="model_score",
+        )
+    minute_metrics = {
+        PopulationOutcomeMetric.EXCESS_PLAY_MINUTES: "excess_play_minutes",
+        PopulationOutcomeMetric.DISPLACED_SLEEP_MINUTES: (
+            "displaced_sleep_minutes"
+        ),
+        PopulationOutcomeMetric.DISPLACED_WORK_STUDY_MINUTES: (
+            "displaced_work_study_minutes"
+        ),
+        PopulationOutcomeMetric.DISPLACED_SOCIAL_MINUTES: (
+            "displaced_social_minutes"
+        ),
+        PopulationOutcomeMetric.DISPLACED_PHYSICAL_ACTIVITY_MINUTES: (
+            "displaced_physical_activity_minutes"
+        ),
+    }
+    for metric, attribute in minute_metrics.items():
+        entries[metric] = item(
+            metric,
+            f"PolicyScenarioResult.harm.{attribute}",
+            metric_kind=time,
+            metric_scale=additive,
+            storage_dtype="float64",
+            unit="minute",
+        )
+    if set(entries) != set(PopulationOutcomeMetric):
+        raise RuntimeError("population outcome registry is incomplete")
+    return MappingProxyType(entries)
+
+
+def population_outcome_semantics(
+    metric: PopulationOutcomeMetric,
+) -> PopulationOutcomeMetricSemantics:
+    """Return immutable routing semantics for one whitelisted metric."""
+
+    if type(metric) is not PopulationOutcomeMetric:
+        raise TypeError("metric must be PopulationOutcomeMetric")
+    return _POPULATION_OUTCOME_SEMANTICS[metric]
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalPopulationInclusionPredicate:
+    """Executable pre-treatment predicate over projected joint-population cells.
+
+    Empty categorical tuples mean "all declared values".  Unlike the reusable
+    :class:`PopulationInclusionRule`, this object carries the canonical filters
+    and can evaluate them against an attested projected assignment.
+    """
+
+    rule: PopulationInclusionRule
+    jurisdiction_codes: tuple[str, ...]
+    age_min_inclusive: int
+    age_max_exclusive: int
+    minor_filter: PopulationMinorFilter
+    monthly_disposable_income_band_ids: tuple[str, ...]
+    household_type_ids: tuple[str, ...]
+    gaming_states: tuple[PopulationGamingState, ...]
+    payer_history_states: tuple[PopulationPayerHistoryState, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.rule) is not PopulationInclusionRule:
+            raise TypeError("inclusion rule must be PopulationInclusionRule")
+        PopulationInclusionRule.__post_init__(self.rule)
+        if self.rule.source_fields != _CANONICAL_INCLUSION_FIELDS:
+            raise AnalysisPlanValidationError(
+                "analysis inclusion rule must declare every canonical pre-treatment field"
+            )
+        if self.rule.timing is not PopulationInclusionTiming.PRETREATMENT:
+            raise AnalysisPlanValidationError(
+                "analysis inclusion predicate must be pre-treatment"
+            )
+        if self.rule.evidence_role is not PopulationEstimandRole.CALIBRATION:
+            raise AnalysisPlanValidationError(
+                "validation evidence cannot define analysis inclusion"
+            )
+        _strict_int(
+            self.age_min_inclusive,
+            name="inclusion age_min_inclusive",
+            minimum=0,
+            maximum=32_767,
+        )
+        _strict_int(
+            self.age_max_exclusive,
+            name="inclusion age_max_exclusive",
+            minimum=1,
+            maximum=32_768,
+        )
+        if self.age_min_inclusive >= self.age_max_exclusive:
+            raise AnalysisPlanValidationError(
+                "inclusion age interval must be non-empty"
+            )
+        if type(self.minor_filter) is not PopulationMinorFilter:
+            raise TypeError("minor_filter must be PopulationMinorFilter")
+        _canonical_code_tuple(self.jurisdiction_codes)
+        _canonical_identifier_tuple(
+            self.monthly_disposable_income_band_ids,
+            name="monthly_disposable_income_band_ids",
+        )
+        _canonical_identifier_tuple(
+            self.household_type_ids,
+            name="household_type_ids",
+        )
+        _canonical_enum_tuple(
+            self.gaming_states,
+            enum_type=PopulationGamingState,
+            name="gaming_states",
+        )
+        _canonical_enum_tuple(
+            self.payer_history_states,
+            enum_type=PopulationPayerHistoryState,
+            name="payer_history_states",
+        )
+
+    @property
+    def predicate_sha256(self) -> str:
+        return _canonical_sha256(self.snapshot())
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "rule": self.rule.snapshot(),
+            "jurisdiction_codes": list(self.jurisdiction_codes),
+            "age_min_inclusive": self.age_min_inclusive,
+            "age_max_exclusive": self.age_max_exclusive,
+            "minor_filter": self.minor_filter.value,
+            "monthly_disposable_income_band_ids": list(
+                self.monthly_disposable_income_band_ids
+            ),
+            "household_type_ids": list(self.household_type_ids),
+            "gaming_states": [item.value for item in self.gaming_states],
+            "payer_history_states": [
+                item.value for item in self.payer_history_states
+            ],
+        }
+
+    def evaluate(
+        self,
+        *,
+        jurisdiction_codes: tuple[str, ...],
+        jurisdiction: npt.NDArray[np.int16],
+        age_years: npt.NDArray[np.int16],
+        is_minor: npt.NDArray[np.bool_],
+        projected_cells: tuple[ProjectedPopulationCellMetadata, ...],
+        cell_indices: tuple[int, ...],
+    ) -> npt.NDArray[np.bool_]:
+        return evaluate_population_inclusion(
+            self,
+            jurisdiction_codes=jurisdiction_codes,
+            jurisdiction=jurisdiction,
+            age_years=age_years,
+            is_minor=is_minor,
+            projected_cells=projected_cells,
+            cell_indices=cell_indices,
+        )
+
+
+def evaluate_population_inclusion(
+    predicate: CanonicalPopulationInclusionPredicate,
+    *,
+    jurisdiction_codes: tuple[str, ...],
+    jurisdiction: npt.NDArray[np.int16],
+    age_years: npt.NDArray[np.int16],
+    is_minor: npt.NDArray[np.bool_],
+    projected_cells: tuple[ProjectedPopulationCellMetadata, ...],
+    cell_indices: tuple[int, ...],
+) -> npt.NDArray[np.bool_]:
+    """Evaluate one canonical predicate over exact pre-treatment memberships."""
+
+    if type(predicate) is not CanonicalPopulationInclusionPredicate:
+        raise TypeError(
+            "predicate must be CanonicalPopulationInclusionPredicate"
+        )
+    CanonicalPopulationInclusionPredicate.__post_init__(predicate)
+    _runtime_jurisdiction_codes(jurisdiction_codes)
+    expected_arrays = (
+        (jurisdiction, np.dtype(np.int16), "jurisdiction"),
+        (age_years, np.dtype(np.int16), "age_years"),
+        (is_minor, np.dtype(np.bool_), "is_minor"),
+    )
+    size: int | None = None
+    for values, expected_dtype, name in expected_arrays:
+        if (
+            type(values) is not np.ndarray
+            or values.ndim != 1
+            or values.dtype != expected_dtype
+        ):
+            raise TypeError(
+                f"{name} must be a one-dimensional {expected_dtype.name} array"
+            )
+        if size is None:
+            size = int(values.size)
+        elif values.size != size:
+            raise AnalysisPlanValidationError(
+                "pre-treatment inclusion arrays must have equal length"
+            )
+    assert size is not None
+    if type(projected_cells) is not tuple or not projected_cells or any(
+        type(cell) is not ProjectedPopulationCellMetadata
+        for cell in projected_cells
+    ):
+        raise TypeError(
+            "projected_cells must be a non-empty exact tuple of cell metadata"
+        )
+    for cell in projected_cells:
+        ProjectedPopulationCellMetadata.__post_init__(cell)
+    if type(cell_indices) is not tuple or any(
+        type(index) is not int for index in cell_indices
+    ):
+        raise TypeError("cell_indices must be an exact tuple of Python integers")
+    if len(cell_indices) != size:
+        raise AnalysisPlanValidationError(
+            "cell_indices must contain one entry per player"
+        )
+    indices = np.asarray(cell_indices, dtype=np.int64)
+    if indices.size and (
+        np.any(indices < 0) or np.any(indices >= len(projected_cells))
+    ):
+        raise AnalysisPlanValidationError("cell_indices contain an unknown cell")
+    if jurisdiction.size and (
+        np.any(jurisdiction < 0)
+        or np.any(jurisdiction >= len(jurisdiction_codes))
+    ):
+        raise AnalysisPlanValidationError(
+            "jurisdiction indices fall outside jurisdiction_codes"
+        )
+    selected_cells = np.zeros(len(projected_cells), dtype=np.bool_)
+    for cell_index, cell in enumerate(projected_cells):
+        if not 0 <= cell.jurisdiction_index < len(jurisdiction_codes):
+            raise AnalysisPlanVerificationError(
+                "projected cell has an unknown jurisdiction index"
+            )
+        if jurisdiction_codes[cell.jurisdiction_index] != cell.jurisdiction_code:
+            raise AnalysisPlanVerificationError(
+                "projected cell jurisdiction code/index is inconsistent"
+            )
+        positions = indices == cell_index
+        if np.any(jurisdiction[positions] != cell.jurisdiction_index):
+            raise AnalysisPlanVerificationError(
+                "player jurisdiction differs from projected joint cell"
+            )
+        if np.any(age_years[positions] < cell.age_min_inclusive) or np.any(
+            age_years[positions] >= cell.age_max_exclusive
+        ):
+            raise AnalysisPlanVerificationError(
+                "player age differs from projected joint cell"
+            )
+        selected_cells[cell_index] = all(
+            (
+                not predicate.jurisdiction_codes
+                or cell.jurisdiction_code in predicate.jurisdiction_codes,
+                not predicate.monthly_disposable_income_band_ids
+                or cell.monthly_disposable_income_band_id
+                in predicate.monthly_disposable_income_band_ids,
+                not predicate.household_type_ids
+                or cell.household_type in predicate.household_type_ids,
+                not predicate.gaming_states
+                or _gaming_state(cell.baseline_gamer) in predicate.gaming_states,
+                not predicate.payer_history_states
+                or _payer_state(cell.baseline_ever_payer)
+                in predicate.payer_history_states,
+            )
+        )
+
+    mask = selected_cells[indices] if indices.size else np.zeros(0, dtype=np.bool_)
+    mask &= age_years >= predicate.age_min_inclusive
+    mask &= age_years < predicate.age_max_exclusive
+    if predicate.minor_filter is PopulationMinorFilter.MINOR_ONLY:
+        mask &= is_minor
+    elif predicate.minor_filter is PopulationMinorFilter.ADULT_ONLY:
+        mask &= ~is_minor
+    immutable = np.array(mask, dtype=np.bool_, copy=True)
+    immutable.setflags(write=False)
+    return immutable
+
+
+@dataclass(frozen=True, slots=True)
+class FixedSeedStoppingRule:
+    """Outcome-blind rule requiring exactly one declared fixed seed set."""
+
+    seeds: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.seeds) is not tuple or not self.seeds:
+            raise TypeError("fixed-seed stopping rule requires a non-empty tuple")
+        observed = tuple(
+            validate_seed(seed, name=f"stopping seeds[{index}]")
+            for index, seed in enumerate(self.seeds)
+        )
+        if len(set(observed)) != len(observed):
+            raise AnalysisPlanValidationError("stopping seeds must be unique")
+        if observed != tuple(sorted(observed)):
+            raise AnalysisPlanValidationError(
+                "stopping seeds must use ascending canonical order"
+            )
+
+    @property
+    def rule_id(self) -> str:
+        return "FIXED_SEED_SET_V1"
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "rule_id": self.rule_id,
+            "seeds": list(self.seeds),
+            "seed_decimal_strings": [str(seed) for seed in self.seeds],
+            "seed_count": len(self.seeds),
+            "seed_count_decimal": str(len(self.seeds)),
+            "early_stopping_allowed": False,
+            "treatment_result_interim_looks_allowed": False,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedPopulationEstimand:
+    """One directed, population-weighted per-player scenario contrast."""
+
+    estimand_id: str
+    role: AnalysisEstimandRole
+    reference_scenario_id: ScenarioId
+    comparison_scenario_id: ScenarioId
+    outcome_metric: PopulationOutcomeMetric
+    metric_contract_id: str
+    inclusion_predicate: CanonicalPopulationInclusionPredicate
+    period: PopulationPeriodSemantics
+    currency: PopulationCurrencySemantics | None = None
+
+    def __post_init__(self) -> None:
+        _identifier(self.estimand_id, name="estimand_id")
+        if type(self.role) is not AnalysisEstimandRole:
+            raise TypeError("estimand role must be AnalysisEstimandRole")
+        if type(self.reference_scenario_id) is not ScenarioId:
+            raise TypeError("reference_scenario_id must be ScenarioId")
+        if type(self.comparison_scenario_id) is not ScenarioId:
+            raise TypeError("comparison_scenario_id must be ScenarioId")
+        if self.reference_scenario_id is self.comparison_scenario_id:
+            raise AnalysisPlanValidationError(
+                "estimand reference and comparison scenarios must differ"
+            )
+        if type(self.outcome_metric) is not PopulationOutcomeMetric:
+            raise TypeError("outcome_metric must be PopulationOutcomeMetric")
+        _contract_identifier(self.metric_contract_id, name="metric_contract_id")
+        if type(self.inclusion_predicate) is not CanonicalPopulationInclusionPredicate:
+            raise TypeError(
+                "inclusion_predicate must be CanonicalPopulationInclusionPredicate"
+            )
+        CanonicalPopulationInclusionPredicate.__post_init__(
+            self.inclusion_predicate
+        )
+        if type(self.period) is not PopulationPeriodSemantics:
+            raise TypeError("period must be PopulationPeriodSemantics")
+        PopulationPeriodSemantics.__post_init__(self.period)
+        semantics = population_outcome_semantics(self.outcome_metric)
+        if semantics.metric_kind is PopulationMetricKind.MONEY_MINOR_UNITS:
+            if type(self.currency) is not PopulationCurrencySemantics:
+                raise AnalysisPlanValidationError(
+                    "money outcome estimands require currency semantics"
+                )
+            PopulationCurrencySemantics.__post_init__(self.currency)
+        elif self.currency is not None:
+            raise AnalysisPlanValidationError(
+                "non-money outcome estimands cannot declare currency semantics"
+            )
+
+    @property
+    def contrast_direction(self) -> str:
+        return "COMPARISON_MINUS_REFERENCE"
+
+    @property
+    def algorithm(self) -> PopulationEstimandAlgorithm:
+        return PopulationEstimandAlgorithm.PAIRED_WEIGHTED_MEAN_DIFFERENCE_V1
+
+    @property
+    def normalization(self) -> PopulationNormalization:
+        return PopulationNormalization.DIVIDE_BY_WEIGHT_SUM
+
+    @property
+    def estimand_sha256(self) -> str:
+        return _canonical_sha256(self.snapshot())
+
+    @property
+    def specification_sha256(self) -> str:
+        """Identity excluding the reporting label and PRIMARY/SECONDARY role."""
+
+        payload = self.snapshot()
+        del payload["estimand_id"]
+        del payload["role"]
+        return _canonical_sha256(payload)
+
+    @property
+    def outcome_semantics(self) -> PopulationOutcomeMetricSemantics:
+        return population_outcome_semantics(self.outcome_metric)
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "estimand_id": self.estimand_id,
+            "role": self.role.value,
+            "reference_scenario_id": self.reference_scenario_id.value,
+            "comparison_scenario_id": self.comparison_scenario_id.value,
+            "contrast_direction": self.contrast_direction,
+            "outcome": self.outcome_semantics.snapshot(),
+            "metric_contract_id": self.metric_contract_id,
+            "inclusion_predicate": self.inclusion_predicate.snapshot(),
+            "period": self.period.snapshot(),
+            "currency": (
+                self.currency.snapshot() if self.currency is not None else None
+            ),
+            "algorithm": self.algorithm.value,
+            "normalization": self.normalization.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProspectiveAnalysisPlan:
+    """Immutable semantic plan plus its self-attested canonical digest."""
+
+    schema_version: str
+    plan_id: str
+    expected_causal_design_sha256: str
+    expected_batch_spec_sha256: str
+    expected_model_inputs_sha256: str
+    expected_population_input_sha256: str
+    expected_profile_input_sha256: str
+    expected_metric_contract_sha256: str
+    expected_harm_weights_sha256: str
+    expected_output_profile_sha256: str
+    stopping_rule: FixedSeedStoppingRule
+    estimands: tuple[PlannedPopulationEstimand, ...]
+    plan_sha256: str
+    registration_status: AnalysisPlanRegistrationStatus = field(
+        default=AnalysisPlanRegistrationStatus.UNREGISTERED,
+        init=False,
+    )
+    preregistered: bool = field(default=False, init=False)
+    campaign_ready: bool = field(default=False, init=False)
+    campaign_blockers: tuple[str, ...] = field(
+        default=_CAMPAIGN_BLOCKERS,
+        init=False,
+    )
+
+    def __post_init__(self) -> None:
+        if self.schema_version != ANALYSIS_PLAN_SCHEMA_VERSION:
+            raise AnalysisPlanValidationError(
+                "unsupported prospective analysis-plan schema version"
+            )
+        _identifier(self.plan_id, name="plan_id")
+        for name in (
+            "expected_causal_design_sha256",
+            "expected_batch_spec_sha256",
+            "expected_model_inputs_sha256",
+            "expected_population_input_sha256",
+            "expected_profile_input_sha256",
+            "expected_metric_contract_sha256",
+            "expected_harm_weights_sha256",
+            "expected_output_profile_sha256",
+            "plan_sha256",
+        ):
+            _sha256_digest(getattr(self, name), name=name)
+        if type(self.stopping_rule) is not FixedSeedStoppingRule:
+            raise TypeError("stopping_rule must be FixedSeedStoppingRule")
+        FixedSeedStoppingRule.__post_init__(self.stopping_rule)
+        if type(self.estimands) is not tuple or not self.estimands or any(
+            type(estimand) is not PlannedPopulationEstimand
+            for estimand in self.estimands
+        ):
+            raise TypeError(
+                "estimands must be a non-empty exact tuple of planned estimands"
+            )
+        for estimand in self.estimands:
+            PlannedPopulationEstimand.__post_init__(estimand)
+        ids = tuple(estimand.estimand_id for estimand in self.estimands)
+        if len(set(ids)) != len(ids):
+            raise AnalysisPlanValidationError("estimand IDs must be unique")
+        if ids != tuple(sorted(ids)):
+            raise AnalysisPlanValidationError(
+                "estimands must use ascending estimand_id order"
+            )
+        hashes = tuple(
+            estimand.specification_sha256 for estimand in self.estimands
+        )
+        if len(set(hashes)) != len(hashes):
+            raise AnalysisPlanValidationError(
+                "estimands must have unique semantic specifications"
+            )
+        primary_count = sum(
+            estimand.role is AnalysisEstimandRole.PRIMARY
+            for estimand in self.estimands
+        )
+        if primary_count != 1:
+            raise AnalysisPlanValidationError(
+                "analysis plan must declare exactly one PRIMARY estimand"
+            )
+        if self.registration_status is not AnalysisPlanRegistrationStatus.UNREGISTERED:
+            raise AnalysisPlanValidationError(
+                "schema-v1 analysis plans must remain UNREGISTERED"
+            )
+        if self.preregistered or self.campaign_ready:
+            raise AnalysisPlanValidationError(
+                "schema-v1 analysis plans cannot be preregistered or campaign-ready"
+            )
+        if self.campaign_blockers != _CAMPAIGN_BLOCKERS:
+            raise AnalysisPlanValidationError(
+                "schema-v1 campaign blockers are fixed"
+            )
+        if self.plan_sha256 != _canonical_sha256(self.attestation_payload()):
+            raise AnalysisPlanValidationError(
+                "plan_sha256 does not match the canonical plan payload"
+            )
+
+    @property
+    def primary_estimand(self) -> PlannedPopulationEstimand:
+        return next(
+            estimand
+            for estimand in self.estimands
+            if estimand.role is AnalysisEstimandRole.PRIMARY
+        )
+
+    def attestation_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": self.schema_version,
+            "plan_id": self.plan_id,
+            "expected_causal_design_sha256": (
+                self.expected_causal_design_sha256
+            ),
+            "expected_batch_spec_sha256": self.expected_batch_spec_sha256,
+            "expected_model_inputs_sha256": self.expected_model_inputs_sha256,
+            "expected_population_input_sha256": (
+                self.expected_population_input_sha256
+            ),
+            "expected_profile_input_sha256": (
+                self.expected_profile_input_sha256
+            ),
+            "expected_metric_contract_sha256": (
+                self.expected_metric_contract_sha256
+            ),
+            "expected_harm_weights_sha256": self.expected_harm_weights_sha256,
+            "expected_output_profile_sha256": (
+                self.expected_output_profile_sha256
+            ),
+            "stopping_rule": self.stopping_rule.snapshot(),
+            "estimands": [estimand.snapshot() for estimand in self.estimands],
+            "registration_status": self.registration_status.value,
+            "preregistered": self.preregistered,
+            "campaign_ready": self.campaign_ready,
+            "campaign_blockers": list(self.campaign_blockers),
+        }
+
+    def snapshot(self) -> dict[str, object]:
+        return {**self.attestation_payload(), "plan_sha256": self.plan_sha256}
+
+    def validate_for_campaign(self) -> None:
+        raise AnalysisPlanCampaignError(self.campaign_blockers)
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedProspectiveAnalysisPlan:
+    """A semantic plan bound to the exact regular-file bytes that supplied it."""
+
+    plan_path: Path
+    byte_length: int
+    file_sha256: str
+    semantic_sha256: str
+    plan: ProspectiveAnalysisPlan
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan_path, Path) or not self.plan_path.is_absolute():
+            raise TypeError("plan_path must be an absolute Path")
+        lexical_path = Path(os.path.normpath(os.fspath(self.plan_path)))
+        if ".." in self.plan_path.parts or lexical_path != self.plan_path:
+            raise AnalysisPlanValidationError(
+                "plan_path must be lexically canonical"
+            )
+        _strict_int(
+            self.byte_length,
+            name="analysis plan byte_length",
+            minimum=1,
+            maximum=MAX_ANALYSIS_PLAN_BYTES,
+        )
+        _sha256_digest(self.file_sha256, name="analysis plan file_sha256")
+        _sha256_digest(
+            self.semantic_sha256,
+            name="analysis plan semantic_sha256",
+        )
+        if type(self.plan) is not ProspectiveAnalysisPlan:
+            raise TypeError("plan must be ProspectiveAnalysisPlan")
+        ProspectiveAnalysisPlan.__post_init__(self.plan)
+        if self.semantic_sha256 != self.plan.plan_sha256:
+            raise AnalysisPlanValidationError(
+                "loaded semantic digest differs from the plan digest"
+            )
+        observed = _read_regular_file(self.plan_path)
+        if (
+            len(observed) != self.byte_length
+            or sha256(observed).hexdigest() != self.file_sha256
+        ):
+            raise AnalysisPlanVerificationError(
+                "analysis plan file changed: loaded metadata differ from its exact bytes"
+            )
+        observed_plan = _plan_from_snapshot(_parse_json_object(observed))
+        if observed_plan != self.plan:
+            raise AnalysisPlanVerificationError(
+                "loaded analysis-plan object differs from its exact file declaration"
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "schema_version": ANALYSIS_PLAN_SCHEMA_VERSION,
+            "plan_path": str(self.plan_path),
+            "byte_length": self.byte_length,
+            "file_sha256": self.file_sha256,
+            "semantic_sha256": self.semantic_sha256,
+            "plan": self.plan.snapshot(),
+        }
+
+    def manifest_payload(self) -> dict[str, object]:
+        """Return the complete immutable file and semantic plan attestation."""
+
+        return self.snapshot()
+
+
+def analysis_plan_harm_weights_sha256(weights: WelfareHarmWeights) -> str:
+    """Hash the exact versioned harm-weight payload expected by a plan."""
+
+    if type(weights) is not WelfareHarmWeights:
+        raise TypeError("weights must be WelfareHarmWeights")
+    WelfareHarmWeights.__post_init__(weights)
+    payload = {
+        "schema_version": ANALYSIS_PLAN_SCHEMA_VERSION,
+        "weights": {
+            name: getattr(weights, name)
+            for name in weights.__dataclass_fields__
+        },
+    }
+    return _canonical_sha256(payload)
+
+
+def build_prospective_analysis_plan(
+    *,
+    plan_id: str,
+    expected_causal_design_sha256: str,
+    expected_batch_spec_sha256: str,
+    expected_model_inputs_sha256: str,
+    expected_population_input_sha256: str,
+    expected_profile_input_sha256: str,
+    expected_metric_contract_sha256: str,
+    expected_harm_weights_sha256: str,
+    expected_output_profile_sha256: str,
+    stopping_rule: FixedSeedStoppingRule,
+    estimands: Sequence[PlannedPopulationEstimand],
+) -> ProspectiveAnalysisPlan:
+    """Canonicalize estimand order and build a self-attested draft plan."""
+
+    if isinstance(estimands, (str, bytes, bytearray)) or not isinstance(
+        estimands,
+        Sequence,
+    ):
+        raise TypeError("estimands must be a sequence")
+    selected = tuple(estimands)
+    if any(type(item) is not PlannedPopulationEstimand for item in selected):
+        raise TypeError("estimands must contain PlannedPopulationEstimand values")
+    selected = tuple(sorted(selected, key=lambda item: item.estimand_id))
+    payload = _plan_attestation_payload(
+        plan_id=plan_id,
+        expected_causal_design_sha256=expected_causal_design_sha256,
+        expected_batch_spec_sha256=expected_batch_spec_sha256,
+        expected_model_inputs_sha256=expected_model_inputs_sha256,
+        expected_population_input_sha256=expected_population_input_sha256,
+        expected_profile_input_sha256=expected_profile_input_sha256,
+        expected_metric_contract_sha256=expected_metric_contract_sha256,
+        expected_harm_weights_sha256=expected_harm_weights_sha256,
+        expected_output_profile_sha256=expected_output_profile_sha256,
+        stopping_rule=stopping_rule,
+        estimands=selected,
+    )
+    return ProspectiveAnalysisPlan(
+        schema_version=ANALYSIS_PLAN_SCHEMA_VERSION,
+        plan_id=plan_id,
+        expected_causal_design_sha256=expected_causal_design_sha256,
+        expected_batch_spec_sha256=expected_batch_spec_sha256,
+        expected_model_inputs_sha256=expected_model_inputs_sha256,
+        expected_population_input_sha256=expected_population_input_sha256,
+        expected_profile_input_sha256=expected_profile_input_sha256,
+        expected_metric_contract_sha256=expected_metric_contract_sha256,
+        expected_harm_weights_sha256=expected_harm_weights_sha256,
+        expected_output_profile_sha256=expected_output_profile_sha256,
+        stopping_rule=stopping_rule,
+        estimands=selected,
+        plan_sha256=_canonical_sha256(payload),
+    )
+
+
+def verify_prospective_analysis_plan_bindings(
+    plan: ProspectiveAnalysisPlan,
+    *,
+    causal_design_sha256: str,
+    batch_spec_sha256: str,
+    model_inputs_sha256: str,
+    population_input_sha256: str,
+    profile_input_sha256: str,
+    metric_contract_sha256: str,
+    harm_weights_sha256: str,
+    output_profile_sha256: str,
+    seeds: tuple[int, ...],
+) -> ProspectiveAnalysisPlan:
+    """Compare every prospective identity with independently resolved inputs."""
+
+    if type(plan) is not ProspectiveAnalysisPlan:
+        raise TypeError("plan must be ProspectiveAnalysisPlan")
+    ProspectiveAnalysisPlan.__post_init__(plan)
+    observed = {
+        "expected_causal_design_sha256": causal_design_sha256,
+        "expected_batch_spec_sha256": batch_spec_sha256,
+        "expected_model_inputs_sha256": model_inputs_sha256,
+        "expected_population_input_sha256": population_input_sha256,
+        "expected_profile_input_sha256": profile_input_sha256,
+        "expected_metric_contract_sha256": metric_contract_sha256,
+        "expected_harm_weights_sha256": harm_weights_sha256,
+        "expected_output_profile_sha256": output_profile_sha256,
+    }
+    mismatches: list[str] = []
+    for field_name, value in observed.items():
+        _sha256_digest(value, name=field_name.removeprefix("expected_"))
+        if getattr(plan, field_name) != value:
+            mismatches.append(field_name.removeprefix("expected_"))
+    if type(seeds) is not tuple:
+        raise TypeError("runtime seeds must be an exact tuple")
+    try:
+        FixedSeedStoppingRule(seeds=seeds)
+    except (TypeError, ValueError) as exc:
+        raise AnalysisPlanVerificationError(
+            f"runtime seeds are invalid: {exc}"
+        ) from exc
+    if seeds != plan.stopping_rule.seeds:
+        mismatches.append("fixed_seed_stopping_rule")
+    if mismatches:
+        raise AnalysisPlanVerificationError(
+            "analysis plan bindings differ from resolved runtime inputs: "
+            + ", ".join(mismatches)
+        )
+    return plan
+
+
+def load_prospective_analysis_plan(
+    path: str | Path,
+) -> LoadedProspectiveAnalysisPlan:
+    """Securely load and re-attest one schema-v1 JSON plan file."""
+
+    candidate = _absolute_path(path)
+    observed = _read_regular_file(candidate)
+    raw = _parse_json_object(observed)
+    plan = _plan_from_snapshot(raw)
+    return LoadedProspectiveAnalysisPlan(
+        plan_path=candidate,
+        byte_length=len(observed),
+        file_sha256=sha256(observed).hexdigest(),
+        semantic_sha256=plan.plan_sha256,
+        plan=plan,
+    )
+
+
+def verify_loaded_prospective_analysis_plan(
+    loaded: LoadedProspectiveAnalysisPlan,
+) -> LoadedProspectiveAnalysisPlan:
+    """Reopen the selected file and reject mutation or path substitution."""
+
+    if type(loaded) is not LoadedProspectiveAnalysisPlan:
+        raise TypeError("loaded must be LoadedProspectiveAnalysisPlan")
+    LoadedProspectiveAnalysisPlan.__post_init__(loaded)
+    observed = load_prospective_analysis_plan(loaded.plan_path)
+    if observed != loaded:
+        raise AnalysisPlanVerificationError(
+            "analysis plan file changed after it was loaded"
+        )
+    return observed
+
+
+def _plan_attestation_payload(
+    *,
+    plan_id: str,
+    expected_causal_design_sha256: str,
+    expected_batch_spec_sha256: str,
+    expected_model_inputs_sha256: str,
+    expected_population_input_sha256: str,
+    expected_profile_input_sha256: str,
+    expected_metric_contract_sha256: str,
+    expected_harm_weights_sha256: str,
+    expected_output_profile_sha256: str,
+    stopping_rule: FixedSeedStoppingRule,
+    estimands: tuple[PlannedPopulationEstimand, ...],
+) -> dict[str, object]:
+    if type(stopping_rule) is not FixedSeedStoppingRule:
+        raise TypeError("stopping_rule must be FixedSeedStoppingRule")
+    return {
+        "schema_version": ANALYSIS_PLAN_SCHEMA_VERSION,
+        "plan_id": plan_id,
+        "expected_causal_design_sha256": expected_causal_design_sha256,
+        "expected_batch_spec_sha256": expected_batch_spec_sha256,
+        "expected_model_inputs_sha256": expected_model_inputs_sha256,
+        "expected_population_input_sha256": expected_population_input_sha256,
+        "expected_profile_input_sha256": expected_profile_input_sha256,
+        "expected_metric_contract_sha256": expected_metric_contract_sha256,
+        "expected_harm_weights_sha256": expected_harm_weights_sha256,
+        "expected_output_profile_sha256": expected_output_profile_sha256,
+        "stopping_rule": stopping_rule.snapshot(),
+        "estimands": [estimand.snapshot() for estimand in estimands],
+        "registration_status": AnalysisPlanRegistrationStatus.UNREGISTERED.value,
+        "preregistered": False,
+        "campaign_ready": False,
+        "campaign_blockers": list(_CAMPAIGN_BLOCKERS),
+    }
+
+
+_PLAN_KEYS = frozenset(
+    {
+        "schema_version",
+        "plan_id",
+        "expected_causal_design_sha256",
+        "expected_batch_spec_sha256",
+        "expected_model_inputs_sha256",
+        "expected_population_input_sha256",
+        "expected_profile_input_sha256",
+        "expected_metric_contract_sha256",
+        "expected_harm_weights_sha256",
+        "expected_output_profile_sha256",
+        "stopping_rule",
+        "estimands",
+        "registration_status",
+        "preregistered",
+        "campaign_ready",
+        "campaign_blockers",
+        "plan_sha256",
+    }
+)
+_STOPPING_KEYS = frozenset(
+    {
+        "rule_id",
+        "seeds",
+        "seed_decimal_strings",
+        "seed_count",
+        "seed_count_decimal",
+        "early_stopping_allowed",
+        "treatment_result_interim_looks_allowed",
+    }
+)
+_ESTIMAND_KEYS = frozenset(
+    {
+        "estimand_id",
+        "role",
+        "reference_scenario_id",
+        "comparison_scenario_id",
+        "contrast_direction",
+        "outcome",
+        "metric_contract_id",
+        "inclusion_predicate",
+        "period",
+        "currency",
+        "algorithm",
+        "normalization",
+    }
+)
+_OUTCOME_KEYS = frozenset(
+    {
+        "metric",
+        "metric_name",
+        "result_path",
+        "component_index",
+        "metric_kind",
+        "metric_scale",
+        "storage_dtype",
+        "unit",
+    }
+)
+_PREDICATE_KEYS = frozenset(
+    {
+        "rule",
+        "jurisdiction_codes",
+        "age_min_inclusive",
+        "age_max_exclusive",
+        "minor_filter",
+        "monthly_disposable_income_band_ids",
+        "household_type_ids",
+        "gaming_states",
+        "payer_history_states",
+    }
+)
+_RULE_KEYS = frozenset(
+    {"rule_id", "description", "source_fields", "timing", "evidence_role"}
+)
+_PERIOD_KEYS = frozenset({"period_start", "period_end", "description"})
+_CURRENCY_KEYS = frozenset(
+    {
+        "currency_code",
+        "minor_unit_name",
+        "price_period_start",
+        "price_period_end",
+        "currency_basis_sha256",
+        "rounding",
+    }
+)
+
+
+def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
+    _exact_keys(row, _PLAN_KEYS, name="analysis plan")
+    if _required_string(row, "schema_version") != ANALYSIS_PLAN_SCHEMA_VERSION:
+        raise AnalysisPlanValidationError(
+            "unsupported prospective analysis-plan schema version"
+        )
+    stopping = _stopping_from_snapshot(
+        _required_mapping(row, "stopping_rule")
+    )
+    raw_estimands = _required_list(row, "estimands")
+    estimands = tuple(
+        _estimand_from_snapshot(
+            _require_mapping(item, name=f"estimands[{index}]")
+        )
+        for index, item in enumerate(raw_estimands)
+    )
+    try:
+        registration = AnalysisPlanRegistrationStatus(
+            _required_string(row, "registration_status")
+        )
+    except ValueError as exc:
+        raise AnalysisPlanValidationError(
+            "schema-v1 registration_status must be UNREGISTERED"
+        ) from exc
+    if registration is not AnalysisPlanRegistrationStatus.UNREGISTERED:
+        raise AnalysisPlanValidationError(
+            "schema-v1 registration_status must be UNREGISTERED"
+        )
+    if _required_bool(row, "preregistered"):
+        raise AnalysisPlanValidationError(
+            "schema-v1 preregistered must be false"
+        )
+    if _required_bool(row, "campaign_ready"):
+        raise AnalysisPlanValidationError(
+            "schema-v1 campaign_ready must be false"
+        )
+    blockers = tuple(
+        _strict_json_string(value, name=f"campaign_blockers[{index}]")
+        for index, value in enumerate(_required_list(row, "campaign_blockers"))
+    )
+    if blockers != _CAMPAIGN_BLOCKERS:
+        raise AnalysisPlanValidationError(
+            "schema-v1 campaign_blockers differ from the fixed fail-closed set"
+        )
+    plan = ProspectiveAnalysisPlan(
+        schema_version=ANALYSIS_PLAN_SCHEMA_VERSION,
+        plan_id=_required_string(row, "plan_id"),
+        expected_causal_design_sha256=_required_string(
+            row,
+            "expected_causal_design_sha256",
+        ),
+        expected_batch_spec_sha256=_required_string(
+            row,
+            "expected_batch_spec_sha256",
+        ),
+        expected_model_inputs_sha256=_required_string(
+            row,
+            "expected_model_inputs_sha256",
+        ),
+        expected_population_input_sha256=_required_string(
+            row,
+            "expected_population_input_sha256",
+        ),
+        expected_profile_input_sha256=_required_string(
+            row,
+            "expected_profile_input_sha256",
+        ),
+        expected_metric_contract_sha256=_required_string(
+            row,
+            "expected_metric_contract_sha256",
+        ),
+        expected_harm_weights_sha256=_required_string(
+            row,
+            "expected_harm_weights_sha256",
+        ),
+        expected_output_profile_sha256=_required_string(
+            row,
+            "expected_output_profile_sha256",
+        ),
+        stopping_rule=stopping,
+        estimands=estimands,
+        plan_sha256=_required_string(row, "plan_sha256"),
+    )
+    if plan.snapshot() != dict(row):
+        raise AnalysisPlanValidationError(
+            "analysis plan JSON is not the canonical schema-v1 snapshot"
+        )
+    return plan
+
+
+def _stopping_from_snapshot(row: Mapping[str, object]) -> FixedSeedStoppingRule:
+    _exact_keys(row, _STOPPING_KEYS, name="fixed-seed stopping rule")
+    seeds = tuple(
+        _strict_json_int(value, name=f"stopping seeds[{index}]")
+        for index, value in enumerate(_required_list(row, "seeds"))
+    )
+    _required_int(row, "seed_count")
+    if _required_bool(row, "early_stopping_allowed"):
+        raise AnalysisPlanValidationError(
+            "fixed-seed stopping rule cannot allow early stopping"
+        )
+    if _required_bool(row, "treatment_result_interim_looks_allowed"):
+        raise AnalysisPlanValidationError(
+            "fixed-seed stopping rule cannot allow treatment-result interim looks"
+        )
+    stopping = FixedSeedStoppingRule(seeds=seeds)
+    if stopping.snapshot() != dict(row):
+        raise AnalysisPlanValidationError(
+            "fixed-seed stopping rule is not canonical"
+        )
+    return stopping
+
+
+def _estimand_from_snapshot(row: Mapping[str, object]) -> PlannedPopulationEstimand:
+    _exact_keys(row, _ESTIMAND_KEYS, name="planned population estimand")
+    try:
+        role = AnalysisEstimandRole(_required_string(row, "role"))
+        reference = ScenarioId(_required_string(row, "reference_scenario_id"))
+        comparison = ScenarioId(_required_string(row, "comparison_scenario_id"))
+        metric = PopulationOutcomeMetric(
+            _required_string(_required_mapping(row, "outcome"), "metric")
+        )
+    except ValueError as exc:
+        raise AnalysisPlanValidationError(
+            "planned estimand contains an unknown enum value"
+        ) from exc
+    outcome_row = _required_mapping(row, "outcome")
+    _exact_keys(outcome_row, _OUTCOME_KEYS, name="population outcome semantics")
+    component_index = outcome_row.get("component_index")
+    if component_index is not None:
+        _strict_json_int(component_index, name="outcome component_index")
+    if population_outcome_semantics(metric).snapshot() != dict(outcome_row):
+        raise AnalysisPlanValidationError(
+            "population outcome semantics differ from the whitelist"
+        )
+    period = _period_from_snapshot(_required_mapping(row, "period"))
+    currency_row = row.get("currency")
+    currency = (
+        None
+        if currency_row is None
+        else _currency_from_snapshot(
+            _require_mapping(currency_row, name="estimand currency")
+        )
+    )
+    estimand = PlannedPopulationEstimand(
+        estimand_id=_required_string(row, "estimand_id"),
+        role=role,
+        reference_scenario_id=reference,
+        comparison_scenario_id=comparison,
+        outcome_metric=metric,
+        metric_contract_id=_required_string(row, "metric_contract_id"),
+        inclusion_predicate=_predicate_from_snapshot(
+            _required_mapping(row, "inclusion_predicate")
+        ),
+        period=period,
+        currency=currency,
+    )
+    if estimand.snapshot() != dict(row):
+        raise AnalysisPlanValidationError(
+            "planned estimand is not the canonical schema-v1 snapshot"
+        )
+    return estimand
+
+
+def _predicate_from_snapshot(
+    row: Mapping[str, object],
+) -> CanonicalPopulationInclusionPredicate:
+    _exact_keys(row, _PREDICATE_KEYS, name="population inclusion predicate")
+    rule_row = _required_mapping(row, "rule")
+    _exact_keys(rule_row, _RULE_KEYS, name="population inclusion rule")
+    try:
+        source_fields = tuple(
+            PopulationInclusionField(
+                _strict_json_string(value, name=f"source_fields[{index}]")
+            )
+            for index, value in enumerate(
+                _required_list(rule_row, "source_fields")
+            )
+        )
+        timing = PopulationInclusionTiming(
+            _required_string(rule_row, "timing")
+        )
+        evidence_role = PopulationEstimandRole(
+            _required_string(rule_row, "evidence_role")
+        )
+        minor_filter = PopulationMinorFilter(
+            _required_string(row, "minor_filter")
+        )
+        gaming_states = tuple(
+            PopulationGamingState(
+                _strict_json_string(value, name=f"gaming_states[{index}]")
+            )
+            for index, value in enumerate(_required_list(row, "gaming_states"))
+        )
+        payer_states = tuple(
+            PopulationPayerHistoryState(
+                _strict_json_string(
+                    value,
+                    name=f"payer_history_states[{index}]",
+                )
+            )
+            for index, value in enumerate(
+                _required_list(row, "payer_history_states")
+            )
+        )
+    except ValueError as exc:
+        raise AnalysisPlanValidationError(
+            "population inclusion predicate contains an unknown enum value"
+        ) from exc
+    rule = PopulationInclusionRule(
+        rule_id=_required_string(rule_row, "rule_id"),
+        description=_required_string(rule_row, "description"),
+        source_fields=source_fields,
+        timing=timing,
+        evidence_role=evidence_role,
+    )
+    predicate = CanonicalPopulationInclusionPredicate(
+        rule=rule,
+        jurisdiction_codes=_string_tuple_from_snapshot(
+            row,
+            "jurisdiction_codes",
+        ),
+        age_min_inclusive=_required_int(row, "age_min_inclusive"),
+        age_max_exclusive=_required_int(row, "age_max_exclusive"),
+        minor_filter=minor_filter,
+        monthly_disposable_income_band_ids=_string_tuple_from_snapshot(
+            row,
+            "monthly_disposable_income_band_ids",
+        ),
+        household_type_ids=_string_tuple_from_snapshot(
+            row,
+            "household_type_ids",
+        ),
+        gaming_states=gaming_states,
+        payer_history_states=payer_states,
+    )
+    if predicate.snapshot() != dict(row):
+        raise AnalysisPlanValidationError(
+            "population inclusion predicate is not canonical"
+        )
+    return predicate
+
+
+def _period_from_snapshot(row: Mapping[str, object]) -> PopulationPeriodSemantics:
+    _exact_keys(row, _PERIOD_KEYS, name="estimand period")
+    period = PopulationPeriodSemantics(
+        period_start=_iso_date(row.get("period_start"), name="period_start"),
+        period_end=_iso_date(row.get("period_end"), name="period_end"),
+        description=_required_string(row, "description"),
+    )
+    if period.snapshot() != dict(row):
+        raise AnalysisPlanValidationError("estimand period is not canonical")
+    return period
+
+
+def _currency_from_snapshot(
+    row: Mapping[str, object],
+) -> PopulationCurrencySemantics:
+    _exact_keys(row, _CURRENCY_KEYS, name="estimand currency")
+    from ..metrics.population_estimands import PopulationCurrencyRounding
+
+    try:
+        rounding = PopulationCurrencyRounding(
+            _required_string(row, "rounding")
+        )
+    except ValueError as exc:
+        raise AnalysisPlanValidationError(
+            "estimand currency rounding is invalid"
+        ) from exc
+    currency = PopulationCurrencySemantics(
+        currency_code=_required_string(row, "currency_code"),
+        minor_unit_name=_required_string(row, "minor_unit_name"),
+        price_period_start=_iso_date(
+            row.get("price_period_start"),
+            name="price_period_start",
+        ),
+        price_period_end=_iso_date(
+            row.get("price_period_end"),
+            name="price_period_end",
+        ),
+        currency_basis_sha256=_required_string(
+            row,
+            "currency_basis_sha256",
+        ),
+        rounding=rounding,
+    )
+    if currency.snapshot() != dict(row):
+        raise AnalysisPlanValidationError("estimand currency is not canonical")
+    return currency
+
+
+def _absolute_path(value: str | Path) -> Path:
+    if type(value) is not str and not isinstance(value, Path):
+        raise TypeError("analysis plan path must be str or Path")
+    if not os.fspath(value):
+        raise ValueError("analysis plan path cannot be empty")
+    return Path(os.path.abspath(os.fspath(value)))
+
+
+def _read_regular_file(path: Path) -> bytes:
+    def is_reparse(metadata: os.stat_result) -> bool:
+        marker = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        attributes = getattr(metadata, "st_file_attributes", 0)
+        return bool(attributes & marker)
+
+    def same_identity(left: os.stat_result, right: os.stat_result) -> bool:
+        return (
+            left.st_dev,
+            left.st_ino,
+            left.st_mode,
+            left.st_size,
+            left.st_mtime_ns,
+        ) == (
+            right.st_dev,
+            right.st_ino,
+            right.st_mode,
+            right.st_size,
+            right.st_mtime_ns,
+        )
+
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise AnalysisPlanVerificationError(
+            f"cannot inspect analysis plan file: {path}"
+        ) from exc
+    if path.is_symlink() or is_reparse(before) or not stat.S_ISREG(before.st_mode):
+        raise AnalysisPlanVerificationError(
+            "analysis plan path must name a regular non-symlink file"
+        )
+    if before.st_size <= 0 or before.st_size > MAX_ANALYSIS_PLAN_BYTES:
+        raise AnalysisPlanValidationError(
+            "analysis plan byte length is outside schema-v1 limits"
+        )
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise AnalysisPlanVerificationError(
+            f"cannot open analysis plan file: {path}"
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or is_reparse(opened):
+            raise AnalysisPlanVerificationError(
+                "opened analysis plan object is not a regular file"
+            )
+        if not same_identity(before, opened):
+            raise AnalysisPlanVerificationError(
+                "analysis plan file changed while it was opened"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(1024 * 1024, MAX_ANALYSIS_PLAN_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_ANALYSIS_PLAN_BYTES:
+                raise AnalysisPlanValidationError(
+                    "analysis plan exceeds the schema-v1 byte limit"
+                )
+        after_open = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        after_path = path.lstat()
+    except OSError as exc:
+        raise AnalysisPlanVerificationError(
+            "analysis plan file changed while it was read"
+        ) from exc
+    if (
+        path.is_symlink()
+        or is_reparse(after_path)
+        or not stat.S_ISREG(after_path.st_mode)
+    ):
+        raise AnalysisPlanVerificationError(
+            "analysis plan path changed to a non-regular alias"
+        )
+    if not same_identity(opened, after_open) or not same_identity(
+        after_open,
+        after_path,
+    ):
+        raise AnalysisPlanVerificationError(
+            "analysis plan file changed while it was read"
+        )
+    observed = b"".join(chunks)
+    if len(observed) != after_open.st_size:
+        raise AnalysisPlanVerificationError(
+            "analysis plan file was not read completely"
+        )
+    return observed
+
+
+def _parse_json_object(observed: bytes) -> dict[str, object]:
+    try:
+        text = observed.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AnalysisPlanValidationError(
+            "analysis plan must be valid UTF-8 JSON"
+        ) from exc
+
+    def reject_constant(value: str) -> object:
+        raise AnalysisPlanValidationError(
+            f"analysis plan JSON cannot contain {value}"
+        )
+
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise AnalysisPlanValidationError(
+                    f"analysis plan JSON repeats key {key!r}"
+                )
+            result[key] = value
+        return result
+
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=reject_duplicates,
+            parse_constant=reject_constant,
+        )
+    except AnalysisPlanValidationError:
+        raise
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise AnalysisPlanValidationError(
+            "analysis plan must be a valid bounded JSON object"
+        ) from exc
+    if type(parsed) is not dict:
+        raise AnalysisPlanValidationError(
+            "analysis plan JSON root must be an object"
+        )
+    return parsed
+
+
+def _exact_keys(
+    row: Mapping[str, object],
+    expected: frozenset[str],
+    *,
+    name: str,
+) -> None:
+    actual = set(row)
+    missing = sorted(expected - actual)
+    unknown = sorted(actual - expected)
+    if missing or unknown:
+        raise AnalysisPlanValidationError(
+            f"{name} keys differ: missing={missing}, unknown={unknown}"
+        )
+
+
+def _required_mapping(
+    row: Mapping[str, object],
+    key: str,
+) -> Mapping[str, object]:
+    return _require_mapping(row.get(key), name=key)
+
+
+def _require_mapping(value: object, *, name: str) -> Mapping[str, object]:
+    if type(value) is not dict:
+        raise AnalysisPlanValidationError(f"{name} must be a JSON object")
+    return value
+
+
+def _required_list(row: Mapping[str, object], key: str) -> list[object]:
+    value = row.get(key)
+    if type(value) is not list:
+        raise AnalysisPlanValidationError(f"{key} must be a JSON array")
+    return value
+
+
+def _required_string(row: Mapping[str, object], key: str) -> str:
+    return _strict_json_string(row.get(key), name=key)
+
+
+def _strict_json_string(value: object, *, name: str) -> str:
+    if type(value) is not str:
+        raise AnalysisPlanValidationError(f"{name} must be JSON text")
+    return value
+
+
+def _required_int(row: Mapping[str, object], key: str) -> int:
+    return _strict_json_int(row.get(key), name=key)
+
+
+def _required_bool(row: Mapping[str, object], key: str) -> bool:
+    value = row.get(key)
+    if type(value) is not bool:
+        raise AnalysisPlanValidationError(f"{key} must be a JSON boolean")
+    return value
+
+
+def _strict_json_int(value: object, *, name: str) -> int:
+    if type(value) is not int:
+        raise AnalysisPlanValidationError(f"{name} must be a JSON integer")
+    return value
+
+
+def _string_tuple_from_snapshot(
+    row: Mapping[str, object],
+    key: str,
+) -> tuple[str, ...]:
+    return tuple(
+        _strict_json_string(value, name=f"{key}[{index}]")
+        for index, value in enumerate(_required_list(row, key))
+    )
+
+
+def _iso_date(value: object, *, name: str) -> date:
+    if type(value) is not str:
+        raise AnalysisPlanValidationError(f"{name} must be an ISO date")
+    try:
+        observed = date.fromisoformat(value)
+    except ValueError as exc:
+        raise AnalysisPlanValidationError(f"{name} must be an ISO date") from exc
+    if observed.isoformat() != value:
+        raise AnalysisPlanValidationError(f"{name} must be a canonical ISO date")
+    return observed
+
+
+def _identifier(value: object, *, name: str) -> str:
+    if type(value) is not str or not _IDENTIFIER.fullmatch(value):
+        raise AnalysisPlanValidationError(
+            f"{name} must be a canonical 1-128 character identifier"
+        )
+    return value
+
+
+def _contract_identifier(value: object, *, name: str) -> str:
+    if type(value) is not str or not _CONTRACT_IDENTIFIER.fullmatch(value):
+        raise AnalysisPlanValidationError(
+            f"{name} must be a canonical output-contract identifier"
+        )
+    return value
+
+
+def _nonempty_text(value: object, *, name: str) -> str:
+    if type(value) is not str or not value or value.strip() != value:
+        raise AnalysisPlanValidationError(
+            f"{name} must be non-empty text without surrounding whitespace"
+        )
+    return value
+
+
+def _sha256_digest(value: object, *, name: str) -> str:
+    if type(value) is not str or not _SHA256.fullmatch(value):
+        raise AnalysisPlanValidationError(
+            f"{name} must be lowercase SHA-256 hex"
+        )
+    return value
+
+
+def _strict_int(
+    value: object,
+    *,
+    name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an exact Python integer")
+    if not minimum <= value <= maximum:
+        raise AnalysisPlanValidationError(
+            f"{name} must be in [{minimum}, {maximum}]"
+        )
+    return value
+
+
+def _canonical_code_tuple(values: tuple[str, ...]) -> None:
+    if type(values) is not tuple or any(
+        type(value) is not str or not _JURISDICTION_CODE.fullmatch(value)
+        for value in values
+    ):
+        raise AnalysisPlanValidationError(
+            "jurisdiction_codes must be an exact tuple of canonical codes"
+        )
+    if values != tuple(sorted(set(values))):
+        raise AnalysisPlanValidationError(
+            "jurisdiction_codes must be unique and ascending"
+        )
+
+
+def _runtime_jurisdiction_codes(values: tuple[str, ...]) -> None:
+    if type(values) is not tuple or not values or any(
+        type(value) is not str or not _JURISDICTION_CODE.fullmatch(value)
+        for value in values
+    ):
+        raise TypeError(
+            "runtime jurisdiction_codes must be a non-empty exact tuple of codes"
+        )
+    if len(set(values)) != len(values):
+        raise AnalysisPlanValidationError(
+            "runtime jurisdiction_codes must be unique"
+        )
+
+
+def _canonical_identifier_tuple(
+    values: tuple[str, ...],
+    *,
+    name: str,
+) -> None:
+    if type(values) is not tuple:
+        raise TypeError(f"{name} must be an exact tuple")
+    for index, value in enumerate(values):
+        _identifier(value, name=f"{name}[{index}]")
+    if values != tuple(sorted(set(values))):
+        raise AnalysisPlanValidationError(
+            f"{name} must be unique and ascending"
+        )
+
+
+def _canonical_enum_tuple(
+    values: tuple[Enum, ...],
+    *,
+    enum_type: type[Enum],
+    name: str,
+) -> None:
+    if type(values) is not tuple or any(type(value) is not enum_type for value in values):
+        raise TypeError(f"{name} must be an exact tuple of {enum_type.__name__}")
+    if values != tuple(sorted(set(values), key=lambda item: str(item.value))):
+        raise AnalysisPlanValidationError(f"{name} must be unique and canonical")
+
+
+def _gaming_state(value: bool) -> PopulationGamingState:
+    return (
+        PopulationGamingState.GAMER
+        if value
+        else PopulationGamingState.NON_GAMER
+    )
+
+
+def _payer_state(value: bool) -> PopulationPayerHistoryState:
+    return (
+        PopulationPayerHistoryState.EVER_PAYER
+        if value
+        else PopulationPayerHistoryState.NEVER_PAYER
+    )
+
+
+def _canonical_sha256(payload: object) -> str:
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+_POPULATION_OUTCOME_SEMANTICS = _outcome_semantics_registry()
+
+
+__all__ = [
+    "ANALYSIS_PLAN_SCHEMA_VERSION",
+    "MAX_ANALYSIS_PLAN_BYTES",
+    "AnalysisEstimandRole",
+    "AnalysisPlanCampaignError",
+    "AnalysisPlanRegistrationStatus",
+    "AnalysisPlanValidationError",
+    "AnalysisPlanVerificationError",
+    "CanonicalPopulationInclusionPredicate",
+    "FixedSeedStoppingRule",
+    "LoadedProspectiveAnalysisPlan",
+    "PlannedPopulationEstimand",
+    "PopulationMinorFilter",
+    "PopulationOutcomeMetric",
+    "PopulationOutcomeMetricSemantics",
+    "ProspectiveAnalysisPlan",
+    "analysis_plan_harm_weights_sha256",
+    "build_prospective_analysis_plan",
+    "evaluate_population_inclusion",
+    "load_prospective_analysis_plan",
+    "population_outcome_semantics",
+    "verify_loaded_prospective_analysis_plan",
+    "verify_prospective_analysis_plan_bindings",
+]

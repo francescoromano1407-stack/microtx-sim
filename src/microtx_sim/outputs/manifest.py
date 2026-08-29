@@ -19,6 +19,14 @@ from ..causal.batch import (
     PolicyRunInputs,
     resolve_policy_run_inputs,
 )
+from ..causal.analysis_binding import (
+    RunAnalysisBinding,
+    resolve_run_analysis_binding,
+)
+from ..causal.analysis_plan import (
+    LoadedProspectiveAnalysisPlan,
+    verify_loaded_prospective_analysis_plan,
+)
 from ..causal.design import assess_causal_design
 from ..data.lineage import ProfileInputLineage
 from ..data.profiles import (
@@ -39,6 +47,8 @@ def build_run_manifest(
     repository_root: str | Path,
     created_utc: str | None = None,
     command: Sequence[str] | None = None,
+    analysis_plan: LoadedProspectiveAnalysisPlan | None = None,
+    analysis_binding: RunAnalysisBinding | None = None,
 ) -> dict[str, object]:
     """Build a self-contained run manifest without claiming empirical validity."""
 
@@ -52,6 +62,12 @@ def build_run_manifest(
         epgc_policy=config.epgc_policy,
     )
     _validate_config_matches_batch(config, batch, configured_run_inputs)
+    analysis_plan, analysis_binding = _validate_analysis_composition(
+        config,
+        batch,
+        analysis_plan=analysis_plan,
+        analysis_binding=analysis_binding,
+    )
     git_commit, git_dirty = _git_state(repository)
     profile_lineage = batch.profile_input_lineage
     if profile_lineage is None:
@@ -321,7 +337,50 @@ def build_run_manifest(
         manifest["population_execution"] = (
             batch.population_execution_lineage.manifest_payload()
         )
+    if analysis_plan is not None and analysis_binding is not None:
+        manifest["analysis_plan"] = analysis_plan.manifest_payload()
+        manifest["analysis_binding"] = analysis_binding.manifest_payload()
     return manifest
+
+
+def _validate_analysis_composition(
+    config: PolicyPrototypeConfig,
+    batch: PolicyBatchResult,
+    *,
+    analysis_plan: LoadedProspectiveAnalysisPlan | None,
+    analysis_binding: RunAnalysisBinding | None,
+) -> tuple[LoadedProspectiveAnalysisPlan | None, RunAnalysisBinding | None]:
+    """Re-attest optional plan files and recompute bindings before export."""
+
+    selected = config.analysis_plan
+    supplied = (analysis_plan is not None, analysis_binding is not None)
+    if selected is None:
+        if any(supplied):
+            raise ValueError(
+                "analysis plan/binding supplied without a configuration selection"
+            )
+        return None, None
+    if supplied != (True, True):
+        raise ValueError(
+            "configured analysis plan requires both loaded plan and run binding"
+        )
+    if type(analysis_plan) is not LoadedProspectiveAnalysisPlan:
+        raise TypeError(
+            "analysis_plan must be LoadedProspectiveAnalysisPlan or None"
+        )
+    if type(analysis_binding) is not RunAnalysisBinding:
+        raise TypeError("analysis_binding must be RunAnalysisBinding or None")
+    verified = verify_loaded_prospective_analysis_plan(analysis_plan)
+    if verified.plan_path != selected.plan_path:
+        raise ValueError(
+            "loaded analysis plan path does not match the configuration selection"
+        )
+    observed_binding = resolve_run_analysis_binding(verified.plan, batch)
+    if observed_binding != analysis_binding:
+        raise ValueError(
+            "analysis binding does not match the re-attested plan and batch"
+        )
+    return verified, observed_binding
 
 
 def _validate_config_matches_batch(
@@ -380,6 +439,8 @@ def _effective_config_snapshot(
     }
     if config.population is not None:
         payload["population"] = config.population.snapshot()
+    if config.analysis_plan is not None:
+        payload["analysis_plan"] = config.analysis_plan.snapshot()
     return payload
 
 

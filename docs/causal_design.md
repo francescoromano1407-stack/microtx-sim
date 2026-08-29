@@ -96,6 +96,15 @@ planned estimands: the registry status is `RETROSPECTIVE_SYNTHETIC`, it is not
 preregistered, and it always fails the campaign gate pending preregistration
 and empirical calibration.
 
+An optional prospective analysis-plan file can now freeze one primary directed
+contrast plus secondary contrasts against the exact design digest, fixed seeds,
+harm weights, projected-population input, exact `CountryProfile` input-lineage
+fingerprint, and output contracts before scenario execution.
+It does not alter the retrospective registry status: schema v1 is explicitly
+`UNREGISTERED`, external timing is not proven, and both plan and resolved run
+binding remain `campaign_ready=false`. See [Prospective analysis-plan
+composition](analysis_plan.md).
+
 Every manifest embeds the observed matrix and contrast snapshots, their
 SHA-256 digests, the overall design digest, and the exact `run_input_sha256`
 used for execution. A batch whose named scenarios contain custom factor values

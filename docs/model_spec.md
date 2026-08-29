@@ -128,8 +128,10 @@ the supplied design weights and records evidence, projection, balance, metric-
 contract, and dedicated output-profile digest declarations. It does not resolve
 or reverify those declared artifacts. The standalone
 `target_population_estimands` writer re-attests exact specification/result pairs
-and writes one exact-decimal CSV plus metadata file; it is not invoked by the
-normal CLI output path or included in output-v3. Existing output-v3 CSVs retain
+and writes one exact-decimal CSV plus metadata file; it is not included in
+output-v3. The CLI invokes it only for an explicitly selected prospective
+analysis plan, after the run binding resolves the upstream identities. Existing
+output-v3 CSVs retain
 the frozen v2-compatible columns and unweighted synthetic-player semantics.
 Projected execution, lineage, balance, and writing do not supply checked-in
 external provenance, a calibrated target, an independently verified holdout,

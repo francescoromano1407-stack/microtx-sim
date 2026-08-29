@@ -14,6 +14,7 @@ calibration plans and should be read before interpreting any simulation output.
 | [Synthetic policy prototype](policy_prototype.md) | Seven scenarios, daily life actions, welfare harm, EPGC financing, sensitivity analysis, and synthetic interpretation. |
 | [Simulation lifecycle](simulation_lifecycle.md) | Exact ordering of one tick, events, phase coordination, and paired runs. |
 | [Causal design](causal_design.md) | Estimand, paired worlds, common random numbers, interventions, assumptions, and future campaign design. |
+| [Prospective analysis plan](analysis_plan.md) | Optional pre-run plan validation, executable exclusions, exact run binding, and its fail-closed campaign scope. |
 
 ## Running and extending the project
 

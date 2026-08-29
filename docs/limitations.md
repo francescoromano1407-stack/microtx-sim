@@ -94,13 +94,30 @@ the household-to-personal-income transport is representative, calibrated, or
 scientifically valid.
 
 The exact weighted-estimand primitive has a dedicated standalone two-file
-writer/profile, but it is not automatically invoked and does not independently
-authenticate its declared upstream identities. Output-v3 retains the frozen
+writer/profile and does not independently authenticate its declared upstream
+identities. An explicit prospective-plan selection now supplies a separate
+resolver which validates planned inputs before treatment, executes the
+pre-treatment predicate, and binds exact results afterward; only that opt-in
+path invokes the writer automatically. Output-v3 retains the frozen
 v2-compatible CSV tables and unweighted synthetic-player semantics, including
 for projected runs. The checked-in evidence and design remain empty and
 illustrative; no calibrated target, genuine holdout, public comparability, or
 campaign readiness has been established. The P0 comparable-populations
 requirement remains open, and no full campaign has been run.
+
+Plan and binding schema v1 are necessarily unregistered and campaign-ineligible.
+They also reject money-valued estimands because no executed dated conversion
+currently connects raw simulation cents to a declared currency and price
+period. A `PRIMARY` label identifies one estimand specification whose outputs
+remain separate per-seed realizations; the binding defines no cross-seed
+aggregate or Monte Carlo uncertainty semantics. Declared calendar dates are not
+connected to a simulation clock: preflight checks only that their inclusive
+duration equals the executed horizon, treating a zero-day structural snapshot
+as one declared day. The plan also does not bind source-code, interpreter,
+dependency-lock, or build-environment identity. These gaps are explicit fixed
+campaign blockers. This prevents stronger labels but does not complete
+preregistration, calibration, holdout validation, monetary comparability, or
+implementation-level reproducibility.
 
 ### Internal money is not observed purchasing power
 
@@ -228,6 +245,11 @@ propagate joint parameter or structural uncertainty, calculate statistical
 power, correct for multiple comparisons, or create population confidence or
 posterior intervals. The market runner still exposes the lower-level composable
 treated/control pair for equilibrium interventions.
+
+The optional prospective analysis binding is narrower still: it retains exact
+per-seed planned estimand realizations but does not adopt the runner's aggregate
+or interval as a plan-defined primary result. Cross-seed aggregation and
+uncertainty semantics remain unresolved.
 
 ## Legal and regulatory limitations
 
@@ -390,3 +412,6 @@ Before a scientific campaign, the project needs at minimum:
 7. a preregistered empirical estimand, power analysis, and reporting plan;
 8. performance, persistence, convergence, and recovery tests at intended
    campaign scale.
+9. a content-addressed model implementation and execution-environment identity,
+   including reviewed source-tree, interpreter, dependency-lock, and build
+   contracts bound to the prospective plan and result.

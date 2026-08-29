@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Mapping
 import tomllib
@@ -46,6 +47,22 @@ class PolicyOutputConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisPlanSelection:
+    """Non-verifying locator for an optional prospective analysis plan."""
+
+    plan_path: Path
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan_path, Path):
+            raise TypeError("analysis plan_path must be a Path")
+        if not str(self.plan_path):
+            raise ValueError("analysis plan_path cannot be empty")
+
+    def snapshot(self) -> dict[str, str]:
+        return {"plan_path": str(self.plan_path)}
+
+
+@dataclass(frozen=True, slots=True)
 class PolicyPrototypeConfig:
     name: str
     provenance_status: str
@@ -58,6 +75,7 @@ class PolicyPrototypeConfig:
     epgc_policy: EPGCPolicy
     output: PolicyOutputConfig
     population: PopulationProjectionConfig | None = None
+    analysis_plan: AnalysisPlanSelection | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -71,6 +89,24 @@ class PolicyPrototypeConfig:
         ) is not PopulationProjectionConfig:
             raise TypeError(
                 "population must be PopulationProjectionConfig or None"
+            )
+        if self.analysis_plan is not None and type(
+            self.analysis_plan
+        ) is not AnalysisPlanSelection:
+            raise TypeError(
+                "analysis_plan must be AnalysisPlanSelection or None"
+            )
+        if self.analysis_plan is not None and self.population is None:
+            raise ValueError(
+                "analysis_plan requires projected population execution"
+            )
+        if (
+            self.analysis_plan is not None
+            and not self.output.include_player_rows
+        ):
+            raise ValueError(
+                "analysis_plan requires output.include_player_rows = true "
+                "because schema-v1 planned metrics bind to player_outcomes.csv"
             )
 
 
@@ -93,6 +129,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
         output = _section(raw, "output")
         population = _population_projection_config(
             raw.get("population"),
+            config_path=config_path,
+        )
+        analysis_plan = _analysis_plan_selection(
+            raw.get("analysis_plan"),
             config_path=config_path,
         )
         _exact_keys(meta, {"name", "provenance_status", "notes"}, "meta")
@@ -210,6 +250,7 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
                 run_sensitivity=output["run_sensitivity"],
             ),
             population=population,
+            analysis_plan=analysis_plan,
         )
     except (KeyError, TypeError, ValueError, OSError) as exc:
         if isinstance(exc, PolicyConfigurationError):
@@ -234,6 +275,8 @@ def _strict_top_level(raw: Mapping[str, object]) -> None:
     actual = set(raw)
     if "population" in actual:
         actual.remove("population")
+    if "analysis_plan" in actual:
+        actual.remove("analysis_plan")
     missing = sorted(expected - actual)
     unknown = sorted(actual - expected)
     if missing or unknown:
@@ -249,6 +292,27 @@ def _section(raw: Mapping[str, object], name: str) -> dict[str, object]:
     return value
 
 
+def _analysis_plan_selection(
+    value: object,
+    *,
+    config_path: Path,
+) -> AnalysisPlanSelection | None:
+    if value is None:
+        return None
+    if type(value) is not dict:
+        raise ValueError("[analysis_plan] must be a TOML table")
+    _exact_keys(value, {"plan_path"}, "analysis_plan")
+    raw_path = value["plan_path"]
+    if type(raw_path) is not str or not raw_path:
+        raise ValueError("analysis plan_path must be non-empty text")
+    config_root = Path(os.path.abspath(os.fspath(config_path))).parent
+    candidate = Path(raw_path)
+    selected = candidate if candidate.is_absolute() else config_root / candidate
+    return AnalysisPlanSelection(
+        plan_path=Path(os.path.abspath(os.fspath(selected)))
+    )
+
+
 def _exact_keys(
     values: Mapping[str, object], expected: set[str], name: str
 ) -> None:
@@ -262,6 +326,7 @@ def _exact_keys(
 
 
 __all__ = [
+    "AnalysisPlanSelection",
     "PolicyConfigurationError",
     "PolicyOutputConfig",
     "PolicyPrototypeConfig",

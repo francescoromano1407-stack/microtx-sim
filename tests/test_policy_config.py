@@ -3,8 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from microtx_sim.cli import _policy_batch
 from microtx_sim.policy_config import (
+    AnalysisPlanSelection,
     PolicyConfigurationError,
     load_policy_config,
 )
@@ -92,6 +95,124 @@ adapter_id = "policy.population.v1"
                 "population keys differ",
             ):
                 load_policy_config(malformed)
+
+    def test_analysis_plan_selection_is_strict_and_opt_in(self) -> None:
+        original = CONFIG.read_text("utf-8")
+        self.assertIsNone(load_policy_config(CONFIG).analysis_plan)
+        population = """
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "inputs/design.toml"
+runtime_mapping_bundle_path = "inputs/runtime-mapping.toml"
+adapter_id = "policy.population.v1"
+"""
+        selection = """
+
+[analysis_plan]
+plan_path = "inputs/prospective-analysis-plan.json"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configured_path = root / "planned.toml"
+            configured_path.write_text(
+                original + population + selection,
+                "utf-8",
+            )
+
+            configured = load_policy_config(configured_path)
+
+            self.assertEqual(
+                configured.analysis_plan,
+                AnalysisPlanSelection(
+                    root / "inputs" / "prospective-analysis-plan.json"
+                ),
+            )
+            assert configured.analysis_plan is not None
+            self.assertEqual(
+                configured.analysis_plan.snapshot(),
+                {
+                    "plan_path": str(
+                        root / "inputs" / "prospective-analysis-plan.json"
+                    )
+                },
+            )
+
+            invalid_sections = (
+                "\n[analysis_plan]\n",
+                '\n[analysis_plan]\nplan_path = ""\n',
+                '\n[analysis_plan]\nplan_path = 1\n',
+                (
+                    '\n[analysis_plan]\nplan_path = "plan.json"\n'
+                    "unknown = true\n"
+                ),
+            )
+            for index, invalid in enumerate(invalid_sections):
+                with self.subTest(index=index):
+                    malformed = root / f"malformed-plan-{index}.toml"
+                    malformed.write_text(
+                        original + population + invalid,
+                        "utf-8",
+                    )
+                    with self.assertRaises(PolicyConfigurationError):
+                        load_policy_config(malformed)
+
+            missing_population = root / "missing-population.toml"
+            missing_population.write_text(original + selection, "utf-8")
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "analysis_plan requires projected population execution",
+            ):
+                load_policy_config(missing_population)
+
+    def test_analysis_plan_section_must_be_a_table(self) -> None:
+        original = CONFIG.read_text("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            malformed = Path(directory) / "malformed-plan.toml"
+            malformed.write_text(
+                'analysis_plan = "plan.json"\n\n' + original,
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                r"\[analysis_plan\] must be a TOML table",
+            ):
+                load_policy_config(malformed)
+
+    def test_analysis_plan_requires_player_rows_before_execution(self) -> None:
+        original = CONFIG.read_text("utf-8").replace(
+            "include_player_rows = true",
+            "include_player_rows = false",
+        )
+        population_and_plan = """
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "inputs/design.toml"
+runtime_mapping_bundle_path = "inputs/runtime-mapping.toml"
+adapter_id = "policy.population.v1"
+
+[analysis_plan]
+plan_path = "inputs/prospective-analysis-plan.json"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "plan-without-player-rows.toml"
+            config_path.write_text(
+                original + population_and_plan,
+                "utf-8",
+            )
+            with patch("microtx_sim.cli.run_policy_batch") as execute:
+                with self.assertRaisesRegex(
+                    PolicyConfigurationError,
+                    r"analysis_plan requires output\.include_player_rows = true",
+                ):
+                    _policy_batch(
+                        config_path,
+                        output=Path(directory) / "never-created",
+                        run_sensitivity=False,
+                        command=("microtx-sim", "policy-batch"),
+                    )
+                execute.assert_not_called()
 
 
 if __name__ == "__main__":

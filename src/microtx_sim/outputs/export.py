@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from hashlib import sha256
+import os
 from pathlib import Path
+import stat
+import tempfile
 from typing import Mapping, Sequence
 
 from ..analysis.sensitivity import SensitivityResult
+from ..causal.analysis_binding import RunAnalysisBinding
+from ..causal.analysis_plan import LoadedProspectiveAnalysisPlan
 from ..causal.batch import PolicyBatchResult, resolve_policy_run_inputs
 from ..causal.scenarios import ScenarioId
 from ..policy_config import PolicyPrototypeConfig
 from .manifest import build_run_manifest
+from .population import write_target_population_estimands
 from .plots import (
     write_epgc_subsidy_requirement_svg,
     write_harm_distribution_svg,
@@ -22,6 +28,7 @@ from .schema import (
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
     PLAYER_OUTCOME_COLUMNS,
     POLICY_ARTIFACT_FILENAMES,
+    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES,
     stamp_manifest_schema,
 )
 from .writers import (
@@ -43,6 +50,8 @@ def export_policy_batch(
     output_dir: str | Path | None = None,
     created_utc: str | None = None,
     command: Sequence[str] | None = None,
+    analysis_plan: LoadedProspectiveAnalysisPlan | None = None,
+    analysis_binding: RunAnalysisBinding | None = None,
 ) -> dict[str, Path]:
     """Persist a complete, self-describing synthetic result bundle."""
 
@@ -117,6 +126,8 @@ def export_policy_batch(
         repository_root=repository_root,
         created_utc=created_utc,
         command=command,
+        analysis_plan=analysis_plan,
+        analysis_binding=analysis_binding,
     )
     sensitivity_snapshot = (
         sensitivity.execution_snapshot() if sensitivity is not None else None
@@ -153,108 +164,238 @@ def export_policy_batch(
         canonical_columns=OPPORTUNITY_DECOMPOSITION_COLUMNS,
         allow_extra_columns=False,
     )
-    paths = write_batch_artifacts(
-        destination,
-        batch.seed_rows(),
-        batch.scenario_rows(),
-        batch.epgc_rows(),
-        sensitivity_rows,
-        manifest,
-    )
-    paths["player_outcomes"] = write_csv_atomic(
-        destination / "player_outcomes.csv",
-        player_rows,
-        canonical_columns=PLAYER_OUTCOME_COLUMNS,
-        allow_extra_columns=False,
-    )
-    paths["opportunity_cost_decomposition"] = write_csv_atomic(
-        destination / "opportunity_cost_decomposition.csv",
-        opportunity_rows,
-        canonical_columns=OPPORTUNITY_DECOMPOSITION_COLUMNS,
-        allow_extra_columns=False,
-    )
-    paths["summary"] = write_text_atomic(
-        destination / "summary.md",
-        render_human_summary(batch, sensitivity),
-    )
-
-    baseline_players = [
-        row
-        for row in player_rows
-        if row["scenario_id"] == ScenarioId.BASELINE_F2P.value
-    ]
-    paths["harm_distribution"] = write_harm_distribution_svg(
-        destination / "harm_distribution.svg",
-        [float(row["composite_harm"]) for row in baseline_players],
-        bins=config.output.histogram_bins,
-        title="Baseline F2P harm distribution",
-    )
-    paths["spending_distribution"] = write_spending_distribution_svg(
-        destination / "spending_distribution.svg",
-        [float(row["spending_cents"]) for row in baseline_players],
-        bins=config.output.histogram_bins,
-        title="Baseline F2P spending distribution",
-    )
-    summary_rows = batch.scenario_rows()
-    paths["harm_revenue_frontier"] = write_harm_revenue_frontier_svg(
-        destination / "harm_revenue_frontier.svg",
-        summary_rows,
-        scenario_key="scenario_id",
-        revenue_key="total_revenue_cents_mean",
-        harm_key="mean_harm_mean",
-    )
-    baseline_opportunity = [
-        {
-            "component": row["component"],
-            "value": row["mean_minutes"],
-        }
-        for row in opportunity_rows
-        if row["scenario_id"] == ScenarioId.BASELINE_F2P.value
-        and row["component"] != "all_displaced_activities"
-    ]
-    paths["opportunity_cost_plot"] = write_opportunity_cost_decomposition_svg(
-        destination / "opportunity_cost_decomposition.svg",
-        baseline_opportunity,
-        title="Baseline F2P displaced-activity decomposition",
-    )
-    epgc_plot_rows = [
-        {
-            "scenario": f"EPGC seed {row['seed']}",
-            "minimum_public_contribution_cents": row[
-                "minimum_public_contribution_cents"
-            ],
-        }
-        for row in batch.epgc_rows()
-    ]
-    paths["epgc_subsidy_plot"] = write_epgc_subsidy_requirement_svg(
-        destination / "epgc_subsidy_requirement.svg",
-        epgc_plot_rows,
-    )
-
-    # The initial manifest is written before charts so failures never describe
-    # non-existent outputs.  Once all writes succeed, replace it with complete
-    # file names, sizes, and hashes (excluding the self-referential manifest).
-    manifest = stamp_manifest_schema(
-        manifest,
-        artifact_files=POLICY_ARTIFACT_FILENAMES,
-    )
-    manifest["artifacts"] = {
-        path.name: {
-            "bytes": path.stat().st_size,
-            "sha256": _digest(path),
-        }
-        for path in sorted(destination.iterdir(), key=lambda item: item.name)
-        if path.is_file() and path.name != "manifest.json"
-    }
-    paths["manifest"] = write_json_atomic(destination / "manifest.json", manifest)
-    actual = {path.name for path in paths.values()}
-    expected = set(POLICY_ARTIFACT_FILENAMES)
-    if actual != expected:
-        raise RuntimeError(
-            f"exported artifact set differs: missing={sorted(expected - actual)}, "
-            f"extra={sorted(actual - expected)}"
+    analysis_destination = destination / "prospective_analysis"
+    _reject_existing_analysis_output(analysis_destination)
+    analysis_stage: Path | None = None
+    staged_analysis_paths: dict[str, Path] = {}
+    analysis_file_identities: dict[str, tuple[int, str]] = {}
+    analysis_output_profile: dict[str, object] | None = None
+    if analysis_plan is not None and analysis_binding is not None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        analysis_stage = Path(
+            tempfile.mkdtemp(
+                dir=destination.parent,
+                prefix=f".{destination.name}.prospective-analysis-",
+            )
         )
-    return paths
+        try:
+            staged_analysis_paths = write_target_population_estimands(
+                analysis_stage,
+                analysis_binding.writer_pairs,
+                metadata={
+                    "analysis_plan": analysis_plan.manifest_payload(),
+                    "analysis_binding": analysis_binding.manifest_payload(),
+                    "composition_scope": (
+                        "The run binding resolves the declared plan against exact "
+                        "execution lineage; the standalone writer independently "
+                        "re-attests only each supplied spec/result pair."
+                    ),
+                },
+            )
+            analysis_file_identities = {
+                path.name: (path.stat().st_size, _digest(path))
+                for path in staged_analysis_paths.values()
+            }
+            analysis_output_profile = {
+                "directory": "prospective_analysis",
+                "artifact_files": list(
+                    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+                ),
+                "record_count_decimal": str(len(analysis_binding.writer_pairs)),
+                "binding_sha256": analysis_binding.binding_sha256,
+                "campaign_ready": False,
+                "artifacts": {
+                    name: {
+                        "relative_path": (
+                            Path("prospective_analysis") / name
+                        ).as_posix(),
+                        "bytes": size,
+                        "sha256": digest,
+                    }
+                    for name, (size, digest) in sorted(
+                        analysis_file_identities.items()
+                    )
+                },
+            }
+        except BaseException:
+            _remove_owned_analysis_directory(
+                analysis_stage,
+                expected_parent=destination.parent,
+                require_complete=False,
+            )
+            analysis_stage = None
+            raise
+
+    try:
+        # This interim manifest deliberately omits analysis_output_profile.  A
+        # later root-writer failure therefore cannot leave a manifest claiming
+        # an unpublished optional directory.
+        paths = write_batch_artifacts(
+            destination,
+            batch.seed_rows(),
+            batch.scenario_rows(),
+            batch.epgc_rows(),
+            sensitivity_rows,
+            manifest,
+        )
+        interim_manifest_text = paths["manifest"].read_text(encoding="utf-8")
+        paths["player_outcomes"] = write_csv_atomic(
+            destination / "player_outcomes.csv",
+            player_rows,
+            canonical_columns=PLAYER_OUTCOME_COLUMNS,
+            allow_extra_columns=False,
+        )
+        paths["opportunity_cost_decomposition"] = write_csv_atomic(
+            destination / "opportunity_cost_decomposition.csv",
+            opportunity_rows,
+            canonical_columns=OPPORTUNITY_DECOMPOSITION_COLUMNS,
+            allow_extra_columns=False,
+        )
+        paths["summary"] = write_text_atomic(
+            destination / "summary.md",
+            render_human_summary(batch, sensitivity),
+        )
+
+        baseline_players = [
+            row
+            for row in player_rows
+            if row["scenario_id"] == ScenarioId.BASELINE_F2P.value
+        ]
+        paths["harm_distribution"] = write_harm_distribution_svg(
+            destination / "harm_distribution.svg",
+            [float(row["composite_harm"]) for row in baseline_players],
+            bins=config.output.histogram_bins,
+            title="Baseline F2P harm distribution",
+        )
+        paths["spending_distribution"] = write_spending_distribution_svg(
+            destination / "spending_distribution.svg",
+            [float(row["spending_cents"]) for row in baseline_players],
+            bins=config.output.histogram_bins,
+            title="Baseline F2P spending distribution",
+        )
+        summary_rows = batch.scenario_rows()
+        paths["harm_revenue_frontier"] = write_harm_revenue_frontier_svg(
+            destination / "harm_revenue_frontier.svg",
+            summary_rows,
+            scenario_key="scenario_id",
+            revenue_key="total_revenue_cents_mean",
+            harm_key="mean_harm_mean",
+        )
+        baseline_opportunity = [
+            {
+                "component": row["component"],
+                "value": row["mean_minutes"],
+            }
+            for row in opportunity_rows
+            if row["scenario_id"] == ScenarioId.BASELINE_F2P.value
+            and row["component"] != "all_displaced_activities"
+        ]
+        paths["opportunity_cost_plot"] = write_opportunity_cost_decomposition_svg(
+            destination / "opportunity_cost_decomposition.svg",
+            baseline_opportunity,
+            title="Baseline F2P displaced-activity decomposition",
+        )
+        epgc_plot_rows = [
+            {
+                "scenario": f"EPGC seed {row['seed']}",
+                "minimum_public_contribution_cents": row[
+                    "minimum_public_contribution_cents"
+                ],
+            }
+            for row in batch.epgc_rows()
+        ]
+        paths["epgc_subsidy_plot"] = write_epgc_subsidy_requirement_svg(
+            destination / "epgc_subsidy_requirement.svg",
+            epgc_plot_rows,
+        )
+
+        # The initial manifest is written before charts so failures never
+        # describe non-existent outputs. Once all ordinary root writes succeed,
+        # prepare the complete file inventory without publishing it yet.
+        final_manifest = stamp_manifest_schema(
+            manifest,
+            artifact_files=POLICY_ARTIFACT_FILENAMES,
+        )
+        final_manifest["artifacts"] = {
+            path.name: {
+                "bytes": path.stat().st_size,
+                "sha256": _digest(path),
+            }
+            for path in sorted(destination.iterdir(), key=lambda item: item.name)
+            if path.is_file() and path.name != "manifest.json"
+        }
+        if analysis_output_profile is not None:
+            final_manifest["analysis_output_profile"] = analysis_output_profile
+            paths["analysis_estimands"] = (
+                analysis_destination / "target_population_estimands.csv"
+            )
+            paths["analysis_metadata"] = (
+                analysis_destination
+                / "target_population_estimand_metadata.json"
+            )
+
+        actual = {path.name for path in paths.values()}
+        expected = set(POLICY_ARTIFACT_FILENAMES)
+        if analysis_output_profile is not None:
+            expected.update(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES)
+        if actual != expected:
+            raise RuntimeError(
+                "exported artifact set differs: "
+                f"missing={sorted(expected - actual)}, "
+                f"extra={sorted(actual - expected)}"
+            )
+
+        published_analysis = False
+        if analysis_stage is not None:
+            _reject_existing_analysis_output(analysis_destination)
+            os.replace(analysis_stage, analysis_destination)
+            analysis_stage = None
+            published_analysis = True
+        try:
+            paths["manifest"] = write_json_atomic(
+                destination / "manifest.json",
+                final_manifest,
+            )
+        except BaseException as error:
+            if published_analysis:
+                rollback_error: BaseException | None = None
+                try:
+                    _remove_owned_analysis_directory(
+                        analysis_destination,
+                        expected_parent=destination,
+                        require_complete=True,
+                        expected_file_identities=analysis_file_identities,
+                    )
+                except BaseException as cleanup_error:
+                    rollback_error = cleanup_error
+                try:
+                    write_text_atomic(
+                        destination / "manifest.json",
+                        interim_manifest_text,
+                    )
+                except BaseException as restore_error:
+                    if rollback_error is None:
+                        rollback_error = restore_error
+                    else:
+                        rollback_error.add_note(
+                            "restoring the non-claiming interim manifest also "
+                            f"failed: {restore_error}"
+                        )
+                if rollback_error is not None:
+                    rollback_error.add_note(
+                        "failed while rolling back a newly published "
+                        "prospective-analysis profile"
+                    )
+                    raise rollback_error from error
+            raise
+        return paths
+    finally:
+        if analysis_stage is not None:
+            _remove_owned_analysis_directory(
+                analysis_stage,
+                expected_parent=destination.parent,
+                require_complete=False,
+            )
 
 
 def render_human_summary(
@@ -304,6 +445,87 @@ def render_human_summary(
             ]
         )
     return "\n".join(lines) + "\n"
+
+
+def _reject_existing_analysis_output(path: Path) -> None:
+    """Require a fresh optional-profile target without following leaf links."""
+
+    if os.path.lexists(path):
+        raise FileExistsError(
+            "prospective analysis output target already exists; choose a fresh "
+            "output directory or remove the exact target after reviewing it: "
+            f"{path}"
+        )
+
+
+def _remove_owned_analysis_directory(
+    path: Path,
+    *,
+    expected_parent: Path,
+    require_complete: bool,
+    expected_file_identities: Mapping[str, tuple[int, str]] | None = None,
+) -> None:
+    """Remove only an exact two-file directory created by this export call."""
+
+    target_absolute = os.path.normcase(os.path.abspath(os.fspath(path)))
+    parent_absolute = os.path.normcase(
+        os.path.abspath(os.fspath(expected_parent))
+    )
+    if os.path.dirname(target_absolute) != parent_absolute:
+        raise RuntimeError(
+            "refusing prospective-analysis cleanup outside its expected parent"
+        )
+    if not os.path.lexists(path):
+        return
+    target_status = path.lstat()
+    if stat.S_ISLNK(target_status.st_mode) or not stat.S_ISDIR(
+        target_status.st_mode
+    ):
+        raise RuntimeError(
+            "refusing prospective-analysis cleanup of a non-directory or link"
+        )
+
+    expected_names = set(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES)
+    children = sorted(path.iterdir(), key=lambda item: item.name)
+    observed_names = {child.name for child in children}
+    valid_names = (
+        observed_names == expected_names
+        if require_complete
+        else observed_names.issubset(expected_names)
+    )
+    if not valid_names or len(observed_names) != len(children):
+        raise RuntimeError(
+            "refusing prospective-analysis cleanup with unexpected contents"
+        )
+    if expected_file_identities is not None and (
+        set(expected_file_identities) != expected_names
+    ):
+        raise RuntimeError(
+            "refusing prospective-analysis cleanup without complete owned-file "
+            "identities"
+        )
+    for child in children:
+        child_status = child.lstat()
+        if stat.S_ISLNK(child_status.st_mode) or not stat.S_ISREG(
+            child_status.st_mode
+        ):
+            raise RuntimeError(
+                "refusing prospective-analysis cleanup of linked or non-file "
+                "contents"
+            )
+        if expected_file_identities is not None:
+            expected_size, expected_digest = expected_file_identities[child.name]
+            if (
+                child_status.st_size != expected_size
+                or _digest(child) != expected_digest
+            ):
+                raise RuntimeError(
+                    "refusing prospective-analysis cleanup after owned-file "
+                    "identity changed"
+                )
+    for child in children:
+        child.unlink()
+    path.rmdir()
 
 
 def _digest(path: Path) -> str:

@@ -199,6 +199,15 @@ specification/result pairs but copies those upstream identities and is not part
 of automatic output-v3 export. Output-v3 preserves the frozen v2-compatible CSV
 columns and their unweighted synthetic-player semantics.
 
+An optional prospective-plan composition layer now performs that missing
+runtime resolution for declared paired player-level outcomes: it validates the
+causal design, batch, model inputs, harm weights, population adapter, metric
+registry, output profile, and fixed seeds before treatment, then binds selected
+weights, balance, projection, metric contract, and exact results after the run.
+The standalone writer still re-attests only the supplied pairs. Schema v1 is
+unregistered, campaign-ineligible, and rejects money outcomes until a dated
+currency/price-period conversion is executed and retained.
+
 `behavior.household_peer_influence` is runtime-consumed but has no empirical
 source contract. It is a synthetic sensitivity-only coefficient over a
 structurally observed, lagged household co-player signal. It must not be

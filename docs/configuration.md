@@ -207,7 +207,8 @@ The exact weighted-estimand module has a dedicated standalone
 `target_population_estimand_metadata.json`. The writer re-attests exact
 specification/result pairs and preserves their upstream digest declarations,
 but does not independently resolve or authenticate those upstream artifacts. It
-is not invoked automatically and is not part of the full output-v3 bundle.
+is not part of the full output-v3 bundle. The ordinary CLI does not invoke it
+unless the policy configuration explicitly selects a prospective analysis plan.
 Existing output-v3 CSVs keep their frozen v2-compatible columns and unweighted
 aggregation semantics.
 
@@ -215,6 +216,28 @@ This opt-in plumbing does not supply a checked-in target, mapping, external
 provenance, calibration, independently verified holdout, or output-readiness
 gate. `campaign_ready` and `public_population_comparability` remain false, and
 no full campaign is enabled or claimed by this milestone.
+
+### Optional prospective analysis plan
+
+A policy configuration that already selects `[population]` may additionally
+select one strict plan file:
+
+```toml
+[analysis_plan]
+plan_path = "../inputs/prospective-analysis-plan.json"
+```
+
+The section is all-or-none and contains no scientific defaults. A plan without
+projected-population execution, or with `output.include_player_rows = false`, is
+rejected before treatment because exact inclusion/weight binding and the cited
+`player_outcomes.csv` metric contracts would otherwise be unavailable.
+`policy-validate` also requires every explicit categorical inclusion level to
+occur in the exact adapter domain, re-attests the file, and checks its
+causal-design, batch, model-input, harm-weight, population-input, exact
+profile-input-lineage, metric-registry, output-profile, and fixed-seed
+identities before reporting success. Treatment-result identities are resolved
+only after a completed policy batch. See [Prospective analysis-plan
+composition](analysis_plan.md) for the strict JSON and output lifecycle.
 
 ## Synthetic policy prototype schema
 
