@@ -58,7 +58,7 @@ from .profiles import ProfileBundle
 
 
 POPULATION_EXECUTION_INPUT_SCHEMA_VERSION = "1.0"
-POPULATION_EXECUTION_LINEAGE_SCHEMA_VERSION = "1.0"
+POPULATION_EXECUTION_LINEAGE_SCHEMA_VERSION = "2.0"
 
 _CAMPAIGN_BLOCKERS = (
     "population.source_authenticity=not_verified",
@@ -244,6 +244,7 @@ class PopulationSeedExecutionRecord:
     runtime_projection_sha256: str
     assignment_sha256: str
     ordered_player_ids_sha256: str
+    jurisdiction_codes: tuple[str, ...]
     cell_indices: tuple[int, ...]
     exact_weights: ExactPopulationWeights
     balance: PopulationBalanceArtifact
@@ -281,10 +282,24 @@ class PopulationSeedExecutionRecord:
             type(index) is not int for index in self.cell_indices
         ):
             raise TypeError("cell_indices must be an immutable tuple of exact integers")
+        if type(self.jurisdiction_codes) is not tuple or any(
+            type(code) is not str for code in self.jurisdiction_codes
+        ):
+            raise TypeError("jurisdiction_codes must be an immutable tuple of strings")
         # Explicit class calls do not trust a subclass override and repeat the
         # nested content-address validation if a caller used object.__setattr__.
         ExactPopulationWeights.__post_init__(self.exact_weights)
         PopulationBalanceArtifact.__post_init__(self.balance)
+        balance_codes = {cell.jurisdiction_code for cell in self.balance.cells}
+        if (
+            not self.jurisdiction_codes
+            or len(set(self.jurisdiction_codes)) != len(self.jurisdiction_codes)
+            or set(self.jurisdiction_codes) != balance_codes
+        ):
+            raise PopulationExecutionValidationError(
+                "seed jurisdiction codes must be unique and exactly match the "
+                "balanced jurisdiction scope"
+            )
         if self.exact_weights.weight_sum != Fraction(1, 1):
             raise PopulationExecutionValidationError(
                 "projected exact design weights must sum exactly to one"
@@ -365,6 +380,7 @@ class PopulationSeedExecutionRecord:
             "runtime_projection_sha256": self.runtime_projection_sha256,
             "assignment_sha256": self.assignment_sha256,
             "ordered_player_ids_sha256": self.ordered_player_ids_sha256,
+            "jurisdiction_codes": list(self.jurisdiction_codes),
             "cell_indices": list(self.cell_indices),
             "exact_weights_sha256": self.exact_weights.design_sha256,
             "exact_weights": self.exact_weights.snapshot(),
@@ -428,6 +444,7 @@ def build_population_seed_execution_record(
         "runtime_projection_sha256": observed.runtime_projection_sha256,
         "assignment_sha256": observed.assignment_sha256,
         "ordered_player_ids_sha256": observed.ordered_player_ids_sha256,
+        "jurisdiction_codes": list(observed.players.jurisdiction_codes),
         "cell_indices": list(cell_indices),
         "exact_weights_sha256": weights.design_sha256,
         "exact_weights": weights.snapshot(),
@@ -446,6 +463,7 @@ def build_population_seed_execution_record(
         runtime_projection_sha256=observed.runtime_projection_sha256,
         assignment_sha256=observed.assignment_sha256,
         ordered_player_ids_sha256=observed.ordered_player_ids_sha256,
+        jurisdiction_codes=observed.players.jurisdiction_codes,
         cell_indices=cell_indices,
         exact_weights=weights,
         balance=balance,
@@ -636,11 +654,16 @@ def _validate_seed_assignment_against_adapter(
         raise PopulationExecutionValidationError(
             "population seed/tick do not reproduce the projection execution digest"
         )
-    code_to_index = {
-        jurisdiction.jurisdiction_code: index
-        for index, jurisdiction in enumerate(
-            adapter.verification.bundle.jurisdictions
+    expected_codes = {
+        jurisdiction.jurisdiction_code
+        for jurisdiction in adapter.verification.bundle.jurisdictions
+    }
+    if set(record.jurisdiction_codes) != expected_codes:
+        raise PopulationExecutionValidationError(
+            "population seed jurisdiction scope differs from the adapter"
         )
+    code_to_index = {
+        code: index for index, code in enumerate(record.jurisdiction_codes)
     }
     metadata_cells: list[ProjectedPopulationCellMetadata] = []
     for adapter_cell in adapter.cells:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 from contextlib import redirect_stdout
 from dataclasses import replace
 from datetime import date
+from hashlib import sha256
 import io
 import json
 from pathlib import Path
@@ -12,6 +14,13 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from four_jurisdiction_population_fixture import (  # noqa: E402
+    REGISTERED_PROFILE_CODES,
+    write_four_jurisdiction_population_fixture,
+)
+from monetary_execution_fixture import (  # noqa: E402
+    write_monetary_execution_fixture,
+)
 from test_population_projection_adapter import _complete_adapter  # noqa: E402
 
 from microtx_sim.causal.analysis_binding import (  # noqa: E402
@@ -49,6 +58,9 @@ from microtx_sim.data.population_evidence import (  # noqa: E402
     PopulationEstimandRole,
 )
 from microtx_sim.data.lineage import build_profile_input_lineage  # noqa: E402
+from microtx_sim.data.monetary_execution import (  # noqa: E402
+    build_monetary_output_currency_semantics,
+)
 from microtx_sim.data.population_execution import (  # noqa: E402
     population_execution_input_sha256,
 )
@@ -109,14 +121,20 @@ def _build_plan(
     *,
     batch_sha256: str | None = None,
     inclusion_predicate: CanonicalPopulationInclusionPredicate | None = None,
+    outcome_metric: PopulationOutcomeMetric = (
+        PopulationOutcomeMetric.COMPOSITE_HARM
+    ),
+    metric_contract_id: str = "player_outcomes.csv:composite_harm",
+    currency=None,
+    profile_input_sha256: str | None = None,
 ):
     estimand = PlannedPopulationEstimand(
         estimand_id="primary.composite-harm.v1",
         role=AnalysisEstimandRole.PRIMARY,
         reference_scenario_id=ScenarioId.SAFE_FIXED_PRICE_SUBSCRIPTION,
         comparison_scenario_id=ScenarioId.BASELINE_F2P,
-        outcome_metric=PopulationOutcomeMetric.COMPOSITE_HARM,
-        metric_contract_id="player_outcomes.csv:composite_harm",
+        outcome_metric=outcome_metric,
+        metric_contract_id=metric_contract_id,
         inclusion_predicate=(
             _all_players_predicate()
             if inclusion_predicate is None
@@ -127,6 +145,7 @@ def _build_plan(
             period_end=date(2026, 1, 1),
             description="Synthetic policy-run period for structural testing.",
         ),
+        currency=currency,
     )
     return build_prospective_analysis_plan(
         plan_id="test.prospective-analysis.v1",
@@ -142,6 +161,8 @@ def _build_plan(
         ),
         expected_profile_input_sha256=(
             _CUSTOM_PROFILE_INPUT_LINEAGE.fingerprint_sha256
+            if profile_input_sha256 is None
+            else profile_input_sha256
         ),
         expected_metric_contract_sha256=metric_contract_registry_sha256(),
         expected_harm_weights_sha256=analysis_plan_harm_weights_sha256(
@@ -168,6 +189,18 @@ def _write_plan(path: Path, plan) -> None:
         encoding="utf-8",
         newline="",
     )
+
+
+def _canonical_sha256(value: object) -> str:
+    return sha256(
+        json.dumps(
+            value,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 class AnalysisCompositionTests(unittest.TestCase):
@@ -213,6 +246,83 @@ class AnalysisCompositionTests(unittest.TestCase):
             ),
         )
         return config, run_inputs, adapter, loaded
+
+    def _monetary_fixture(self, root: Path):
+        monetary_root = root / "monetary"
+        monetary_root.mkdir()
+        profile_bundle, rate_artifact = write_monetary_execution_fixture(
+            monetary_root
+        )
+        adapter = write_four_jurisdiction_population_fixture(
+            root / "population"
+        )
+        profile_lineage = build_profile_input_lineage(
+            profile_bundle.country_profiles,
+            profile_bundle=profile_bundle,
+        )
+        self.assertEqual(
+            profile_lineage.profile_codes,
+            REGISTERED_PROFILE_CODES,
+        )
+        base = load_policy_config(CONFIG_PATH)
+        spec = PolicyBatchSpec(
+            seeds=(907,),
+            days=1,
+            player_count=16,
+            decision_parameters=DecisionParameters(step_minutes=240),
+        )
+        run_inputs = resolve_policy_run_inputs(
+            harm_parameters=base.harm_parameters,
+            harm_weights=base.harm_weights,
+            opportunity_valuation=base.opportunity_valuation,
+            producer_assumptions=base.producer_assumptions,
+            epgc_policy=base.epgc_policy,
+        )
+        currency = build_monetary_output_currency_semantics(
+            profile_lineage,
+            jurisdiction_codes=profile_lineage.profile_codes,
+            target_minor_unit_name="test target minor unit",
+        )
+        plan = _build_plan(
+            spec,
+            run_inputs,
+            adapter,
+            outcome_metric=PopulationOutcomeMetric.SPENDING_CENTS,
+            metric_contract_id="player_outcomes.csv:spending_cents",
+            currency=currency,
+            profile_input_sha256=profile_lineage.fingerprint_sha256,
+        )
+        plan_path = root / "monetary-analysis-plan.json"
+        _write_plan(plan_path, plan)
+        loaded = load_prospective_analysis_plan(plan_path)
+        config = replace(
+            base,
+            batch=spec,
+            population=PopulationProjectionConfig(
+                mode=PopulationExecutionMode.PROJECTED_V1,
+                design_bundle_path=adapter.verification.bundle.bundle_path,
+                runtime_mapping_bundle_path=(
+                    adapter.mapping_bundle.mapping_path
+                ),
+                adapter_id=adapter.adapter_id,
+            ),
+            analysis_plan=AnalysisPlanSelection(plan_path),
+            output=PolicyOutputConfig(
+                root / "output",
+                histogram_bins=8,
+                include_player_rows=True,
+                run_sensitivity=False,
+            ),
+        )
+        return (
+            config,
+            run_inputs,
+            adapter,
+            profile_bundle,
+            profile_lineage,
+            rate_artifact,
+            loaded,
+        )
 
     def test_opt_in_export_links_separate_exact_profile(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -267,6 +377,10 @@ class AnalysisCompositionTests(unittest.TestCase):
                 binding.binding_sha256,
             )
             self.assertFalse(manifest["analysis_binding"]["campaign_ready"])
+            self.assertNotIn(
+                "prospective_monetary_output_execution",
+                manifest,
+            )
             self.assertEqual(
                 manifest["analysis_output_profile"]["artifact_files"],
                 list(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES),
@@ -282,6 +396,292 @@ class AnalysisCompositionTests(unittest.TestCase):
                     / "target_population_estimands.csv"
                 ).is_file()
             )
+
+    def test_monetary_export_is_nested_and_preserves_raw_root_semantics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (
+                config,
+                run_inputs,
+                adapter,
+                profile_bundle,
+                profile_lineage,
+                _rate_artifact,
+                loaded,
+            ) = self._monetary_fixture(root)
+            validate_analysis_plan_inputs(
+                loaded.plan,
+                batch_spec=config.batch,
+                run_inputs=run_inputs,
+                population_adapter=adapter,
+                profile_input_lineage=profile_lineage,
+            )
+            batch = run_policy_batch(
+                config.batch,
+                profile_bundle=profile_bundle,
+                harm_parameters=config.harm_parameters,
+                harm_weights=config.harm_weights,
+                opportunity_valuation=config.opportunity_valuation,
+                producer_assumptions=config.producer_assumptions,
+                epgc_policy=config.epgc_policy,
+                population_adapter=adapter,
+            )
+            binding = resolve_run_analysis_binding(loaded.plan, batch)
+            expected_player_rows = [
+                (
+                    str(row["scenario_id"]),
+                    str(row["seed"]),
+                    str(row["player_id"]),
+                    str(row["spending_cents"]),
+                )
+                for row in batch.player_rows()
+            ]
+
+            paths = export_policy_batch(
+                config,
+                batch,
+                None,
+                config_path=CONFIG_PATH,
+                repository_root=ROOT,
+                output_dir=config.output.output_dir,
+                created_utc="2026-08-29T00:00:00+00:00",
+                analysis_plan=loaded,
+                analysis_binding=binding,
+            )
+            control_destination = root / "control-output"
+            control_config = replace(
+                config,
+                analysis_plan=None,
+                output=replace(
+                    config.output,
+                    output_dir=control_destination,
+                ),
+            )
+            control_paths = export_policy_batch(
+                control_config,
+                batch,
+                None,
+                config_path=CONFIG_PATH,
+                repository_root=ROOT,
+                output_dir=control_destination,
+                created_utc="2026-08-29T00:00:00+00:00",
+            )
+            self.assertEqual(
+                set(control_paths),
+                {
+                    key
+                    for key, path in paths.items()
+                    if path.parent != (
+                        config.output.output_dir / "prospective_analysis"
+                    )
+                },
+            )
+            for filename in POLICY_ARTIFACT_FILENAMES:
+                if filename == "manifest.json":
+                    continue
+                self.assertEqual(
+                    (config.output.output_dir / filename).read_bytes(),
+                    (control_destination / filename).read_bytes(),
+                    filename,
+                )
+
+            manifest = json.loads(
+                (config.output.output_dir / "manifest.json").read_text("utf-8")
+            )
+            self.assertTrue(manifest["synthetic_only"])
+            self.assertFalse(manifest["empirical_validation_claimed"])
+            self.assertFalse(manifest["analysis_binding"]["campaign_ready"])
+            self.assertFalse(manifest["analysis_output_profile"]["campaign_ready"])
+
+            monetary = manifest["prospective_monetary_output_execution"]
+            self.assertTrue(monetary["present"])
+            self.assertEqual(monetary["basis_count"], 1)
+            self.assertEqual(monetary["target_currencies"], ["TST"])
+            self.assertEqual(
+                monetary["basis_sha256s"],
+                [binding.monetary_output_bases[0].basis_sha256],
+            )
+            self.assertEqual(
+                monetary["scope"],
+                "prospective_analysis target-population estimands only",
+            )
+            self.assertTrue(
+                monetary["per_observation_before_contrast_and_weighting"]
+            )
+            self.assertFalse(monetary["observed_currency_recovered"])
+            self.assertFalse(monetary["legacy_root_outputs_relabelled"])
+            self.assertFalse(
+                monetary[
+                    "legacy_root_monetary_outputs_cross_country_comparable"
+                ]
+            )
+            self.assertFalse(monetary["campaign_ready"])
+
+            root_comparability = manifest["monetary_comparability"]
+            self.assertFalse(
+                root_comparability["manifest_gate"][
+                    "output_design_binding_bound"
+                ]
+            )
+            self.assertFalse(
+                root_comparability["manifest_gate"][
+                    "public_output_comparability"
+                ]
+            )
+            self.assertFalse(
+                manifest["output_metric_contracts"]["run_input_lineage"][
+                    "monetary_outputs_cross_country_comparable"
+                ]
+            )
+            self.assertFalse(manifest["output_metric_contracts"]["campaign_ready"])
+            root_contracts = {
+                contract["contract_id"]: contract
+                for contract in manifest["output_metric_contracts"]["contracts"]
+            }
+            for contract_id in (
+                "player_outcomes.csv:spending_cents",
+                "player_outcomes.csv:harmful_spending_cents",
+                "player_outcomes.csv:opportunity_cost_proxy_cents",
+            ):
+                unit = root_contracts[contract_id]["unit"]
+                self.assertEqual(unit["quantity"], "money")
+                self.assertEqual(unit["symbol"], "simulation_cent")
+                self.assertIn("not nominal FX/PPP-comparable", unit["money_basis"])
+
+            with (
+                config.output.output_dir / "player_outcomes.csv"
+            ).open(encoding="utf-8", newline="") as handle:
+                exported_player_rows = [
+                    (
+                        row["scenario_id"],
+                        row["seed"],
+                        row["player_id"],
+                        row["spending_cents"],
+                    )
+                    for row in csv.DictReader(handle)
+                ]
+            self.assertEqual(exported_player_rows, expected_player_rows)
+
+            analysis_profile = manifest["analysis_output_profile"]
+            for artifact in analysis_profile["artifacts"].values():
+                artifact_path = config.output.output_dir / artifact["relative_path"]
+                self.assertEqual(artifact_path.stat().st_size, artifact["bytes"])
+                self.assertEqual(
+                    sha256(artifact_path.read_bytes()).hexdigest(),
+                    artifact["sha256"],
+                )
+            metadata_path = (
+                config.output.output_dir
+                / "prospective_analysis"
+                / "target_population_estimand_metadata.json"
+            )
+            metadata = json.loads(metadata_path.read_text("utf-8"))
+            self.assertEqual(metadata["record_count_decimal"], "1")
+            self.assertEqual(
+                metadata["analysis_binding"]["binding_sha256"],
+                binding.binding_sha256,
+            )
+            self.assertEqual(
+                metadata["record_set_sha256"],
+                _canonical_sha256({"ordered_records": metadata["records"]}),
+            )
+            record = metadata["records"][0]
+            self.assertEqual(record["spec"]["currency"]["currency_code"], "TST")
+            self.assertEqual(
+                record["spec"]["metric_contract_sha256"],
+                binding.seed_bindings[0].metric_contract_sha256,
+            )
+            self.assertNotEqual(
+                binding.seed_bindings[0].metric_contract_sha256,
+                binding.seed_bindings[0].source_metric_contract_sha256,
+            )
+            self.assertEqual(
+                {path.name for path in paths.values()},
+                set(POLICY_ARTIFACT_FILENAMES).union(
+                    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+                ),
+            )
+            control_manifest = json.loads(
+                (control_destination / "manifest.json").read_text("utf-8")
+            )
+            self.assertNotIn(
+                "prospective_monetary_output_execution",
+                control_manifest,
+            )
+
+    def test_late_rate_artifact_mutation_blocks_prospective_publication(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (
+                config,
+                _run_inputs,
+                adapter,
+                profile_bundle,
+                _profile_lineage,
+                rate_artifact,
+                loaded,
+            ) = self._monetary_fixture(root)
+            batch = run_policy_batch(
+                config.batch,
+                profile_bundle=profile_bundle,
+                harm_parameters=config.harm_parameters,
+                harm_weights=config.harm_weights,
+                opportunity_valuation=config.opportunity_valuation,
+                producer_assumptions=config.producer_assumptions,
+                epgc_policy=config.epgc_policy,
+                population_adapter=adapter,
+            )
+            binding = resolve_run_analysis_binding(loaded.plan, batch)
+
+            from microtx_sim.outputs.plots import (
+                write_epgc_subsidy_requirement_svg,
+            )
+
+            def write_then_mutate_rate(*args, **kwargs):
+                result = write_epgc_subsidy_requirement_svg(*args, **kwargs)
+                rate_artifact.write_bytes(rate_artifact.read_bytes() + b" ")
+                return result
+
+            with patch(
+                "microtx_sim.outputs.export.write_epgc_subsidy_requirement_svg",
+                side_effect=write_then_mutate_rate,
+            ):
+                with self.assertRaisesRegex(
+                    AnalysisBindingValidationError,
+                    "monetary output basis|rate artifact|changed",
+                ):
+                    export_policy_batch(
+                        config,
+                        batch,
+                        None,
+                        config_path=CONFIG_PATH,
+                        repository_root=ROOT,
+                        output_dir=config.output.output_dir,
+                        analysis_plan=loaded,
+                        analysis_binding=binding,
+                    )
+
+            self.assertFalse(
+                (config.output.output_dir / "prospective_analysis").exists()
+            )
+            self.assertEqual(
+                [
+                    path
+                    for path in root.iterdir()
+                    if path.name.startswith(
+                        f".{config.output.output_dir.name}.prospective-analysis-"
+                    )
+                ],
+                [],
+            )
+            interim_manifest = json.loads(
+                (config.output.output_dir / "manifest.json").read_text("utf-8")
+            )
+            self.assertNotIn("analysis_output_profile", interim_manifest)
 
     def test_export_reopens_plan_before_any_destination_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -426,6 +826,77 @@ class AnalysisCompositionTests(unittest.TestCase):
                 with self.assertRaisesRegex(
                     RuntimeError,
                     "deliberate late root failure",
+                ):
+                    export_policy_batch(
+                        config,
+                        batch,
+                        None,
+                        config_path=CONFIG_PATH,
+                        repository_root=ROOT,
+                        output_dir=config.output.output_dir,
+                        analysis_plan=loaded,
+                        analysis_binding=binding,
+                    )
+
+            self.assertFalse(
+                (config.output.output_dir / "prospective_analysis").exists()
+            )
+            self.assertEqual(
+                [
+                    path
+                    for path in root.iterdir()
+                    if path.name.startswith(
+                        f".{config.output.output_dir.name}.prospective-analysis-"
+                    )
+                ],
+                [],
+            )
+            interim_manifest = json.loads(
+                (config.output.output_dir / "manifest.json").read_text("utf-8")
+            )
+            self.assertNotIn("analysis_output_profile", interim_manifest)
+
+    def test_late_stage_tamper_is_rejected_and_cleaned_before_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _run_inputs, adapter, loaded = self._fixture(root)
+            batch = run_policy_batch(
+                config.batch,
+                country_profiles=_CUSTOM_PROFILES,
+                harm_parameters=config.harm_parameters,
+                harm_weights=config.harm_weights,
+                opportunity_valuation=config.opportunity_valuation,
+                producer_assumptions=config.producer_assumptions,
+                epgc_policy=config.epgc_policy,
+                population_adapter=adapter,
+            )
+            binding = resolve_run_analysis_binding(loaded.plan, batch)
+
+            from microtx_sim.outputs.plots import (
+                write_epgc_subsidy_requirement_svg,
+            )
+
+            def write_then_tamper(*args, **kwargs):
+                result = write_epgc_subsidy_requirement_svg(*args, **kwargs)
+                stages = [
+                    path
+                    for path in root.iterdir()
+                    if path.name.startswith(
+                        f".{config.output.output_dir.name}.prospective-analysis-"
+                    )
+                ]
+                self.assertEqual(len(stages), 1)
+                estimands = stages[0] / "target_population_estimands.csv"
+                estimands.write_bytes(estimands.read_bytes() + b"# tampered\n")
+                return result
+
+            with patch(
+                "microtx_sim.outputs.export.write_epgc_subsidy_requirement_svg",
+                side_effect=write_then_tamper,
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "artifact identity changed before publication",
                 ):
                     export_policy_batch(
                         config,

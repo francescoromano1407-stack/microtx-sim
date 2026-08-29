@@ -95,12 +95,17 @@ These tasks block scientific interpretation.
    Declared period dates are not executed calendar anchors; only their inclusive
    duration is checked against the batch horizon, with one declared day for a
    zero-day structural snapshot. No plan is checked in; schema v1 is necessarily
-   unregistered and remains `campaign_ready=false`. Money-valued planned
-   estimands fail before execution because the simulation still lacks an
-   executed currency/price-period output conversion; this layer cannot promote
-   raw simulation cents into comparable money. Calendar anchoring, cross-seed
-   aggregation/uncertainty, and model implementation/environment identity remain
-   explicit campaign blockers.
+   unregistered and remains `campaign_ready=false`. A money-valued planned
+   estimand must additionally select the opt-in prospective money execution and
+   otherwise fails before treatment. That execution creates target-currency-
+   equivalent model amounts by applying one jurisdiction-specific composite to
+   each retained observation before contrasts and weights, then rounding once to
+   the nearest signed minor unit with half ties away from zero. It does not
+   reconstruct nominal local currency, and only the separate prospective profile
+   receives the converted values and lineage. Legacy root output-v3 remains in
+   unchanged simulation cents. Calendar anchoring, cross-seed aggregation and
+   uncertainty, and model implementation/environment identity remain explicit
+   campaign blockers.
 
    This P0 item remains open because exact execution does not provide an
    authenticated and calibrated target, an independently verified holdout, a
@@ -133,6 +138,20 @@ These tasks block scientific interpretation.
    source bundle is empty, illustrative, and missing a signature. Even a valid
    test extraction clears only the source subgate: signature, output/design,
    population, and external-preregistration blockers remain independent.
+
+   **Infrastructure progress only:** an opt-in prospective execution can now bind
+   a complete dated target-currency basis and exact jurisdiction-specific
+   composites to a money-valued planned estimand. It converts each retained
+   simulation-cent observation before the paired contrast and target-population
+   weighting, using exactly one signed half-away-from-zero minor-unit rounding
+   and no intermediate nominal local-currency reconstruction. These outputs are
+   target-currency-equivalent **model** amounts and remain confined to the
+   separate prospective profile; legacy root outputs remain unchanged simulation
+   cents. No supplied plan or checked-in conversion selects this path. Source
+   authentication, calibrated money scales and behavioral spending inputs,
+   representative population and independently held-out validation, external
+   preregistration, and campaign readiness all remain blocking, so P0.2 remains
+   open and no campaign is authorised.
 3. **Calibrate participation and spending.** Estimate gaming participation,
    payer conversion including zero spenders, conditional spend distributions,
    price sensitivity, switching, churn, and time allocation by age and income.

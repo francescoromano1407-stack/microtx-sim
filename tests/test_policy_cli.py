@@ -1,17 +1,47 @@
 from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from hashlib import sha256
 import io
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from four_jurisdiction_population_fixture import (  # noqa: E402
+    write_four_jurisdiction_population_fixture,
+)
+from monetary_execution_fixture import (  # noqa: E402
+    write_monetary_execution_fixture,
+)
+from test_analysis_binding import _plan, _planned_estimand  # noqa: E402
+
+from microtx_sim.causal.analysis_plan import (  # noqa: E402
+    PopulationOutcomeMetric,
+)
+from microtx_sim.causal.batch import (  # noqa: E402
+    PolicyBatchSpec,
+    resolve_policy_run_inputs,
+)
 from microtx_sim.cli import main
+from microtx_sim.config import (  # noqa: E402
+    PopulationExecutionMode,
+    PopulationProjectionConfig,
+)
 from microtx_sim.core.ledger import LedgerStorageError
+from microtx_sim.data.lineage import build_profile_input_lineage  # noqa: E402
+from microtx_sim.data.monetary_execution import (  # noqa: E402
+    build_monetary_output_currency_semantics,
+)
+from microtx_sim.policy_config import (  # noqa: E402
+    AnalysisPlanSelection,
+    load_policy_config,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +49,127 @@ BASE_CONFIG = ROOT / "configs" / "policy_prototype.toml"
 
 
 class PolicyCliTests(unittest.TestCase):
+    def test_invalid_monetary_plan_fails_before_batch_or_sensitivity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile_root = root / "profiles"
+            profile_root.mkdir()
+            profiles, _rate_artifact = write_monetary_execution_fixture(
+                profile_root
+            )
+            adapter = write_four_jurisdiction_population_fixture(
+                root / "population"
+            )
+            profile_lineage = build_profile_input_lineage(
+                profiles.country_profiles,
+                profile_bundle=profiles,
+            )
+            currency = build_monetary_output_currency_semantics(
+                profile_lineage,
+                jurisdiction_codes=profile_lineage.profile_codes,
+                target_minor_unit_name="test target minor unit",
+            )
+            stale_currency = replace(
+                currency,
+                currency_basis_sha256="0" * 64,
+            )
+
+            base = load_policy_config(BASE_CONFIG)
+            spec = PolicyBatchSpec(
+                seeds=(17,),
+                days=1,
+                player_count=16,
+                scenarios=base.batch.scenarios,
+                reference_scenario=base.batch.reference_scenario,
+                decision_parameters=base.batch.decision_parameters,
+            )
+            run_inputs = resolve_policy_run_inputs(
+                harm_parameters=base.harm_parameters,
+                harm_weights=base.harm_weights,
+                opportunity_valuation=base.opportunity_valuation,
+                producer_assumptions=base.producer_assumptions,
+                epgc_policy=base.epgc_policy,
+            )
+            planned = _planned_estimand(
+                outcome_metric=PopulationOutcomeMetric.SPENDING_CENTS,
+                metric_contract_id="player_outcomes.csv:spending_cents",
+                currency=stale_currency,
+            )
+            plan = _plan(
+                spec,
+                run_inputs,
+                adapter,
+                estimand=planned,
+                overrides={
+                    "expected_profile_input_sha256": (
+                        profile_lineage.fingerprint_sha256
+                    )
+                },
+            )
+            plan_path = root / "analysis-plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    plan.snapshot(),
+                    allow_nan=False,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+                newline="",
+            )
+            config = replace(
+                base,
+                batch=spec,
+                population=PopulationProjectionConfig(
+                    mode=PopulationExecutionMode.PROJECTED_V1,
+                    design_bundle_path=adapter.verification.bundle.bundle_path,
+                    runtime_mapping_bundle_path=(
+                        adapter.mapping_bundle.mapping_path
+                    ),
+                    adapter_id=adapter.adapter_id,
+                ),
+                analysis_plan=AnalysisPlanSelection(plan_path),
+                output=replace(
+                    base.output,
+                    output_dir=root / "never-created",
+                    run_sensitivity=True,
+                ),
+            )
+
+            stderr = io.StringIO()
+            with (
+                patch(
+                    "microtx_sim.cli.load_policy_config",
+                    return_value=config,
+                ),
+                patch(
+                    "microtx_sim.cli.load_profile_bundle",
+                    return_value=profiles,
+                ),
+                patch(
+                    "microtx_sim.cli.resolve_population_projection_adapter",
+                    return_value=adapter,
+                ),
+                patch("microtx_sim.cli.run_policy_batch") as execute_batch,
+                patch(
+                    "microtx_sim.cli._run_configured_sensitivity"
+                ) as execute_sensitivity,
+                redirect_stderr(stderr),
+            ):
+                code = main(("policy-batch", str(BASE_CONFIG)))
+
+            self.assertEqual(code, 2)
+            self.assertIn(
+                "executed currency/price-period conversion basis",
+                stderr.getvalue(),
+            )
+            self.assertIn("currency_basis_sha256", stderr.getvalue())
+            execute_batch.assert_not_called()
+            execute_sensitivity.assert_not_called()
+            self.assertFalse(config.output.output_dir.exists())
+
     def test_smoke_normalises_sqlite_storage_failures(self) -> None:
         for failure in (
             sqlite3.OperationalError("forced SQLite failure"),

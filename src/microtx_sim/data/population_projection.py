@@ -1470,11 +1470,16 @@ def _validate_execution(execution: PopulationProjectionExecution) -> None:
         raise PopulationProjectionVerificationError(
             "execution player ids differ from the exact apportionment interval"
         )
-    if execution.players.jurisdiction_codes != tuple(
+    player_codes = execution.players.jurisdiction_codes
+    expected_codes = tuple(
         item.jurisdiction_code for item in adapter.verification.bundle.jurisdictions
+    )
+    if len(set(player_codes)) != len(player_codes) or set(player_codes) != set(
+        expected_codes
     ):
         raise PopulationProjectionVerificationError(
-            "execution jurisdiction order differs from the verified design"
+            "execution jurisdiction code set must be unique and exactly match "
+            "the verified design; supplied order is retained at runtime"
         )
     expected_metadata_cells = _expected_runtime_metadata_cells(
         adapter,
@@ -1562,9 +1567,13 @@ def initialize_population_projection(
         item.jurisdiction_code
         for item in observed.verification.bundle.jurisdictions
     )
-    if tuple(profile.code for profile in profiles) != expected_codes:
+    profile_codes = tuple(profile.code for profile in profiles)
+    if len(set(profile_codes)) != len(profile_codes) or set(profile_codes) != set(
+        expected_codes
+    ):
         raise PopulationProjectionVerificationError(
-            "country profile codes/order must exactly match verified jurisdictions"
+            "country profile code set must be unique and exactly match verified "
+            "jurisdictions; supplied order is retained at runtime"
         )
     cells = tuple(cell.projection_cell for cell in observed.cells)
     counts = tuple(

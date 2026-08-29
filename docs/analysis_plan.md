@@ -72,13 +72,35 @@ the duration is executed and checked: `period_start` and `period_end` remain
 declarations, are not anchored to a simulation calendar, and cannot establish
 that outcomes occurred on those dates.
 
-Binding schema version 1 accepts only outcomes with a direct compatible
-`player_outcomes.csv` metric contract. It also rejects every money-valued
-estimand before execution: the current runtime retains raw illustrative
-simulation cents but no executed dated currency/price-period conversion, so a
-plan cannot relabel those arrays as EUR, GBP, or another currency. Monetary
-estimands remain blocked pending a separately attested conversion-execution
-layer.
+Analysis-plan schema version 1 accepts only outcomes with a direct compatible
+`player_outcomes.csv` metric contract. Run-binding schema version 2 adds the
+separate raw-versus-effective metric identities needed for monetary execution;
+money-valued estimands additionally require an explicit prospective
+money-execution selection; omission remains a pre-execution error. That opt-in
+layer binds the plan to one complete, internally coherent set of dated
+conversion and price-period declarations and materializes
+**target-currency-equivalent model amounts**. The wording is deliberate: a
+target currency code describes the requested output basis, but it does not turn
+an uncalibrated simulated outcome into observed EUR, GBP, or any other
+real-world amount.
+
+For each retained player observation, the money path combines that player's
+jurisdiction-specific simulation-money scale and local-to-target rate into one
+exact rational composite conversion. It applies that composite directly to the
+simulation-cent outcome and performs exactly one signed nearest-minor-unit
+rounding, with half ties away from zero. The implementation does not first
+reconstruct or round a nominal local-currency amount. Reference and comparison
+outcomes are converted per observation before their paired contrast is formed
+and before target-population weights are applied. This fixed order prevents a
+pooled aggregate, a contrast, or an intermediate local-currency reconstruction
+from silently choosing a different rounding result.
+
+Run-binding version 2 is an explicit metadata migration for every prospective
+plan, including score-only plans. Non-money specifications and exact results
+retain the same algorithms and values, while binding snapshots and binding
+digests change because they now name both the source and effective metric
+contracts and carry the possibly empty monetary-basis collection. This does
+not change the legacy root output-v3 CSV schema or values.
 
 The exact key set and all declared array ordering are semantic; serialized JSON
 object-key order is retained only by the file-byte identity. Unknown, missing,
@@ -122,18 +144,31 @@ main manifest contains distinct `analysis_plan`, `analysis_binding`, and
 of `[analysis_plan]` preserves the legacy configuration, execution digests,
 manifest shape, filenames, and CLI workflow.
 
+When prospective money execution is also selected, only the separate
+prospective profile receives the target-currency-equivalent model values and
+their exact conversion-execution lineage. Root output-v3 tables, plots, and
+their metric contracts continue to report the same illustrative simulation
+cents as before; the opt-in layer neither rewrites them nor relabels their unit.
+
 The optional profile has a fresh-target publication contract. Any pre-existing
 `prospective_analysis` entry makes either a planned or no-plan export fail
 before root artifacts are changed; reruns must use a fresh output location or
 remove that exact entry after review. Planned files are prepared in a private
 sibling directory, published only after all ordinary root artifacts succeed,
-and removed again if the final linking manifest cannot be written.
+and removed again if the final linking manifest cannot be written. Immediately
+before publication, the exporter rechecks the staged file identities, reopens
+the selected plan and source evidence, and recomputes the run binding; a late
+mutation therefore fails without publishing the optional profile.
 
-Even a structurally valid binding is synthetic and unregistered. It does not
-authenticate population evidence, establish calibration or held-out validity,
-make currencies comparable, or authorize a scientific campaign.
-Its fixed machine-readable blockers also record that the execution calendar
-anchor is unbound, cross-seed aggregation and uncertainty are unresolved, and
-the model implementation/environment identity is unbound. The input-value
-digests do not attest the source tree, interpreter, dependency lock, or build
-environment; binding those identities remains prospective P2 work.
+Even a structurally valid money binding is synthetic and unregistered. Exact
+arithmetic and content identities do not authenticate the publisher or rate
+source, calibrate the simulated amounts, establish a representative target
+population or genuine held-out validation, complete external preregistration,
+or authorize a scientific campaign. The source-bundle signature, calibration,
+population, and preregistration gates therefore remain independently blocking.
+The plan's fixed machine-readable blockers also continue to record that the
+execution calendar anchor is unbound, cross-seed aggregation and uncertainty
+are unresolved, and the model implementation/environment identity is unbound.
+The input-value digests do not attest the source tree, interpreter, dependency
+lock, or build environment; binding those identities remains prospective P2
+work.

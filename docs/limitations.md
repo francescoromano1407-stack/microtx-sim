@@ -105,19 +105,29 @@ illustrative; no calibrated target, genuine holdout, public comparability, or
 campaign readiness has been established. The P0 comparable-populations
 requirement remains open, and no full campaign has been run.
 
-Plan and binding schema v1 are necessarily unregistered and campaign-ineligible.
-They also reject money-valued estimands because no executed dated conversion
-currently connects raw simulation cents to a declared currency and price
-period. A `PRIMARY` label identifies one estimand specification whose outputs
+Plan schema v1 and run-binding schema v2 are necessarily unregistered and
+campaign-ineligible.
+Money-valued estimands require an additional explicit opt-in prospective money
+execution; without it they fail before treatment. When selected, the execution
+applies one jurisdiction-specific composite conversion directly to each retained
+simulation-cent observation, before reference/comparison contrasts and
+population weights. It performs one signed nearest-minor-unit rounding with half
+ties away from zero and never reconstructs or rounds an intermediate nominal
+local-currency amount. The results are target-currency-equivalent model amounts,
+not observed or calibrated money, and only the separate prospective profile
+receives them. Legacy root output-v3 artifacts remain unchanged in simulation
+cents.
+
+A `PRIMARY` label still identifies one estimand specification whose outputs
 remain separate per-seed realizations; the binding defines no cross-seed
 aggregate or Monte Carlo uncertainty semantics. Declared calendar dates are not
 connected to a simulation clock: preflight checks only that their inclusive
 duration equals the executed horizon, treating a zero-day structural snapshot
 as one declared day. The plan also does not bind source-code, interpreter,
-dependency-lock, or build-environment identity. These gaps are explicit fixed
-campaign blockers. This prevents stronger labels but does not complete
-preregistration, calibration, holdout validation, monetary comparability, or
-implementation-level reproducibility.
+dependency-lock, or build-environment identity. Exact conversion execution does
+not authenticate its sources, calibrate model money, establish a representative
+population or genuine holdout, or provide external preregistration. These gaps
+remain explicit campaign blockers and monetary comparability remains open.
 
 ### Internal money is not observed purchasing power
 
@@ -133,20 +143,24 @@ This numerical property does not make the underlying monetary assumptions
 empirically exact.
 
 The code now has a typed, dated, exact-rational FX/PPP conversion contract, a
-content-addressed exact-CSV extraction contract, and a strict pooled-currency
-campaign gate. Those are validation boundaries, not a calibration result: the
-checked-in profile bundle contains no conversion rates, the checked-in source
-bundle contains no artifacts or bindings and has signature `MISSING`, and the
-manifest conversion summary is empty. No current output is cross-country comparable.
-The contract makes per-observation versus after-aggregation rounding explicit;
-those stages can yield different totals and cannot be interchanged. It also
-requires method-specific source scope, typed date intervals, and registered-file
-re-attestation, but it cannot decide whether a declared estimand or population
-is scientifically appropriate. That requires preregistration and independent
-evidence review. Structural coherence or a reproducible test extraction
-therefore does not promote the public comparability flag. Source extraction,
-bundle signature, output/design binding, population binding, and external
-preregistration remain separate blockers.
+content-addressed exact-CSV extraction contract, a strict pooled-currency
+campaign gate, and opt-in prospective execution plumbing. These are validation
+and arithmetic boundaries, not a calibration result: the checked-in profile
+bundle contains no conversion rates, the checked-in source bundle contains no
+artifacts or bindings and has signature `MISSING`, and the legacy manifest
+conversion summary is empty. No supplied configuration selects the prospective
+money path, and no root output is cross-country comparable.
+
+The general contract records per-observation versus after-aggregation rounding
+because those stages can yield different totals. The prospective money path is
+stricter: only per-observation execution is admissible, using one composite and
+one rounding before contrasts or weights. Method-specific source scope, typed
+date intervals, registered-file re-attestation, and exact execution still cannot
+decide whether the declared estimand or population is scientifically appropriate.
+Structural coherence or a reproducible test extraction therefore does not
+promote the public comparability flag. Source authenticity, calibration,
+output/design binding, representative population and genuine holdout validity,
+external preregistration, and campaign readiness remain separate blockers.
 
 The same limitation applies to population evidence: a bundle or artifact hash
 can reproduce the bytes and extraction but cannot authenticate the publisher,

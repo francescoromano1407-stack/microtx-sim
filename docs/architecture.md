@@ -146,6 +146,7 @@ from accumulating in one monolithic class.
 | `data/population_design.py` | Static exact domains, declared source partitions, calibration target construction, and Hamilton counts/weights; always fail-closed for campaign use. |
 | `data/population_projection.py` | File-backed source-to-runtime mapping, exact static-plan adapter, content-addressed runtime projection, and assignment execution. |
 | `data/population_execution.py` | Opt-in configuration resolution and immutable per-seed population execution lineage. |
+| `data/monetary_execution.py` | Registered prospective output basis, exact jurisdiction-specific composite conversion, and per-observation execution lineage. |
 | `consumers/logic.py` | Exact game choice, activity, abstract competition, purchases, rare card events, and harm transitions. |
 | `consumers/welfare.py` | Aligned immutable-baseline/dynamic `PlayerLifeTable` and deterministic synthetic priors. |
 | `consumers/decision.py` | Full eight-action Gumbel/logit choice with hard budget, consent, cap, and cooling constraints. |

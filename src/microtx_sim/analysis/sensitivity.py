@@ -209,6 +209,15 @@ class SensitivityResult:
                 raise ValueError(
                     "population execution player count does not match batch spec"
                 )
+            profile_codes = tuple(profile.code for profile in profiles)
+            if any(
+                record.jurisdiction_codes != profile_codes
+                for record in population_lineage.seed_records
+            ):
+                raise ValueError(
+                    "population execution jurisdiction order does not match "
+                    "the retained country profiles"
+                )
             if any(
                 record.policy_days != self.batch_spec.days
                 for record in population_lineage.seed_records

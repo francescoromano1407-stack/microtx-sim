@@ -193,7 +193,12 @@ it. Projected mode has no zero-player special case.
 Projected gamer and payer fields are attested sidecar-only baseline metadata and
 do not set runtime gameplay, payment access, or spending history. Each selected
 seed binds the adapter and runtime-projection identities, ordered player IDs,
-cell assignment, cohort digest, and exact weights. A separate pre-treatment
+cell assignment, cohort digest, exact weights, and the ordered runtime
+jurisdiction codes. Static design files retain canonical jurisdiction order;
+the runtime profile tuple may use any unique order with exactly the same code
+set. Its supplied order is preserved for integer indices and is bound by
+population-execution lineage schema 2 so replay cannot silently substitute the
+static order. A separate pre-treatment
 population balance artifact compares every full joint cell's target mass,
 planned count, sidecar weight, and realized count/mass, then separately attests
 runtime jurisdiction, age, income, and household membership. Stale or mutated
@@ -238,6 +243,19 @@ profile-input-lineage, metric-registry, output-profile, and fixed-seed
 identities before reporting success. Treatment-result identities are resolved
 only after a completed policy batch. See [Prospective analysis-plan
 composition](analysis_plan.md) for the strict JSON and output lifecycle.
+
+A money-valued plan also requires an explicit opt-in prospective money execution
+and a complete coherent dated conversion basis; omission fails before treatment.
+For each retained observation, the selected execution applies one exact
+jurisdiction-specific composite directly to simulation cents before the
+reference/comparison contrast and population weighting. It then performs exactly
+one signed nearest-minor-unit rounding with half ties away from zero, without
+reconstructing or rounding nominal local currency. The separate prospective
+profile labels the result as a target-currency-equivalent model amount and
+retains its execution lineage. It does not change or relabel legacy root
+output-v3 tables and plots, which remain in simulation cents. This arithmetic
+contract does not supply source authenticity, calibration, a representative
+population or genuine holdout, external preregistration, or campaign readiness.
 
 ## Synthetic policy prototype schema
 

@@ -424,6 +424,15 @@ class PolicyBatchResult:
                 raise ValueError(
                     "population execution player count does not match batch spec"
                 )
+            profile_codes = tuple(profile.code for profile in profiles)
+            if any(
+                record.jurisdiction_codes != profile_codes
+                for record in population_lineage.seed_records
+            ):
+                raise ValueError(
+                    "population execution jurisdiction order does not match "
+                    "the retained country profiles"
+                )
             for seed in self.spec.seeds:
                 population_record = population_lineage.record_for_seed(seed)
                 if population_record.cohort_digest != digests[seed]:

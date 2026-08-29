@@ -228,9 +228,11 @@ These gates are deliberately not one public substantive-comparability claim.
 The typed assessment reports separate source-extraction, source-signature,
 output/design, population, and preregistration results. A valid test artifact
 can clear only source extraction. Schema-v1 source bundles have signature
-`MISSING`, and the prototype has no run-specific output conversion binding,
-calibrated target-population specification, or external preregistration, so
-public comparability remains false.
+`MISSING`. An opt-in prospective analysis may now bind a run-specific money
+execution, but that proves only which declared arithmetic was applied to which
+model observations. It does not supply a calibrated target-population
+specification, authenticate the rate source, or provide external
+preregistration, so public comparability remains false.
 
 The checked-in `jurisdictions.toml` deliberately remains schema version 2 with
 zero conversion records. The checked-in source bundle deliberately has zero
@@ -245,6 +247,33 @@ whose hashes it claims. Registered lineage reloads those files both when the
 lineage object is constructed and when a manifest is emitted. Programmatic or
 changed bundles remain unregistered and fail full campaign validation even when
 their test-only statuses are labelled `CALIBRATED`.
+
+### Opt-in prospective money execution
+
+A prospective analysis plan may explicitly request money execution when its
+profile lineage contains complete, mutually coherent jurisdiction conversion
+contracts. This path does not replace the simulator's internal unit. It derives
+one exact rational composite for each jurisdiction from the internal
+simulation-money scale and the declared local-to-target rate, then applies that
+composite directly to every retained player outcome. The result is a
+**target-currency-equivalent model amount**, not an observed or calibrated
+amount in that currency.
+
+Conversion occurs per observation before reference/comparison contrasts and
+before target-population weighting. Each observation receives exactly one
+signed nearest-minor-unit rounding, with half ties away from zero. There is no
+intermediate reconstruction or rounding of a nominal local-currency amount;
+such a two-stage path could disagree with the declared composite conversion.
+The prospective result retains the jurisdiction-specific conversion identity,
+target currency and price period needed to reproduce this order of operations.
+
+This is a separate opt-in output layer. The ordinary output-v3 root tables,
+plots, summaries, and metric contracts continue to use illustrative simulation
+cents with their existing unweighted semantics. No supplied configuration
+selects prospective money execution, and the checked-in profile still provides
+no conversion records or authenticated rate artifacts. Source authenticity,
+calibration, population validity, genuine held-out validation, and external
+preregistration therefore remain unresolved campaign blockers.
 
 ### Layer 2: internal simulation cents
 
@@ -326,9 +355,10 @@ For an explicit `[analysis_plan]` opt-in, a separate resolver now checks every
 planned input before treatment and resolves the upstream weight, projection,
 balance, and metric identities after execution before invoking that standalone
 writer under `prospective_analysis/`. This does not change the root output-v3
-contract. Plan/binding schema v1 is unregistered and refuses money-valued
-estimands until the output path retains an executed currency/price-period
-conversion.
+contract. A money-valued estimand must additionally select the prospective
+money path and retain its executed target-currency/price-period conversion;
+otherwise it still fails before treatment. A successful structural execution
+does not promote either the plan or its result to calibrated or campaign-ready.
 
 The following `CountryProfile` inputs are inherited from scaffold defaults and
 are not country estimates: adult age, the age-income curve, minor allowance,
@@ -471,9 +501,10 @@ Validation occurs at several boundaries:
    `CALIBRATED`. Pooled money additionally requires complete, calibrated,
    common-basis conversion coverage and exact internal-scale coherence.
    Population comparability is independently fail-closed. Optional runtime use,
-   structural balance, and standalone output integration cannot establish the
-   missing signature, authentic held-out source units, calibration, or empirical
-   validity of the declared source-to-runtime transport.
+   structural balance, prospective money execution, and standalone output
+   integration cannot establish the missing signature, authentic held-out
+   source units, calibration, external preregistration, or empirical validity of
+   the declared source-to-runtime transport.
 
 `smoke.toml` permits synthetic dependencies and is the intended executable
 structural check. `base.toml` sets `allow_synthetic=false`; with the current

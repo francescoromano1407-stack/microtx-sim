@@ -2,12 +2,22 @@ from __future__ import annotations
 
 from dataclasses import fields, replace
 from datetime import date
+from fractions import Fraction
+from hashlib import sha256
+import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from four_jurisdiction_population_fixture import (  # noqa: E402
+    REGISTERED_PROFILE_CODES,
+    write_four_jurisdiction_population_fixture,
+)
+from monetary_execution_fixture import (  # noqa: E402
+    write_monetary_execution_fixture,
+)
 from test_population_projection_adapter import _complete_adapter  # noqa: E402
 
 from microtx_sim.causal.analysis_binding import (  # noqa: E402
@@ -38,6 +48,10 @@ from microtx_sim.causal.scenarios import ScenarioId  # noqa: E402
 from microtx_sim.consumers.decision import DecisionParameters  # noqa: E402
 from microtx_sim.consumers.population import CountryProfile  # noqa: E402
 from microtx_sim.data.lineage import build_profile_input_lineage  # noqa: E402
+from microtx_sim.data.monetary_execution import (  # noqa: E402
+    build_monetary_output_currency_semantics,
+    convert_monetary_outcome,
+)
 from microtx_sim.data.population_evidence import PopulationEstimandRole  # noqa: E402
 from microtx_sim.data.population_evidence import (  # noqa: E402
     PopulationGamingState,
@@ -206,6 +220,17 @@ def _unsafe_clone(value: object, **changes: object):
     return clone
 
 
+def _canonical_sha256(payload: object) -> str:
+    encoded = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
 class AnalysisBindingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -252,11 +277,12 @@ class AnalysisBindingTests(unittest.TestCase):
             (17, 29),
         )
         self.assertEqual(len(binding.writer_pairs), 2)
+        self.assertEqual(binding.monetary_output_bases, ())
         self.assertFalse(binding.preregistered)
         self.assertFalse(binding.campaign_ready)
         expected_campaign_blockers = (
             "analysis_binding.external_registration=unregistered",
-            "analysis_binding.schema_v1=campaign_ineligible",
+            "analysis_binding.schema_v2=campaign_ineligible",
             "analysis_binding.execution_calendar_anchor=unbound",
             "analysis_binding.cross_seed_aggregation_uncertainty=unresolved",
             "analysis_binding.model_implementation_environment_identity=unbound",
@@ -278,6 +304,18 @@ class AnalysisBindingTests(unittest.TestCase):
         }
         observed_weight_hashes: list[str] = []
         for item in binding.seed_bindings:
+            item_payload = item.snapshot()
+            self.assertEqual(
+                item.source_metric_contract_sha256,
+                item.metric_contract_sha256,
+            )
+            self.assertEqual(
+                item_payload["source_metric_contract_id"],
+                item_payload["metric_contract_id"],
+            )
+            self.assertIsNone(item.monetary_output_basis)
+            self.assertIsNone(item.reference_monetary_execution)
+            self.assertIsNone(item.comparison_monetary_execution)
             self.assertEqual(
                 item.campaign_blockers,
                 expected_campaign_blockers,
@@ -550,6 +588,257 @@ class AnalysisBindingTests(unittest.TestCase):
                 population_adapter=self.adapter,
                 profile_input_lineage=_PROFILE_INPUT_LINEAGE,
             )
+
+    def test_registered_money_execution_precedes_contrast_and_preserves_score(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monetary_root = root / "monetary"
+            monetary_root.mkdir()
+            profile_bundle, _rate_artifact = write_monetary_execution_fixture(
+                monetary_root
+            )
+            population_adapter = write_four_jurisdiction_population_fixture(
+                root / "population"
+            )
+            profile_lineage = build_profile_input_lineage(
+                profile_bundle.country_profiles,
+                profile_bundle=profile_bundle,
+            )
+            self.assertEqual(
+                profile_lineage.profile_codes,
+                REGISTERED_PROFILE_CODES,
+            )
+            currency = build_monetary_output_currency_semantics(
+                profile_lineage,
+                jurisdiction_codes=profile_lineage.profile_codes,
+                target_minor_unit_name="test target minor unit",
+            )
+            money = _planned_estimand(
+                outcome_metric=PopulationOutcomeMetric.SPENDING_CENTS,
+                metric_contract_id="player_outcomes.csv:spending_cents",
+                currency=currency,
+            )
+            score = replace(
+                _planned_estimand(),
+                estimand_id="secondary.composite.harm",
+                role=AnalysisEstimandRole.SECONDARY,
+            )
+            spec = PolicyBatchSpec(
+                seeds=(907,),
+                days=1,
+                player_count=16,
+                decision_parameters=DecisionParameters(step_minutes=240),
+            )
+            run_inputs = resolve_policy_run_inputs()
+            plan = _plan(
+                spec,
+                run_inputs,
+                population_adapter,
+                estimands=(money, score),
+                overrides={
+                    "expected_profile_input_sha256": (
+                        profile_lineage.fingerprint_sha256
+                    )
+                },
+            )
+            self.assertIsNone(
+                validate_analysis_plan_inputs(
+                    plan,
+                    batch_spec=spec,
+                    run_inputs=run_inputs,
+                    population_adapter=population_adapter,
+                    profile_input_lineage=profile_lineage,
+                )
+            )
+            batch = run_policy_batch(
+                spec,
+                profile_bundle=profile_bundle,
+                harm_parameters=run_inputs.harm_parameters,
+                harm_weights=run_inputs.harm_weights,
+                opportunity_valuation=run_inputs.opportunity_valuation,
+                producer_assumptions=run_inputs.producer_assumptions,
+                epgc_policy=run_inputs.epgc_policy,
+                population_adapter=population_adapter,
+            )
+            binding = resolve_run_analysis_binding(plan, batch)
+
+            self.assertEqual(len(binding.monetary_output_bases), 1)
+            money_item = next(
+                item
+                for item in binding.seed_bindings
+                if item.planned_estimand.estimand_id == money.estimand_id
+            )
+            score_item = next(
+                item
+                for item in binding.seed_bindings
+                if item.planned_estimand.estimand_id == score.estimand_id
+            )
+            basis = money_item.monetary_output_basis
+            reference_execution = money_item.reference_monetary_execution
+            comparison_execution = money_item.comparison_monetary_execution
+            assert basis is not None
+            assert reference_execution is not None
+            assert comparison_execution is not None
+            self.assertEqual(basis.jurisdiction_codes, REGISTERED_PROFILE_CODES)
+            self.assertEqual(
+                {
+                    row.jurisdiction_code: row.target_per_simulation
+                    for row in basis.jurisdictions
+                },
+                {
+                    "UK": Fraction(1, 2),
+                    "KR": Fraction(3, 2),
+                    "JP": Fraction(2, 1),
+                    "BE": Fraction(5, 2),
+                },
+            )
+            self.assertNotEqual(
+                money_item.source_metric_contract_sha256,
+                money_item.metric_contract_sha256,
+            )
+            money_payload = money_item.snapshot()
+            effective_contract = money_payload["effective_metric_contract"]
+            self.assertEqual(
+                money_item.metric_contract_sha256,
+                _canonical_sha256(effective_contract),
+            )
+            self.assertEqual(
+                effective_contract["unit"]["currency_code"],
+                "TST",
+            )
+            self.assertEqual(
+                effective_contract["population_semantics_compatibility"],
+                "UNREVIEWED",
+            )
+            self.assertFalse(effective_contract["observed_currency_recovered"])
+
+            records = {
+                record.result.scenario.scenario_id: record.result
+                for record in batch.records
+            }
+            self.assertEqual(
+                reference_execution.raw_values,
+                tuple(
+                    int(value)
+                    for value in records[
+                        ScenarioId.SAFE_FIXED_PRICE_SUBSCRIPTION
+                    ].spending_cents
+                ),
+            )
+            self.assertEqual(
+                comparison_execution.raw_values,
+                tuple(
+                    int(value)
+                    for value in records[ScenarioId.BASELINE_F2P].spending_cents
+                ),
+            )
+            expected = paired_weighted_mean_difference(
+                money_item.spec,
+                money_item.selected_weights,
+                comparison_execution.converted_values,
+                money_item.selected_weights,
+                reference_execution.converted_values,
+            )
+            self.assertEqual(money_item.result, expected)
+            self.assertEqual(
+                money_item.reference_outcome_sha256,
+                reference_execution.execution_sha256,
+            )
+            self.assertEqual(
+                money_item.comparison_outcome_sha256,
+                comparison_execution.execution_sha256,
+            )
+
+            shifted_money = replace(
+                money,
+                period=PopulationPeriodSemantics(
+                    period_start=date(2040, 7, 10),
+                    period_end=date(2040, 7, 10),
+                    description="Shifted one-day declaration.",
+                ),
+            )
+            shifted_plan = _plan(
+                spec,
+                run_inputs,
+                population_adapter,
+                estimand=shifted_money,
+                overrides={
+                    "expected_profile_input_sha256": (
+                        profile_lineage.fingerprint_sha256
+                    )
+                },
+            )
+            shifted_binding = resolve_run_analysis_binding(
+                shifted_plan,
+                batch,
+            )
+            self.assertNotEqual(
+                effective_contract["contract_id"],
+                shifted_binding.seed_bindings[0].snapshot()[
+                    "effective_metric_contract"
+                ]["contract_id"],
+            )
+
+            self.assertIsNone(score_item.monetary_output_basis)
+            self.assertIsNone(score_item.reference_monetary_execution)
+            self.assertIsNone(score_item.comparison_monetary_execution)
+            self.assertEqual(
+                score_item.source_metric_contract_sha256,
+                score_item.metric_contract_sha256,
+            )
+
+            with self.assertRaisesRegex(
+                AnalysisBindingValidationError,
+                "outcome identities|estimand result",
+            ):
+                replace(
+                    money_item,
+                    reference_monetary_execution=comparison_execution,
+                    comparison_monetary_execution=reference_execution,
+                )
+            altered_values = (
+                reference_execution.converted_values[0] + 1,
+                *reference_execution.converted_values[1:],
+            )
+            forged_execution = _unsafe_clone(
+                reference_execution,
+                converted_values=altered_values,
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "converted_values_sha256|converted values",
+            ):
+                replace(
+                    money_item,
+                    reference_monetary_execution=forged_execution,
+                )
+            changed_indices = list(comparison_execution.jurisdiction_indices)
+            different_position = next(
+                index
+                for index, value in enumerate(changed_indices)
+                if value != changed_indices[0]
+            )
+            changed_indices[0] = changed_indices[different_position]
+            reassigned_execution = convert_monetary_outcome(
+                basis,
+                player_ids=comparison_execution.player_ids,
+                jurisdiction_indices=changed_indices,
+                jurisdiction_codes=basis.jurisdiction_codes,
+                raw_values=comparison_execution.raw_values,
+            )
+            with self.assertRaisesRegex(
+                AnalysisBindingValidationError,
+                "jurisdiction assignment differs",
+            ):
+                replace(
+                    money_item,
+                    comparison_monetary_execution=reassigned_execution,
+                    comparison_outcome_sha256=(
+                        reassigned_execution.execution_sha256
+                    ),
+                )
 
     def test_inclusive_period_duration_must_equal_executed_horizon(self) -> None:
         mismatched_secondary = replace(

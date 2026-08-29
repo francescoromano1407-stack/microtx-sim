@@ -340,6 +340,37 @@ def build_run_manifest(
     if analysis_plan is not None and analysis_binding is not None:
         manifest["analysis_plan"] = analysis_plan.manifest_payload()
         manifest["analysis_binding"] = analysis_binding.manifest_payload()
+        monetary_bases = analysis_binding.monetary_output_bases
+        if monetary_bases:
+            manifest["prospective_monetary_output_execution"] = {
+                "present": True,
+                "scope": "prospective_analysis target-population estimands only",
+                "basis_count": len(monetary_bases),
+                "basis_sha256s": [
+                    basis.basis_sha256 for basis in monetary_bases
+                ],
+                "target_currencies": [
+                    basis.target_currency for basis in monetary_bases
+                ],
+                "interpretation": "target-currency-equivalent model amounts",
+                "per_observation_before_contrast_and_weighting": True,
+                "observed_currency_recovered": False,
+                "legacy_root_outputs_relabelled": False,
+                "legacy_root_monetary_outputs_cross_country_comparable": False,
+                "campaign_ready": False,
+                "campaign_blockers": sorted(
+                    {
+                        "monetary_output_execution.population_semantics_compatibility="
+                        "unreviewed",
+                    }.union(
+                        blocker
+                        for basis in monetary_bases
+                        for blocker in basis.campaign_blockers
+                    ).union(
+                        analysis_binding.campaign_blockers
+                    )
+                ),
+            }
     return manifest
 
 
@@ -470,7 +501,7 @@ def _money_outputs_cross_country_comparable(
                 profile_lineage=profile_lineage,
             ),
             _source_bundle_signature_is_bound(profile_inputs),
-            _monetary_output_design_is_bound(profile_inputs),
+            _legacy_root_monetary_output_design_is_bound(profile_inputs),
             _monetary_population_binding_is_bound(
                 profile_inputs,
                 profile_lineage=profile_lineage,
@@ -526,7 +557,7 @@ def _monetary_comparability_payload(
             "source_bundle_signature_bound": _source_bundle_signature_is_bound(
                 profile_inputs
             ),
-            "output_design_binding_bound": _monetary_output_design_is_bound(
+            "output_design_binding_bound": _legacy_root_monetary_output_design_is_bound(
                 profile_inputs
             ),
             "population_binding_bound": _monetary_population_binding_is_bound(
@@ -679,10 +710,14 @@ def _source_bundle_signature_is_bound(
     return False
 
 
-def _monetary_output_design_is_bound(
+def _legacy_root_monetary_output_design_is_bound(
     profile_inputs: dict[str, object],
 ) -> bool:
-    """No output-contract/rate-set binding exists in the current prototype."""
+    """The legacy root output profile remains raw simulation cents.
+
+    Prospective monetary execution is a separate nested output profile and must
+    never promote this global/root gate.
+    """
 
     _ = profile_inputs
     return False

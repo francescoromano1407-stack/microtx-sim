@@ -19,6 +19,12 @@ import numpy.typing as npt
 
 from ..agents.players import ProjectedPopulationCellMetadata
 from ..data.lineage import ProfileInputLineage
+from ..data.monetary_execution import (
+    ConvertedMonetaryOutcome,
+    MonetaryOutputBasis,
+    convert_monetary_outcome,
+    resolve_monetary_output_basis,
+)
 from ..data.population_execution import (
     PopulationExecutionLineage,
     PopulationSeedExecutionRecord,
@@ -66,11 +72,11 @@ if TYPE_CHECKING:
     from ..outputs.metric_contracts import OutputMetricContract
 
 
-ANALYSIS_BINDING_SCHEMA_VERSION: Final[str] = "1.0"
+ANALYSIS_BINDING_SCHEMA_VERSION: Final[str] = "2.0"
 
 _CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
     "analysis_binding.external_registration=unregistered",
-    "analysis_binding.schema_v1=campaign_ineligible",
+    "analysis_binding.schema_v2=campaign_ineligible",
     "analysis_binding.execution_calendar_anchor=unbound",
     "analysis_binding.cross_seed_aggregation_uncertainty=unresolved",
     "analysis_binding.model_implementation_environment_identity=unbound",
@@ -91,6 +97,13 @@ _EXPECTED_PLAYER_CONTRACT_COLUMN: Final[
         PopulationOutcomeMetric.WELLBEING_BURDEN_SCORE: "wellbeing_burden",
         PopulationOutcomeMetric.ENJOYMENT: "enjoyment",
         PopulationOutcomeMetric.HIGH_RISK_INDICATOR: "high_risk",
+        PopulationOutcomeMetric.SPENDING_CENTS: "spending_cents",
+        PopulationOutcomeMetric.HARMFUL_SPENDING_CENTS: (
+            "harmful_spending_cents"
+        ),
+        PopulationOutcomeMetric.OPPORTUNITY_COST_PROXY_CENTS: (
+            "opportunity_cost_proxy_cents"
+        ),
     }
 )
 
@@ -110,7 +123,11 @@ class SeedAnalysisBinding:
     eligibility_sha256: str
     reference_outcome_sha256: str
     comparison_outcome_sha256: str
+    source_metric_contract_sha256: str
     metric_contract_sha256: str
+    monetary_output_basis: MonetaryOutputBasis | None
+    reference_monetary_execution: ConvertedMonetaryOutcome | None
+    comparison_monetary_execution: ConvertedMonetaryOutcome | None
     selected_weights: ExactPopulationWeights
     spec: PopulationEstimandSpec
     result: PopulationEstimandResult
@@ -138,6 +155,7 @@ class SeedAnalysisBinding:
             "eligibility_sha256",
             "reference_outcome_sha256",
             "comparison_outcome_sha256",
+            "source_metric_contract_sha256",
             "metric_contract_sha256",
             "binding_sha256",
         ):
@@ -158,18 +176,102 @@ class SeedAnalysisBinding:
 
         planned = self.planned_estimand
         semantics = planned.outcome_semantics
-        if semantics.metric_kind is PopulationMetricKind.MONEY_MINOR_UNITS:
-            raise AnalysisBindingValidationError(
-                "analysis binding schema v1 prohibits money outcomes without "
-                "an executed currency/price-period conversion"
-            )
-        _contract, expected_contract_sha256 = _resolve_metric_contract(
+        contract, expected_source_contract_sha256 = _resolve_metric_contract(
             planned,
             semantics,
         )
-        if self.metric_contract_sha256 != expected_contract_sha256:
+        if self.source_metric_contract_sha256 != expected_source_contract_sha256:
             raise AnalysisBindingValidationError(
-                "selected metric-contract snapshot digest differs from the registry"
+                "source metric-contract snapshot digest differs from the registry"
+            )
+        expected_effective_contract_sha256 = _effective_metric_contract_sha256(
+            planned,
+            contract,
+            self.source_metric_contract_sha256,
+            self.monetary_output_basis,
+        )
+        if self.metric_contract_sha256 != expected_effective_contract_sha256:
+            raise AnalysisBindingValidationError(
+                "effective metric-contract digest differs from its raw contract "
+                "and monetary basis"
+            )
+        is_money = semantics.metric_kind is PopulationMetricKind.MONEY_MINOR_UNITS
+        executions = (
+            self.reference_monetary_execution,
+            self.comparison_monetary_execution,
+        )
+        if is_money:
+            if type(self.monetary_output_basis) is not MonetaryOutputBasis or any(
+                type(item) is not ConvertedMonetaryOutcome for item in executions
+            ):
+                raise AnalysisBindingValidationError(
+                    "money outcomes require a retained monetary basis and two "
+                    "per-observation conversion executions"
+                )
+            basis = self.monetary_output_basis
+            assert basis is not None
+            type(basis).__post_init__(basis)
+            assert self.planned_estimand.currency is not None
+            if basis.basis_sha256 != (
+                self.planned_estimand.currency.currency_basis_sha256
+            ):
+                raise AnalysisBindingValidationError(
+                    "monetary output basis differs from the prospective currency "
+                    "declaration"
+                )
+            if self.planned_estimand.currency != basis.currency_semantics:
+                raise AnalysisBindingValidationError(
+                    "prospective currency semantics differ from the retained "
+                    "monetary output basis"
+                )
+            reference_execution = self.reference_monetary_execution
+            comparison_execution = self.comparison_monetary_execution
+            assert reference_execution is not None
+            assert comparison_execution is not None
+            for execution in (reference_execution, comparison_execution):
+                type(execution).__post_init__(execution)
+                if execution.basis != basis:
+                    raise AnalysisBindingValidationError(
+                        "monetary execution differs from its retained output basis"
+                    )
+                if execution.player_ids != self.selected_weights.player_ids:
+                    raise AnalysisBindingValidationError(
+                        "monetary execution player IDs differ from selected weights"
+                    )
+            if (
+                reference_execution.jurisdiction_indices
+                != comparison_execution.jurisdiction_indices
+            ):
+                raise AnalysisBindingValidationError(
+                    "monetary jurisdiction assignment differs across compared "
+                    "branches"
+                )
+            if (
+                self.reference_outcome_sha256
+                != reference_execution.execution_sha256
+                or self.comparison_outcome_sha256
+                != comparison_execution.execution_sha256
+            ):
+                raise AnalysisBindingValidationError(
+                    "monetary outcome identities differ from retained executions"
+                )
+            expected_money_result = paired_weighted_mean_difference(
+                self.spec,
+                self.selected_weights,
+                comparison_execution.converted_values,
+                self.selected_weights,
+                reference_execution.converted_values,
+            )
+            if self.result != expected_money_result:
+                raise AnalysisBindingValidationError(
+                    "monetary estimand result differs from retained converted "
+                    "observations and exact weights"
+                )
+        elif self.monetary_output_basis is not None or any(
+            item is not None for item in executions
+        ):
+            raise AnalysisBindingValidationError(
+                "non-money outcomes cannot retain monetary conversion execution"
             )
         expected_spec_bindings = {
             "estimand_id": _resolved_estimand_id(planned, self.seed),
@@ -218,11 +320,11 @@ class SeedAnalysisBinding:
             )
         if self.preregistered or self.campaign_ready:
             raise AnalysisBindingValidationError(
-                "schema-v1 run bindings cannot be preregistered or campaign-ready"
+                "schema-v2 run bindings cannot be preregistered or campaign-ready"
             )
         if self.campaign_blockers != _CAMPAIGN_BLOCKERS:
             raise AnalysisBindingValidationError(
-                "schema-v1 analysis-binding campaign blockers are fixed"
+                "schema-v2 analysis-binding campaign blockers are fixed"
             )
         if self.binding_sha256 != _canonical_sha256(
             self.attestation_payload()
@@ -243,6 +345,16 @@ class SeedAnalysisBinding:
         return self.spec, self.result
 
     def attestation_payload(self) -> dict[str, object]:
+        source_contract = _resolve_metric_contract(
+            self.planned_estimand,
+            self.planned_estimand.outcome_semantics,
+        )[0]
+        effective_contract = _effective_metric_contract_snapshot(
+            self.planned_estimand,
+            source_contract,
+            self.source_metric_contract_sha256,
+            self.monetary_output_basis,
+        )
         return {
             "schema_version": self.schema_version,
             "seed": self.seed,
@@ -269,8 +381,31 @@ class SeedAnalysisBinding:
             ),
             "reference_outcome_sha256": self.reference_outcome_sha256,
             "comparison_outcome_sha256": self.comparison_outcome_sha256,
-            "metric_contract_id": self.planned_estimand.metric_contract_id,
+            "planned_metric_contract_id": (
+                self.planned_estimand.metric_contract_id
+            ),
+            "source_metric_contract_id": source_contract.contract_id,
+            "source_metric_contract_sha256": (
+                self.source_metric_contract_sha256
+            ),
+            "metric_contract_id": effective_contract["contract_id"],
             "metric_contract_sha256": self.metric_contract_sha256,
+            "effective_metric_contract": effective_contract,
+            "monetary_output_basis": (
+                self.monetary_output_basis.snapshot()
+                if self.monetary_output_basis is not None
+                else None
+            ),
+            "reference_monetary_execution": (
+                self.reference_monetary_execution.snapshot()
+                if self.reference_monetary_execution is not None
+                else None
+            ),
+            "comparison_monetary_execution": (
+                self.comparison_monetary_execution.snapshot()
+                if self.comparison_monetary_execution is not None
+                else None
+            ),
             "spec": self.spec.snapshot(),
             "result": self.result.snapshot(),
             "preregistered": self.preregistered,
@@ -318,7 +453,6 @@ class RunAnalysisBinding:
         if type(self.plan) is not ProspectiveAnalysisPlan:
             raise TypeError("plan must be ProspectiveAnalysisPlan")
         ProspectiveAnalysisPlan.__post_init__(self.plan)
-        _reject_unresolved_money_estimands(self.plan)
         for name in (
             "causal_design_sha256",
             "batch_spec_sha256",
@@ -377,6 +511,13 @@ class RunAnalysisBinding:
             )
         for item in self.seed_bindings:
             SeedAnalysisBinding.__post_init__(item)
+            basis = item.monetary_output_basis
+            if basis is not None and (
+                basis.profile_input_sha256 != self.profile_input_sha256
+            ):
+                raise AnalysisBindingValidationError(
+                    "monetary output basis profile identity differs from the run"
+                )
         expected_order = tuple(
             (seed, estimand.estimand_id)
             for seed in self.seeds
@@ -414,11 +555,11 @@ class RunAnalysisBinding:
             )
         if self.preregistered or self.campaign_ready:
             raise AnalysisBindingValidationError(
-                "schema-v1 run bindings cannot be preregistered or campaign-ready"
+                "schema-v2 run bindings cannot be preregistered or campaign-ready"
             )
         if self.campaign_blockers != _CAMPAIGN_BLOCKERS:
             raise AnalysisBindingValidationError(
-                "schema-v1 analysis-binding campaign blockers are fixed"
+                "schema-v2 analysis-binding campaign blockers are fixed"
             )
         if self.binding_sha256 != _canonical_sha256(
             self.attestation_payload()
@@ -433,6 +574,13 @@ class RunAnalysisBinding:
     ) -> tuple[tuple[PopulationEstimandSpec, PopulationEstimandResult], ...]:
         RunAnalysisBinding.__post_init__(self)
         return tuple(item.writer_pair for item in self.seed_bindings)
+
+    @property
+    def monetary_output_bases(self) -> tuple[MonetaryOutputBasis, ...]:
+        """Return each distinct retained currency basis once in digest order."""
+
+        RunAnalysisBinding.__post_init__(self)
+        return _unique_monetary_bases(self.seed_bindings)
 
     def attestation_payload(self) -> dict[str, object]:
         return {
@@ -453,6 +601,10 @@ class RunAnalysisBinding:
             "output_profile_schema_sha256": self.output_profile_schema_sha256,
             "seeds": list(self.seeds),
             "seed_decimal_strings": [str(seed) for seed in self.seeds],
+            "monetary_output_bases": [
+                basis.snapshot()
+                for basis in _unique_monetary_bases(self.seed_bindings)
+            ],
             "seed_bindings": [item.snapshot() for item in self.seed_bindings],
             "preregistered": self.preregistered,
             "campaign_ready": self.campaign_ready,
@@ -497,13 +649,17 @@ def validate_analysis_plan_inputs(
     try:
         ProspectiveAnalysisPlan.__post_init__(plan)
         _reattest_batch_spec(batch_spec)
-        _reject_unresolved_money_estimands(plan)
         for estimand in plan.estimands:
             _resolve_metric_contract(estimand, estimand.outcome_semantics)
         PolicyRunInputs.__post_init__(run_inputs)
         ProfileInputLineage.__post_init__(profile_input_lineage)
         adapter = verify_population_projection_adapter(population_adapter)
         _validate_inclusion_predicate_domains(plan, adapter)
+        _resolve_plan_monetary_bases(
+            plan,
+            profile_input_lineage=profile_input_lineage,
+            jurisdiction_codes=profile_input_lineage.profile_codes,
+        )
         verify_prospective_analysis_plan_bindings(
             plan,
             causal_design_sha256=assess_causal_design(
@@ -661,6 +817,11 @@ def resolve_run_analysis_binding(
         jurisdiction_codes = tuple(
             profile.code for profile in batch.country_profiles
         )
+        monetary_bases = _resolve_plan_monetary_bases(
+            plan,
+            profile_input_lineage=profile_lineage,
+            jurisdiction_codes=jurisdiction_codes,
+        )
         seed_bindings: list[SeedAnalysisBinding] = []
         for seed in plan.stopping_rule.seeds:
             population_record = lineage.record_for_seed(seed)
@@ -687,6 +848,9 @@ def resolve_run_analysis_binding(
                         projected_cells=projected_cells,
                         target_evidence_sha256=(
                             lineage.adapter.calibration_target_sha256
+                        ),
+                        monetary_output_basis=monetary_bases.get(
+                            planned.estimand_id
                         ),
                     )
                 )
@@ -753,6 +917,7 @@ def _resolve_seed_estimand(
     jurisdiction_codes: tuple[str, ...],
     projected_cells: tuple[ProjectedPopulationCellMetadata, ...],
     target_evidence_sha256: str,
+    monetary_output_basis: MonetaryOutputBasis | None,
 ) -> SeedAnalysisBinding:
     predicate = planned.inclusion_predicate
     reference_mask = evaluate_population_inclusion(
@@ -803,19 +968,78 @@ def _resolve_seed_estimand(
         ),
     )
     semantics = planned.outcome_semantics
-    contract, contract_sha256 = _resolve_metric_contract(planned, semantics)
+    contract, source_contract_sha256 = _resolve_metric_contract(
+        planned,
+        semantics,
+    )
+    contract_sha256 = _effective_metric_contract_sha256(
+        planned,
+        contract,
+        source_contract_sha256,
+        monetary_output_basis,
+    )
     reference_outcome = _outcome_array(reference, semantics)[reference_mask]
     comparison_outcome = _outcome_array(comparison, semantics)[comparison_mask]
-    reference_outcome_sha256 = _selected_outcome_sha256(
-        semantics,
-        selected_weights.player_ids,
-        reference_outcome,
-    )
-    comparison_outcome_sha256 = _selected_outcome_sha256(
-        semantics,
-        selected_weights.player_ids,
-        comparison_outcome,
-    )
+    reference_monetary_execution: ConvertedMonetaryOutcome | None = None
+    comparison_monetary_execution: ConvertedMonetaryOutcome | None = None
+    if semantics.metric_kind is PopulationMetricKind.MONEY_MINOR_UNITS:
+        if monetary_output_basis is None:
+            raise AnalysisBindingValidationError(
+                "money estimand lacks its preflighted monetary output basis"
+            )
+        selected_jurisdiction = reference.jurisdiction[reference_mask]
+        comparison_jurisdiction = comparison.jurisdiction[comparison_mask]
+        if not np.array_equal(selected_jurisdiction, comparison_jurisdiction):
+            raise AnalysisBindingValidationError(
+                "jurisdiction assignment differs across compared branches"
+            )
+        selected_player_ids = np.asarray(
+            selected_weights.player_ids,
+            dtype=np.int64,
+        )
+        reference_monetary_execution = convert_monetary_outcome(
+            monetary_output_basis,
+            player_ids=selected_player_ids,
+            jurisdiction_indices=selected_jurisdiction,
+            jurisdiction_codes=jurisdiction_codes,
+            raw_values=reference_outcome,
+        )
+        comparison_monetary_execution = convert_monetary_outcome(
+            monetary_output_basis,
+            player_ids=selected_player_ids,
+            jurisdiction_indices=comparison_jurisdiction,
+            jurisdiction_codes=jurisdiction_codes,
+            raw_values=comparison_outcome,
+        )
+        reference_outcome_sha256 = (
+            reference_monetary_execution.execution_sha256
+        )
+        comparison_outcome_sha256 = (
+            comparison_monetary_execution.execution_sha256
+        )
+        reference_values: object = (
+            reference_monetary_execution.converted_values
+        )
+        comparison_values: object = (
+            comparison_monetary_execution.converted_values
+        )
+    else:
+        if monetary_output_basis is not None:
+            raise AnalysisBindingValidationError(
+                "non-money estimand received a monetary output basis"
+            )
+        reference_outcome_sha256 = _selected_outcome_sha256(
+            semantics,
+            selected_weights.player_ids,
+            reference_outcome,
+        )
+        comparison_outcome_sha256 = _selected_outcome_sha256(
+            semantics,
+            selected_weights.player_ids,
+            comparison_outcome,
+        )
+        reference_values = _primitive_values(reference_outcome, semantics)
+        comparison_values = _primitive_values(comparison_outcome, semantics)
     spec = PopulationEstimandSpec(
         schema_version=POPULATION_ESTIMAND_SCHEMA_VERSION,
         estimand_id=_resolved_estimand_id(planned, seed),
@@ -844,8 +1068,6 @@ def _resolve_seed_estimand(
         period=planned.period,
         currency=planned.currency,
     )
-    reference_values = _primitive_values(reference_outcome, semantics)
-    comparison_values = _primitive_values(comparison_outcome, semantics)
     result = paired_weighted_mean_difference(
         spec,
         selected_weights,
@@ -871,7 +1093,11 @@ def _resolve_seed_estimand(
         selected_weights=selected_weights,
         reference_outcome_sha256=reference_outcome_sha256,
         comparison_outcome_sha256=comparison_outcome_sha256,
+        source_metric_contract_sha256=source_contract_sha256,
         metric_contract_sha256=contract_sha256,
+        monetary_output_basis=monetary_output_basis,
+        reference_monetary_execution=reference_monetary_execution,
+        comparison_monetary_execution=comparison_monetary_execution,
         spec=spec,
         result=result,
     )
@@ -886,7 +1112,11 @@ def _resolve_seed_estimand(
         eligibility_sha256=eligibility_sha256,
         reference_outcome_sha256=reference_outcome_sha256,
         comparison_outcome_sha256=comparison_outcome_sha256,
+        source_metric_contract_sha256=source_contract_sha256,
         metric_contract_sha256=contract_sha256,
+        monetary_output_basis=monetary_output_basis,
+        reference_monetary_execution=reference_monetary_execution,
+        comparison_monetary_execution=comparison_monetary_execution,
         selected_weights=selected_weights,
         spec=spec,
         result=result,
@@ -1103,22 +1333,148 @@ def _reattest_batch_spec(spec: PolicyBatchSpec) -> None:
         )
 
 
-def _reject_unresolved_money_estimands(
+def _resolve_plan_monetary_bases(
     plan: ProspectiveAnalysisPlan,
-) -> None:
-    unresolved = tuple(
-        estimand.estimand_id
-        for estimand in plan.estimands
-        if estimand.outcome_semantics.metric_kind
-        is PopulationMetricKind.MONEY_MINOR_UNITS
-    )
-    if unresolved:
+    *,
+    profile_input_lineage: ProfileInputLineage,
+    jurisdiction_codes: tuple[str, ...],
+) -> Mapping[str, MonetaryOutputBasis]:
+    """Resolve every declared money basis before any treatment execution."""
+
+    resolved: dict[str, MonetaryOutputBasis] = {}
+    for estimand in plan.estimands:
+        if (
+            estimand.outcome_semantics.metric_kind
+            is not PopulationMetricKind.MONEY_MINOR_UNITS
+        ):
+            continue
+        currency = estimand.currency
+        if currency is None:
+            raise AnalysisBindingValidationError(
+                f"money estimand {estimand.estimand_id!r} lacks currency semantics"
+            )
+        try:
+            basis = resolve_monetary_output_basis(
+                profile_input_lineage,
+                currency,
+                jurisdiction_codes=jurisdiction_codes,
+            )
+        except (TypeError, ValueError, KeyError, IndexError) as exc:
+            raise AnalysisBindingValidationError(
+                "money estimand requires an executed currency/price-period "
+                f"conversion basis: {estimand.estimand_id}: {exc}"
+            ) from exc
+        if basis.basis_sha256 != currency.currency_basis_sha256:
+            raise AnalysisBindingValidationError(
+                f"money estimand {estimand.estimand_id!r} currency basis digest "
+                "does not match the resolved monetary output contract"
+            )
+        resolved[estimand.estimand_id] = basis
+    return MappingProxyType(resolved)
+
+
+def _effective_metric_contract_snapshot(
+    planned: PlannedPopulationEstimand,
+    source_contract: OutputMetricContract,
+    source_contract_sha256: str,
+    monetary_output_basis: MonetaryOutputBasis | None,
+) -> dict[str, object]:
+    """Return the raw registry contract or a distinct converted contract."""
+
+    source_snapshot = source_contract.snapshot()
+    if (
+        planned.outcome_semantics.metric_kind
+        is not PopulationMetricKind.MONEY_MINOR_UNITS
+    ):
+        if monetary_output_basis is not None:
+            raise AnalysisBindingValidationError(
+                "non-money metric contract cannot bind a monetary output basis"
+            )
+        return source_snapshot
+    if monetary_output_basis is None:
         raise AnalysisBindingValidationError(
-            "analysis binding schema v1 prohibits money outcomes until an "
-            "executed currency/price-period conversion is retained; unresolved "
-            "estimands="
-            + ",".join(unresolved)
+            "money metric contract requires a resolved monetary output basis"
         )
+    basis = monetary_output_basis
+    payload = {
+        "contract_kind": "MONETARY_MODEL_EQUIVALENT_PER_OBSERVATION_V1",
+        "source_contract_id": source_contract.contract_id,
+        "source_contract_sha256": source_contract_sha256,
+        "source_contract": source_snapshot,
+        "currency_basis_sha256": basis.basis_sha256,
+        "monetary_output_basis": basis.snapshot(),
+        "target_currency": basis.target_currency,
+        "target_minor_unit_name": basis.target_minor_unit_name,
+        "unit": {
+            "quantity": "money",
+            "symbol": basis.target_minor_unit_name,
+            "exponent": 1,
+            "currency_code": basis.target_currency,
+            "money_basis": (
+                "target-currency-equivalent model amount from one retained "
+                "per-observation composite conversion; not recovered observed "
+                "local currency"
+            ),
+        },
+        "price_period_start": basis.price_period_start.isoformat(),
+        "price_period_end": basis.price_period_end.isoformat(),
+        "period": planned.period.snapshot(),
+        "analysis_population_id": _target_population_id(planned),
+        "analysis_population_predicate_sha256": (
+            planned.inclusion_predicate.predicate_sha256
+        ),
+        "source_output_population_base": source_contract.population_base,
+        "source_output_condition": source_contract.condition,
+        "conversion_contract_estimand": basis.estimand,
+        "conversion_contract_population_base": basis.population_base,
+        "conversion_contract_comparison_group": basis.comparison_group,
+        "population_semantics_compatibility": "UNREVIEWED",
+        "recipe_id": "prospective-monetary-model-equivalent-per-observation",
+        "recipe_version": "1.0",
+        "implementation": (
+            "microtx_sim.data.monetary_execution.convert_monetary_outcome"
+        ),
+        "formula": (
+            "round_half_away_from_zero(simulation_cents * "
+            "local_anchor_minor_units * rate_numerator / "
+            "(simulation_anchor_cents * rate_denominator)) for each player "
+            "and scenario before contrast and population weighting"
+        ),
+        "status": "SYNTHETIC",
+        "interpretation": "target-currency-equivalent model amount",
+        "observed_currency_recovered": False,
+        "legacy_output_relabelled": False,
+        "campaign_ready": False,
+        "campaign_blockers": [
+            *basis.campaign_blockers,
+            "monetary_output_execution.population_semantics_compatibility="
+            "unreviewed",
+        ],
+    }
+    identity_sha256 = _canonical_sha256(payload)
+    return {
+        "contract_id": (
+            f"prospective.converted.{planned.outcome_metric.value}."
+            f"{identity_sha256}"
+        ),
+        **payload,
+    }
+
+
+def _effective_metric_contract_sha256(
+    planned: PlannedPopulationEstimand,
+    source_contract: OutputMetricContract,
+    source_contract_sha256: str,
+    monetary_output_basis: MonetaryOutputBasis | None,
+) -> str:
+    return _canonical_sha256(
+        _effective_metric_contract_snapshot(
+            planned,
+            source_contract,
+            source_contract_sha256,
+            monetary_output_basis,
+        )
+    )
 
 
 def _validate_estimand_period_durations(
@@ -1223,10 +1579,24 @@ def _seed_attestation_payload(
     selected_weights: ExactPopulationWeights,
     reference_outcome_sha256: str,
     comparison_outcome_sha256: str,
+    source_metric_contract_sha256: str,
     metric_contract_sha256: str,
+    monetary_output_basis: MonetaryOutputBasis | None,
+    reference_monetary_execution: ConvertedMonetaryOutcome | None,
+    comparison_monetary_execution: ConvertedMonetaryOutcome | None,
     spec: PopulationEstimandSpec,
     result: PopulationEstimandResult,
 ) -> dict[str, object]:
+    source_contract = _resolve_metric_contract(
+        planned,
+        planned.outcome_semantics,
+    )[0]
+    effective_contract = _effective_metric_contract_snapshot(
+        planned,
+        source_contract,
+        source_metric_contract_sha256,
+        monetary_output_basis,
+    )
     return {
         "schema_version": ANALYSIS_BINDING_SCHEMA_VERSION,
         "seed": seed,
@@ -1243,8 +1613,27 @@ def _seed_attestation_payload(
         "selected_design_weights_sha256": selected_weights.design_sha256,
         "reference_outcome_sha256": reference_outcome_sha256,
         "comparison_outcome_sha256": comparison_outcome_sha256,
-        "metric_contract_id": planned.metric_contract_id,
+        "planned_metric_contract_id": planned.metric_contract_id,
+        "source_metric_contract_id": source_contract.contract_id,
+        "source_metric_contract_sha256": source_metric_contract_sha256,
+        "metric_contract_id": effective_contract["contract_id"],
         "metric_contract_sha256": metric_contract_sha256,
+        "effective_metric_contract": effective_contract,
+        "monetary_output_basis": (
+            monetary_output_basis.snapshot()
+            if monetary_output_basis is not None
+            else None
+        ),
+        "reference_monetary_execution": (
+            reference_monetary_execution.snapshot()
+            if reference_monetary_execution is not None
+            else None
+        ),
+        "comparison_monetary_execution": (
+            comparison_monetary_execution.snapshot()
+            if comparison_monetary_execution is not None
+            else None
+        ),
         "spec": spec.snapshot(),
         "result": result.snapshot(),
         "preregistered": False,
@@ -1285,11 +1674,31 @@ def _run_attestation_payload(
         ),
         "seeds": list(seeds),
         "seed_decimal_strings": [str(seed) for seed in seeds],
+        "monetary_output_bases": [
+            basis.snapshot() for basis in _unique_monetary_bases(seed_bindings)
+        ],
         "seed_bindings": [item.snapshot() for item in seed_bindings],
         "preregistered": False,
         "campaign_ready": False,
         "campaign_blockers": list(_CAMPAIGN_BLOCKERS),
     }
+
+
+def _unique_monetary_bases(
+    seed_bindings: tuple[SeedAnalysisBinding, ...],
+) -> tuple[MonetaryOutputBasis, ...]:
+    by_digest: dict[str, MonetaryOutputBasis] = {}
+    for binding in seed_bindings:
+        basis = binding.monetary_output_basis
+        if basis is None:
+            continue
+        existing = by_digest.get(basis.basis_sha256)
+        if existing is not None and existing != basis:
+            raise AnalysisBindingValidationError(
+                "monetary output basis digest collision"
+            )
+        by_digest[basis.basis_sha256] = basis
+    return tuple(by_digest[digest] for digest in sorted(by_digest))
 
 
 def _sha256_digest(value: object, *, name: str) -> str:

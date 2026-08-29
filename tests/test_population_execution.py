@@ -11,6 +11,10 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from four_jurisdiction_population_fixture import (  # noqa: E402
+    REGISTERED_PROFILE_CODES,
+    write_four_jurisdiction_population_fixture,
+)
 from test_population_projection_adapter import _complete_adapter  # noqa: E402
 
 from microtx_sim.analysis.sensitivity import (  # noqa: E402
@@ -54,6 +58,55 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PopulationExecutionTests(unittest.TestCase):
+    def test_batch_binds_seed_jurisdiction_order_to_retained_profiles(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = write_four_jurisdiction_population_fixture(
+                Path(directory)
+            )
+            spec = PolicyBatchSpec(
+                seeds=(31,),
+                days=0,
+                player_count=16,
+                decision_parameters=DecisionParameters(step_minutes=240),
+            )
+            profiles = tuple(
+                CountryProfile(code=code) for code in REGISTERED_PROFILE_CODES
+            )
+            forward = run_policy_batch(
+                spec,
+                country_profiles=profiles,
+                population_adapter=adapter,
+            )
+            reverse = run_policy_batch(
+                spec,
+                country_profiles=tuple(reversed(profiles)),
+                population_adapter=adapter,
+            )
+            assert forward.population_execution_lineage is not None
+            assert reverse.population_execution_lineage is not None
+            self.assertEqual(
+                forward.population_execution_lineage.seed_records[
+                    0
+                ].jurisdiction_codes,
+                REGISTERED_PROFILE_CODES,
+            )
+            self.assertEqual(
+                reverse.population_execution_lineage.seed_records[
+                    0
+                ].jurisdiction_codes,
+                tuple(reversed(REGISTERED_PROFILE_CODES)),
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "jurisdiction order does not match",
+            ):
+                replace(
+                    forward,
+                    population_execution_lineage=(
+                        reverse.population_execution_lineage
+                    ),
+                )
+
     def test_seed_record_detaches_exact_weights_and_balance(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             _verification, _plan, _path, _mapping, adapter = _complete_adapter(

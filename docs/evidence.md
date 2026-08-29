@@ -204,9 +204,12 @@ runtime resolution for declared paired player-level outcomes: it validates the
 causal design, batch, model inputs, harm weights, population adapter, metric
 registry, output profile, and fixed seeds before treatment, then binds selected
 weights, balance, projection, metric contract, and exact results after the run.
-The standalone writer still re-attests only the supplied pairs. Schema v1 is
-unregistered, campaign-ineligible, and rejects money outcomes until a dated
-currency/price-period conversion is executed and retained.
+The standalone writer still re-attests only the supplied pairs. Analysis-plan
+schema v1 and run-binding schema v2 are unregistered and campaign-ineligible. A
+money-valued estimand additionally requires an explicit opt-in prospective money
+execution with a complete dated currency/price-period basis; omission fails
+before treatment rather than silently interpreting simulation cents as
+currency.
 
 `behavior.household_peer_influence` is runtime-consumed but has no empirical
 source contract. It is a synthetic sensitivity-only coefficient over a
@@ -237,6 +240,21 @@ sources, a common comparison signature, and exact coherence with the internal
 money scales. No such records or rates are checked in, so this software boundary
 does not make present outputs comparable.
 
+The optional prospective money path is an output transformation, not a new
+empirical evidence gate. For each retained player observation it combines the
+jurisdiction-specific simulation-money scale and local-to-target rate into one
+exact rational composite, applies that composite directly to simulation cents,
+and performs one signed nearest-minor-unit rounding with half ties away from
+zero. It does not reconstruct or round an intermediate nominal local-currency
+amount. Conversion precedes the reference/comparison contrast and the
+application of population weights.
+
+The resulting values are **target-currency-equivalent model amounts**, not
+observed or calibrated real-world money. They appear only in the separate
+opt-in prospective profile with their execution lineage. Legacy root output-v3
+tables, plots, and metric contracts remain unchanged in illustrative simulation
+cents.
+
 Schema version 3 additionally requires stable conversion and rate-binding IDs.
 The rate binding is verified from a separately versioned source bundle that
 binds the source-catalogue digest, exact artifact bytes, byte length, media type,
@@ -260,9 +278,10 @@ whether a chosen estimand or population is substantively appropriate. The
 typed assessment therefore keeps source extraction, source signature,
 output/design use, target population, and external preregistration independent.
 The checked-in bundle is empty, illustrative, and explicitly missing a
-signature; current outputs materialize no target currency. Identical labels are
-necessary, never sufficient evidence, and the public comparability flag stays
-false even when a test fixture clears only the extraction subgate.
+signature; no supplied configuration can materialize a prospective
+target-currency basis. Identical labels are necessary, never sufficient
+evidence, and the public comparability flag stays false even when a test fixture
+clears only the extraction or execution-structure subgate.
 
 ## Legal and clinical evidence
 
@@ -288,11 +307,14 @@ The current rare-card hazard remains an illustrative sensitivity parameter.
 `CALIBRATED` and forbids synthetic inputs. The profile bundle then checks every
 dependent contract and source, including money-scale sources. Because current
 outcomes pool money across jurisdictions, campaign validation also requires a
-cross-country-comparable monetary contract. The typed dated FX/PPP contract and
-its gate are implemented, but the present bundle supplies no contract instances
-and the local-currency anchor scales remain illustrative. A campaign fails if a
-required dependency is
-synthetic, illustrative, merely anchored, or not monetarily comparable.
+cross-country-comparable monetary contract. The typed dated FX/PPP contract,
+its gate, and an opt-in prospective execution path are implemented, but the
+present bundle supplies no contract instances and the local-currency anchor
+scales remain illustrative. Exact execution cannot authenticate a publisher or
+rate source, calibrate model money, establish a representative target population
+or genuine holdout, or provide external preregistration. A campaign fails if a
+required dependency is synthetic, illustrative, merely anchored, or not
+monetarily comparable.
 
 Policy-output campaign validation is independently fail-closed. The output
 registry currently reports all 196 derived measures as non-calibrated and

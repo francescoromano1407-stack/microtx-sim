@@ -10,8 +10,14 @@ import tempfile
 from typing import Mapping, Sequence
 
 from ..analysis.sensitivity import SensitivityResult
-from ..causal.analysis_binding import RunAnalysisBinding
-from ..causal.analysis_plan import LoadedProspectiveAnalysisPlan
+from ..causal.analysis_binding import (
+    RunAnalysisBinding,
+    resolve_run_analysis_binding,
+)
+from ..causal.analysis_plan import (
+    LoadedProspectiveAnalysisPlan,
+    verify_loaded_prospective_analysis_plan,
+)
 from ..causal.batch import PolicyBatchResult, resolve_policy_run_inputs
 from ..causal.scenarios import ScenarioId
 from ..policy_config import PolicyPrototypeConfig
@@ -348,6 +354,18 @@ def export_policy_batch(
         published_analysis = False
         if analysis_stage is not None:
             _reject_existing_analysis_output(analysis_destination)
+            _verify_staged_analysis_identities(
+                analysis_stage,
+                expected_parent=destination.parent,
+                expected_file_identities=analysis_file_identities,
+            )
+            assert analysis_plan is not None
+            assert analysis_binding is not None
+            _reattest_analysis_for_publication(
+                analysis_plan,
+                analysis_binding,
+                batch,
+            )
             os.replace(analysis_stage, analysis_destination)
             analysis_stage = None
             published_analysis = True
@@ -455,6 +473,82 @@ def _reject_existing_analysis_output(path: Path) -> None:
             "prospective analysis output target already exists; choose a fresh "
             "output directory or remove the exact target after reviewing it: "
             f"{path}"
+        )
+
+
+def _verify_staged_analysis_identities(
+    path: Path,
+    *,
+    expected_parent: Path,
+    expected_file_identities: Mapping[str, tuple[int, str]],
+) -> None:
+    """Recheck every staged byte immediately before atomic publication."""
+
+    target_absolute = os.path.normcase(os.path.abspath(os.fspath(path)))
+    parent_absolute = os.path.normcase(
+        os.path.abspath(os.fspath(expected_parent))
+    )
+    if os.path.dirname(target_absolute) != parent_absolute:
+        raise RuntimeError(
+            "refusing prospective-analysis publication outside its expected parent"
+        )
+    expected_names = set(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES)
+    if set(expected_file_identities) != expected_names:
+        raise RuntimeError(
+            "staged prospective-analysis identities do not cover the exact "
+            "artifact contract"
+        )
+    if not os.path.lexists(path):
+        raise RuntimeError("staged prospective-analysis directory disappeared")
+    target_status = path.lstat()
+    if stat.S_ISLNK(target_status.st_mode) or not stat.S_ISDIR(
+        target_status.st_mode
+    ):
+        raise RuntimeError(
+            "staged prospective-analysis target is not an owned directory"
+        )
+    children = sorted(path.iterdir(), key=lambda item: item.name)
+    if {child.name for child in children} != expected_names or len(
+        children
+    ) != len(expected_names):
+        raise RuntimeError(
+            "staged prospective-analysis artifact set changed before publication"
+        )
+    for child in children:
+        child_status = child.lstat()
+        if stat.S_ISLNK(child_status.st_mode) or not stat.S_ISREG(
+            child_status.st_mode
+        ):
+            raise RuntimeError(
+                "staged prospective-analysis artifact became a link or non-file"
+            )
+        expected_size, expected_digest = expected_file_identities[child.name]
+        if (
+            child_status.st_size != expected_size
+            or _digest(child) != expected_digest
+        ):
+            raise RuntimeError(
+                "staged prospective-analysis artifact identity changed before "
+                f"publication: {child.name}"
+            )
+
+
+def _reattest_analysis_for_publication(
+    analysis_plan: LoadedProspectiveAnalysisPlan,
+    analysis_binding: RunAnalysisBinding,
+    batch: PolicyBatchResult,
+) -> None:
+    """Reopen plan/evidence inputs after root writers and before publication."""
+
+    verified_plan = verify_loaded_prospective_analysis_plan(analysis_plan)
+    if verified_plan != analysis_plan:
+        raise RuntimeError(
+            "prospective analysis plan changed before publication"
+        )
+    observed_binding = resolve_run_analysis_binding(verified_plan.plan, batch)
+    if observed_binding != analysis_binding:
+        raise RuntimeError(
+            "prospective analysis binding changed before publication"
         )
 
 

@@ -15,6 +15,14 @@ import numpy as np
 # Reuse the exact file-backed design/evidence fixture rather than introducing a
 # second, subtly different source-contract generator in this test module.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from four_jurisdiction_population_fixture import (  # noqa: E402
+    CANONICAL_DESIGN_CODES,
+    REGISTERED_PROFILE_CODES,
+    write_four_jurisdiction_population_fixture,
+)
+from monetary_execution_fixture import (  # noqa: E402
+    write_monetary_execution_fixture,
+)
 from test_population_design import (  # noqa: E402
     _design_text,
     _write_complete_fixture,
@@ -31,6 +39,10 @@ from microtx_sim.data.population_design import (  # noqa: E402
     apportion_population_hamilton,
     build_population_calibration_target,
     load_and_verify_population_design_bundle,
+)
+from microtx_sim.data.population_execution import (  # noqa: E402
+    build_population_execution_lineage,
+    build_population_seed_execution_record,
 )
 from microtx_sim.data.population_projection import (  # noqa: E402
     RUNTIME_INCOME_CONCEPT,
@@ -289,6 +301,93 @@ class PopulationProjectionAdapterTests(unittest.TestCase):
                 verification.verification_sha256,
             )
 
+    def test_four_jurisdiction_execution_accepts_reordered_profile_scope(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monetary_root = root / "monetary"
+            monetary_root.mkdir()
+            profile_bundle, _artifact_path = write_monetary_execution_fixture(
+                monetary_root
+            )
+            adapter = write_four_jurisdiction_population_fixture(
+                root / "population"
+            )
+            profiles = profile_bundle.country_profiles
+
+            self.assertEqual(
+                tuple(
+                    jurisdiction.jurisdiction_code
+                    for jurisdiction in adapter.verification.bundle.jurisdictions
+                ),
+                CANONICAL_DESIGN_CODES,
+            )
+            self.assertEqual(
+                tuple(profile.code for profile in profiles),
+                REGISTERED_PROFILE_CODES,
+            )
+            self.assertEqual(adapter.apportionment_plan.player_count, 16)
+            self.assertFalse(adapter.campaign_ready)
+
+            execution = initialize_population_projection(
+                adapter,
+                profiles,
+                CounterRNG(907),
+            )
+            self.assertEqual(
+                execution.players.jurisdiction_codes,
+                REGISTERED_PROFILE_CODES,
+            )
+            code_to_index = {
+                code: index
+                for index, code in enumerate(execution.players.jurisdiction_codes)
+            }
+            assignment = execution.players.projected_population
+            assert assignment is not None
+            self.assertTrue(
+                all(
+                    cell.jurisdiction_index == code_to_index[cell.jurisdiction_code]
+                    for cell in assignment.metadata.cells
+                )
+            )
+            self.assertIs(
+                verify_population_projection_execution(execution),
+                execution,
+            )
+            seed_record = build_population_seed_execution_record(
+                execution,
+                seed=907,
+                cohort_digest="7" * 64,
+                policy_days=1,
+            )
+            self.assertEqual(
+                seed_record.jurisdiction_codes,
+                REGISTERED_PROFILE_CODES,
+            )
+            lineage = build_population_execution_lineage(adapter, (seed_record,))
+            self.assertEqual(
+                lineage.record_for_seed(907).jurisdiction_codes,
+                REGISTERED_PROFILE_CODES,
+            )
+            self.assertEqual(lineage.manifest_payload(), lineage.snapshot())
+
+            invalid_scopes = {
+                "wrong": (CountryProfile(code="GB"), *profiles[1:]),
+                "missing": profiles[:-1],
+                "duplicate": (profiles[0], profiles[0], profiles[2], profiles[3]),
+            }
+            for label, invalid_profiles in invalid_scopes.items():
+                with self.subTest(label=label), self.assertRaisesRegex(
+                    PopulationProjectionVerificationError,
+                    "unique and exactly match",
+                ):
+                    initialize_population_projection(
+                        adapter,
+                        invalid_profiles,
+                        CounterRNG(908),
+                    )
+
     def test_zero_cells_are_preserved_in_adapter_and_runtime_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -526,7 +625,7 @@ class PopulationProjectionAdapterTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(
                 PopulationProjectionVerificationError,
-                "codes/order",
+                "code set",
             ):
                 initialize_population_projection(
                     adapter,
