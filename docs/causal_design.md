@@ -29,6 +29,27 @@ charts. It does not yet embed every strategic-company and regulator interaction
 from the richer market `World`. Results from the two layers must therefore not
 be silently combined.
 
+### Explicit campaign flow-layer contract
+
+`microtx_sim.causal.flow_contract` makes the current execution choice
+machine-readable: a prospective outcome routed through
+`PolicyScenarioResult.*` is `POLICY_WELFARE_V1` only. The contract re-attests the
+loaded plan, batch, analysis binding, projected-population lineage, seed and
+scenario identities, common cohort, exact selected weights, jurisdiction
+assignment, metric contract, and monetary value basis. Monetary observations
+may cross the population-aggregation boundary only after exact per-observation
+target-currency conversion; raw jurisdiction-currency pooling is rejected.
+
+`STRATEGIC_MARKET_V1` and combined-layer execution are fail-closed for this
+estimand. No typed adapter currently maps the policy scenario vector, welfare
+components, horizon, player/jurisdiction assignment, units, and lineage into the
+strategic `World` outputs. A future combined analysis would need to declare and
+attest that scientific mapping explicitly; it cannot reuse this policy-only
+contract or relabel the market layer's seven operational harm diagnostics. A
+passing flow attestation proves composition and identity preservation only. It
+does not establish calibration, empirical validity, preregistration,
+uncertainty sufficiency, convergence, or campaign readiness.
+
 ## Primary estimand
 
 Let `s` denote one scenario and let `safe` denote the declared safer reference,

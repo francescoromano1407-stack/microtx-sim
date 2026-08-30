@@ -98,7 +98,12 @@ These tasks block scientific interpretation.
    duration is checked against the batch horizon, with one declared day for a
    zero-day structural snapshot. One illustrative schema-v2 plan is checked in
    and selected only by a dedicated opt-in config; it is unregistered and
-   remains `campaign_ready=false`. A money-valued planned
+   remains `campaign_ready=false`. A schema-v3 successor now preserves that
+   primary while binding the campaign-shaped population, monetary, joint
+   parameter, convergence, flow, output, and execution-attestation contracts.
+   The current parameter ranges are illustrative, population and rate
+   uncertainty are unquantified, and no campaign convergence evidence exists,
+   so the successor also remains `campaign_ready=false`. A money-valued planned
    estimand must additionally select the opt-in prospective money execution and
    otherwise fails before treatment. That execution creates target-currency-
    equivalent model amounts by applying one jurisdiction-specific composite to
@@ -108,8 +113,8 @@ These tasks block scientific interpretation.
    reconstruct nominal local currency, and only the separate prospective profile
    receives the converted values and lineage. Legacy root output-v3 remains in
    unchanged simulation cents. Calendar anchoring, empirical uncertainty and
-   convergence justification, and model implementation/environment identity
-   remain explicit campaign blockers.
+   convergence evidence, and a clean verified execution environment remain
+   explicit campaign blockers.
 
    This P0 item remains open because exact execution does not provide an
    authenticated and calibrated target, an independently verified holdout, a
@@ -185,8 +190,10 @@ These tasks block scientific interpretation.
 
 1. Extend the implemented seven-regime policy batch into a preregistered
    empirical factorial design spanning market audit and financing interventions.
-2. Add calibrated between-jurisdiction heterogeneity, convergence diagnostics,
-   joint parameter uncertainty, and externally justified interval semantics.
+2. Calibrate between-jurisdiction heterogeneity and the implemented joint
+   parameter design, declare admissible population and monetary-rate
+   uncertainty methods, and obtain executed convergence evidence with
+   externally justified interval semantics.
 3. Extend the implemented OAT grid to rare-event priors, harm weights,
    observation noise, behavioural persistence, company expectations, structural
    alternatives, and unobserved-confounding assumptions.

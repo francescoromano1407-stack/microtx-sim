@@ -38,6 +38,9 @@ from microtx_sim.data.lineage import build_profile_input_lineage  # noqa: E402
 from microtx_sim.data.monetary_execution import (  # noqa: E402
     build_monetary_output_currency_semantics,
 )
+from microtx_sim.execution_attestation import (  # noqa: E402
+    CampaignExecutionRejectedError,
+)
 from microtx_sim.policy_config import (  # noqa: E402
     AnalysisPlanSelection,
     load_policy_config,
@@ -50,6 +53,96 @@ CAMPAIGN_CONFIG = ROOT / "configs" / "policy_campaign.toml"
 
 
 class PolicyCliTests(unittest.TestCase):
+    def test_standalone_campaign_sensitivity_rejects_before_model_work(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            redirect_stderr(stderr),
+        ):
+            code = main(("policy-sensitivity", str(CAMPAIGN_CONFIG)))
+
+        self.assertEqual(code, 2)
+        self.assertIn("not an attested campaign command", stderr.getvalue())
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+
+    def test_campaign_batch_receipt_gate_precedes_first_realization(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch(
+                "microtx_sim.cli._preverify_campaign_execution",
+                side_effect=CampaignExecutionRejectedError(
+                    "campaign execution rejected: receipt gate closed"
+                ),
+            ) as receipt_gate,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            redirect_stderr(stderr),
+        ):
+            code = main(("policy-batch", str(CAMPAIGN_CONFIG)))
+
+        self.assertEqual(code, 2)
+        self.assertIn("receipt gate closed", stderr.getvalue())
+        receipt_gate.assert_called_once()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+
+    def test_campaign_receipt_rejects_command_override_before_build(self) -> None:
+        from microtx_sim.cli import _preverify_campaign_execution
+
+        config = load_policy_config(CAMPAIGN_CONFIG)
+        with patch(
+            "microtx_sim.campaign_preflight."
+            "build_policy_campaign_execution_receipt_spec"
+        ) as build_spec:
+            with self.assertRaisesRegex(
+                ValueError,
+                "command differs",
+            ):
+                _preverify_campaign_execution(
+                    CAMPAIGN_CONFIG,
+                    config=config,
+                    command=(
+                        "microtx-sim",
+                        "policy-batch",
+                        "configs/policy_campaign.toml",
+                        "--skip-sensitivity",
+                    ),
+                )
+        build_spec.assert_not_called()
+
+    def test_campaign_preflight_dispatches_without_campaign_execution(self) -> None:
+        payload = {
+            "status": "PRE_CAMPAIGN_VALIDATION_COMPLETE_FAIL_CLOSED",
+            "campaign_ready": False,
+            "full_campaign_intentionally_not_run": True,
+        }
+        stdout = io.StringIO()
+        with (
+            patch(
+                "microtx_sim.cli._campaign_preflight",
+                return_value=payload,
+            ) as preflight,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            redirect_stdout(stdout),
+        ):
+            code = main(
+                (
+                    "campaign-preflight",
+                    str(CAMPAIGN_CONFIG),
+                    "--output",
+                    str(ROOT / "artifacts" / "never-written-report.json"),
+                )
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), payload)
+        preflight.assert_called_once()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+
     def test_campaign_candidate_validation_fails_before_treatment(self) -> None:
         stderr = io.StringIO()
         with (

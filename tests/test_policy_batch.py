@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -27,6 +28,10 @@ from microtx_sim.domain.monetisation import MonetisationVector
 from microtx_sim.data.population_execution import (
     build_population_seed_execution_record,
 )
+from microtx_sim.execution_attestation import (
+    CampaignExecutionRejectedError,
+    ExecutionVerificationPhase,
+)
 from microtx_sim.data.population_projection import initialize_population_projection
 from microtx_sim.metrics.harm import (
     HarmModelParameters,
@@ -41,6 +46,15 @@ from microtx_sim.simulation.policy_orchestrator import (
 
 
 PROFILE = (CountryProfile(code="XX"),)
+
+
+def _campaign_attestation_kwargs() -> dict[str, object]:
+    return {
+        "campaign_receipt": object(),
+        "campaign_verification": SimpleNamespace(
+            phase=ExecutionVerificationPhase.PRE_EXECUTION
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -71,9 +85,36 @@ def _projection_bytes(batch: PolicyBatchResult) -> bytes:
 
 
 class PolicyBatchTests(unittest.TestCase):
+    def test_campaign_requires_attestation_before_any_initializer(self) -> None:
+        spec = PolicyBatchSpec(seeds=(13,), days=0, player_count=12)
+        with (
+            patch(
+                "microtx_sim.causal.batch.validate_population_campaign_preflight"
+            ) as population_gate,
+            patch("microtx_sim.causal.batch.initialize_player_table") as legacy,
+            patch(
+                "microtx_sim.causal.batch.initialize_population_projection"
+            ) as projected,
+            patch("microtx_sim.causal.batch.run_policy_scenario") as scenario,
+        ):
+            with self.assertRaisesRegex(
+                CampaignExecutionRejectedError,
+                "preverified execution receipt",
+            ):
+                run_policy_batch(
+                    spec,
+                    country_profiles=PROFILE,
+                    campaign=True,
+                )
+        population_gate.assert_not_called()
+        legacy.assert_not_called()
+        projected.assert_not_called()
+        scenario.assert_not_called()
+
     def test_campaign_without_adapter_rejects_before_any_initializer(self) -> None:
         spec = PolicyBatchSpec(seeds=(13,), days=0, player_count=12)
         with (
+            patch("microtx_sim.causal.batch.require_campaign_execution"),
             patch("microtx_sim.causal.batch.initialize_player_table") as legacy,
             patch(
                 "microtx_sim.causal.batch.initialize_population_projection"
@@ -88,6 +129,7 @@ class PolicyBatchTests(unittest.TestCase):
                     spec,
                     country_profiles=PROFILE,
                     campaign=True,
+                    **_campaign_attestation_kwargs(),
                 )
         legacy.assert_not_called()
         projected.assert_not_called()
@@ -111,6 +153,7 @@ class PolicyBatchTests(unittest.TestCase):
                     "microtx_sim.causal.batch.validate_population_campaign_preflight",
                     side_effect=lambda adapter: adapter,
                 ),
+                patch("microtx_sim.causal.batch.require_campaign_execution"),
                 patch(
                     "microtx_sim.causal.batch.initialize_population_projection",
                     wraps=initialize_population_projection,
@@ -125,6 +168,7 @@ class PolicyBatchTests(unittest.TestCase):
                     country_profiles=(CountryProfile(code="UK"),),
                     population_adapter=adapter,
                     campaign=True,
+                    **_campaign_attestation_kwargs(),
                 )
 
             self.assertEqual(initialize.call_count, len(spec.seeds))
@@ -158,6 +202,7 @@ class PolicyBatchTests(unittest.TestCase):
                     "microtx_sim.causal.batch.validate_population_campaign_preflight",
                     side_effect=lambda adapter: adapter,
                 ),
+                patch("microtx_sim.causal.batch.require_campaign_execution"),
                 patch(
                     "microtx_sim.causal.batch.build_population_seed_execution_record",
                     side_effect=invalid_balance,
@@ -173,6 +218,7 @@ class PolicyBatchTests(unittest.TestCase):
                         country_profiles=(CountryProfile(code="UK"),),
                         population_adapter=adapter,
                         campaign=True,
+                        **_campaign_attestation_kwargs(),
                     )
             scenario.assert_not_called()
 
@@ -195,6 +241,7 @@ class PolicyBatchTests(unittest.TestCase):
                     "microtx_sim.causal.batch.validate_population_campaign_preflight",
                     side_effect=lambda adapter: adapter,
                 ),
+                patch("microtx_sim.causal.batch.require_campaign_execution"),
                 patch(
                     "microtx_sim.causal.batch.build_population_seed_execution_record",
                     side_effect=invalid_weights,
@@ -210,6 +257,7 @@ class PolicyBatchTests(unittest.TestCase):
                         country_profiles=(CountryProfile(code="UK"),),
                         population_adapter=adapter,
                         campaign=True,
+                        **_campaign_attestation_kwargs(),
                     )
             scenario.assert_not_called()
 

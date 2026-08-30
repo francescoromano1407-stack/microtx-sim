@@ -21,8 +21,12 @@ from ..causal.analysis_plan import (
 from ..causal.primary_aggregate import compute_plan_primary_aggregate
 from ..causal.batch import PolicyBatchResult, resolve_policy_run_inputs
 from ..causal.scenarios import ScenarioId
+from ..execution_attestation import (
+    ExecutionReceipt,
+    ExecutionReceiptVerification,
+)
 from ..policy_config import PolicyPrototypeConfig
-from .manifest import build_run_manifest
+from .manifest import build_run_manifest, require_campaign_export_attestation
 from .monetary import (
     PRODUCTION_MONETARY_ARTIFACT_FILENAMES,
     write_production_monetary_outputs,
@@ -66,6 +70,8 @@ def export_policy_batch(
     command: Sequence[str] | None = None,
     analysis_plan: LoadedProspectiveAnalysisPlan | None = None,
     analysis_binding: RunAnalysisBinding | None = None,
+    execution_receipt: ExecutionReceipt | None = None,
+    execution_verification: ExecutionReceiptVerification | None = None,
 ) -> dict[str, Path]:
     """Persist a complete, self-describing synthetic result bundle."""
 
@@ -73,6 +79,11 @@ def export_policy_batch(
         raise TypeError("config must be PolicyPrototypeConfig")
     if not isinstance(batch, PolicyBatchResult):
         raise TypeError("batch must be PolicyBatchResult")
+    require_campaign_export_attestation(
+        config,
+        execution_receipt=execution_receipt,
+        execution_verification=execution_verification,
+    )
     if sensitivity is not None and not isinstance(sensitivity, SensitivityResult):
         raise TypeError("sensitivity must be SensitivityResult or None")
     batch_lineage = batch.profile_input_lineage
@@ -142,6 +153,8 @@ def export_policy_batch(
         command=command,
         analysis_plan=analysis_plan,
         analysis_binding=analysis_binding,
+        execution_receipt=execution_receipt,
+        execution_verification=execution_verification,
     )
     sensitivity_snapshot = (
         sensitivity.execution_snapshot() if sensitivity is not None else None

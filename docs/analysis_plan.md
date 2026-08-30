@@ -8,18 +8,24 @@ and executable pre-treatment inclusion rules before treatment outcomes are
 generated. `PRIMARY` is a reporting role for one specification. Schema v1
 continues to produce only separate fixed-seed realizations. Schema v2 adds an
 explicit, outcome-blind plan-level aggregation contract for that one primary.
+Schema v3 retains that estimand and aggregate while adding a canonical
+successor amendment for campaign-shaped population, monetary, uncertainty,
+convergence, flow, output, and execution-attestation inputs.
 
-It is not an external preregistration system. Both schema versions require
+It is not an external preregistration system. All three schema versions require
 `registration_status = "UNREGISTERED"`, `preregistered = false`, and
 `campaign_ready = false`.
 
-The checked-in concrete plan is
+The checked-in development fixture is
 `inputs/prospective-analysis-plan.json`, with plan ID
 `illustrative.prospective.composite-harm.baseline-vs-safe.v2`. It is selected
-only by `configs/policy_prospective.toml`. The ordinary
-`configs/policy_prototype.toml` and smoke configuration remain unplanned. The
-concrete plan and its population files are deterministic illustrative/test
-inputs, not campaign-ready scientific evidence.
+only by `configs/policy_prospective.toml`. The separate
+`inputs/prospective-analysis-plan-amendment-v3.json` preserves that file as its
+parent and is selected only by `configs/policy_campaign.toml`. It expands the
+fixed stopping rule to 150 seeds without changing the primary estimand. The
+ordinary `configs/policy_prototype.toml` and smoke configuration remain
+unplanned. Both plans and their population inputs are illustrative and are not
+campaign-ready scientific evidence.
 
 ## Configuration
 
@@ -73,6 +79,18 @@ single directed scenario contrast, so its `scenario_weights` array is empty;
 secondary scenarios are not averaged into it. It separately states that exact
 population-analysis weights are applied within each seed and that independent
 Monte Carlo seeds receive equal weight.
+
+Schema v3 preserves the complete schema-v2 estimand specification and aggregate
+and adds one canonical `amendment`. The amendment binds the parent plan's file
+and semantic identities, proves that the primary specification is unchanged,
+lists changed inputs and their readiness consequences, and fixes the projected
+population, monetary, uncertainty, convergence, execution-attestation, and
+policy-only flow contracts. The current v3 schema requires at least 100 fixed
+seeds and carries fixed fail-closed blockers for missing empirical population
+validation, population and rate uncertainty, calibrated parameter
+distributions, monetary authentication and bridge validation, external
+registration, calendar anchoring, and execution attestation. See
+[Full campaign contract and readiness](campaign_contract.md).
 
 The v2 valid-realization criteria require a fixed-rule seed, paired reference
 and comparison observations, the predeclared pre-treatment population
@@ -167,7 +185,7 @@ profile-input, specification, and exact-result identities in a content-addressed
 run binding. Post-run re-attestation compares the batch's retained profile
 fingerprint with the prospective plan again.
 
-For schema v2, the binding's exact per-seed primary realizations feed the
+For schema v2 and v3, the binding's exact per-seed primary realizations feed the
 declared plan-level aggregate. Its point estimate is their arithmetic mean. The
 between-seed standard deviation uses sample standard deviation (`ddof=1`), the
 Monte Carlo standard error is `sd / sqrt(retained_seed_count)`, and the normal
@@ -179,8 +197,8 @@ estimand or scenario enters this calculation.
 The ordinary 13-file output-v3 surface and its unweighted CSV semantics remain
 unchanged. An opted-in batch additionally writes the separate
 `prospective_analysis/target_population_estimands.csv` and
-`prospective_analysis/target_population_estimand_metadata.json`. Schema-v2
-plans additionally write `prospective_analysis/primary_aggregate.csv` and
+`prospective_analysis/target_population_estimand_metadata.json`. Schema-v2 and
+schema-v3 plans additionally write `prospective_analysis/primary_aggregate.csv` and
 `prospective_analysis/primary_aggregate_metadata.json`. The latter explicitly
 labels the interval as simulator Monte Carlo variability, not a real-world
 population confidence interval. The main manifest contains distinct
@@ -212,11 +230,10 @@ source, calibrate the simulated amounts, establish a representative target
 population or genuine held-out validation, complete external preregistration,
 or authorize a scientific campaign. The source-bundle signature, calibration,
 population, and preregistration gates therefore remain independently blocking.
-The schema-v2 plan resolves cross-seed aggregation and Monte Carlo uncertainty,
-but it remains blocked by external registration, an execution-calendar anchor,
-and model implementation/environment identity. The checked-in population
-fixture adds exact algebraic weights and lineage but lacks authentic source and
-bundle signatures, representative empirical population evidence, and held-out
-validation. The input-value digests do not attest the source tree, interpreter,
-dependency lock, or build environment. Those blockers prevent scientific or
-campaign readiness.
+The schema-v2 plan resolves cross-seed aggregation and Monte Carlo uncertainty.
+The schema-v3 successor additionally binds formal uncertainty, convergence,
+flow, and environment-attestation contracts, but binding a contract is not
+satisfying it. Population and monetary-rate uncertainty remain unquantified,
+the parameter ranges remain illustrative, and the population, monetary,
+registration, calendar, convergence-evidence, and clean execution-receipt gates
+remain blocking. No full campaign was run.

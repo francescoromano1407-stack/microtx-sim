@@ -34,6 +34,13 @@ from ..data.population_projection import (
     verify_population_projection_adapter,
 )
 from ..data.profiles import ProfileBundle
+from ..execution_attestation import (
+    CampaignExecutionRejectedError,
+    ExecutionReceipt,
+    ExecutionReceiptVerification,
+    ExecutionVerificationPhase,
+    require_campaign_execution,
+)
 from ..funding import EPGCPolicy
 from ..metrics.harm import (
     HarmComponent,
@@ -706,6 +713,8 @@ def run_policy_batch(
     epgc_policy: EPGCPolicy | None = None,
     population_adapter: PopulationProjectionAdapter | None = None,
     campaign: bool = False,
+    campaign_receipt: ExecutionReceipt | None = None,
+    campaign_verification: ExecutionReceiptVerification | None = None,
 ) -> PolicyBatchResult:
     """Run all scenarios on the same seeded cohort within each replication."""
 
@@ -713,6 +722,24 @@ def run_policy_batch(
         raise TypeError("spec must be PolicyBatchSpec")
     if type(campaign) is not bool:
         raise TypeError("campaign must be a strict boolean")
+    if campaign:
+        if campaign_receipt is None or campaign_verification is None:
+            raise CampaignExecutionRejectedError(
+                "campaign policy execution requires a preverified execution "
+                "receipt before cohort initialization"
+            )
+        if (
+            getattr(campaign_verification, "phase", None)
+            is not ExecutionVerificationPhase.PRE_EXECUTION
+        ):
+            raise CampaignExecutionRejectedError(
+                "campaign policy execution requires PRE_EXECUTION verification"
+            )
+        require_campaign_execution(campaign_receipt, campaign_verification)
+    elif campaign_receipt is not None or campaign_verification is not None:
+        raise ValueError(
+            "campaign receipt and verification are only valid when campaign=true"
+        )
     if campaign and population_adapter is None:
         raise ValueError(
             "campaign policy execution requires a verified projected "

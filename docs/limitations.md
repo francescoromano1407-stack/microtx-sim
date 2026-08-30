@@ -105,8 +105,10 @@ remain illustrative; no calibrated target, genuine holdout, public comparability
 campaign readiness has been established. The P0 comparable-populations
 requirement remains open, and no full campaign has been run.
 
-Plan schema v1 and run-binding schema v2 are necessarily unregistered and
-campaign-ineligible.
+Plan schemas v1 and v2, the schema-v3 successor, and run-binding schema v2 are
+unregistered and campaign-ineligible. The successor's uncertainty,
+convergence, and execution-attestation contracts expose missing evidence; they
+do not cure it.
 Money-valued estimands require an additional explicit opt-in prospective money
 execution; without it they fail before treatment. When selected, the execution
 applies one jurisdiction-specific composite conversion directly to each retained
@@ -120,10 +122,14 @@ receives them. Legacy root output-v3 artifacts remain unchanged in simulation
 cents.
 
 A schema-v1 `PRIMARY` label identifies one estimand specification whose outputs
-remain separate per-seed realizations. The checked-in schema-v2 plan now defines
+remain separate per-seed realizations. The checked-in schema-v2 plan defines
 an equal-seed primary mean, sample SD, Monte Carlo standard error, and normal
 95% Monte Carlo interval over complete exact paired realizations. This resolves
 the software aggregation contract, not empirical uncertainty or convergence.
+The schema-v3 successor retains that primary and adds a deterministic joint
+parameter design and blockwise rules, but its illustrative parameter ranges,
+unquantified population and rate uncertainty, and absent campaign realizations
+remain blocking.
 Declared calendar dates are not
 connected to a simulation clock: preflight checks only that their inclusive
 duration equals the executed horizon, treating a zero-day structural snapshot
@@ -258,19 +264,23 @@ share are model viability outcomes, not audited company accounts.
 
 ### Monte Carlo uncertainty is not empirical uncertainty
 
-The policy runner executes all seven required scenarios over repeated seeds and
-reports variance and normal 95% Monte Carlo intervals. It also runs a compact
-one-at-a-time sensitivity grid with monotonicity and instability flags. These
-tools quantify behaviour of the configured synthetic model only. They do not
-propagate joint parameter or structural uncertainty, calculate statistical
-power, correct for multiple comparisons, or create population confidence or
-posterior intervals. The market runner still exposes the lower-level composable
-treated/control pair for equilibrium interventions.
+The legacy policy runner executes all seven required scenarios over repeated
+seeds, reports variance and normal 95% Monte Carlo intervals, and retains a
+compact one-at-a-time sensitivity grid. The campaign analysis framework adds a
+deterministic joint parameter design, explicit seed/parameter/population/rate
+realization identities, finite-design variance decomposition, and blockwise
+convergence checks. These mechanisms quantify only uncertainty sources that
+have an admissible declared design; they do not turn illustrative bounds into
+probability distributions, calculate statistical power, correct for multiple
+comparisons, or create population confidence or posterior intervals.
 
-The optional prospective analysis binding is narrower still: it retains exact
-per-seed planned estimand realizations but does not adopt the runner's aggregate
-or interval as a plan-defined primary result. Cross-seed aggregation and
-uncertainty semantics remain unresolved.
+The prospective analysis binding retains exact per-seed planned estimands and a
+plan-defined cross-seed primary aggregate. The current campaign successor still
+cannot produce a sufficient total-uncertainty result: parameter bounds are
+illustrative, and admissible population and monetary-rate uncertainty designs
+are absent. Unidentifiable components are reported as unavailable, never zero.
+The market runner separately exposes the lower-level treated/control pair for
+equilibrium interventions and is not composed with the policy estimand.
 
 ## Legal and regulatory limitations
 
@@ -429,10 +439,11 @@ Before a scientific campaign, the project needs at minimum:
    common money target, or country-specific market separation;
 4. legal review with dated product and territorial scope;
 5. external validation against outcomes not used for fitting;
-6. joint parameter and structural sensitivity beyond the implemented OAT grid;
+6. empirically calibrated joint parameter and structural-uncertainty designs
+   for the implemented propagation framework;
 7. a preregistered empirical estimand, power analysis, and reporting plan;
-8. performance, persistence, convergence, and recovery tests at intended
-   campaign scale.
+8. performance, persistence, executed convergence evidence, and recovery tests
+   at intended campaign scale.
 9. a content-addressed model implementation and execution-environment identity,
    including reviewed source-tree, interpreter, dependency-lock, and build
    contracts bound to the prospective plan and result.

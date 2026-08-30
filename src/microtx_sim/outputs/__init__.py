@@ -13,6 +13,10 @@ from .plots import (
     write_spending_distribution_svg,
 )
 from .schema import (
+    CAMPAIGN_ANALYSIS_ARTIFACT_FILENAMES,
+    CAMPAIGN_ANALYSIS_OUTPUT_PROFILE,
+    CAMPAIGN_ANALYSIS_SCHEMA_SHA256,
+    CAMPAIGN_ANALYSIS_SCHEMA_VERSION,
     MANIFEST_SCHEMA_SHA256,
     MANIFEST_SCHEMA_VERSION,
     OUTPUT_SCHEMA_VERSION,
@@ -25,6 +29,7 @@ from .schema import (
     TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256,
     TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION,
     TARGET_POPULATION_OUTPUT_PROFILE,
+    campaign_analysis_schema_descriptor,
     manifest_schema_descriptor,
     stamp_standalone_sensitivity_schema,
     stamp_target_population_estimand_schema,
@@ -44,9 +49,14 @@ from .monetary import (
     write_production_monetary_outputs,
 )
 from .population import write_target_population_estimands
+from .uncertainty import write_joint_uncertainty_outputs
 from .writers import write_batch_artifacts, write_csv_atomic, write_json_atomic
 
 __all__ = [
+    "CAMPAIGN_ANALYSIS_ARTIFACT_FILENAMES",
+    "CAMPAIGN_ANALYSIS_OUTPUT_PROFILE",
+    "CAMPAIGN_ANALYSIS_SCHEMA_SHA256",
+    "CAMPAIGN_ANALYSIS_SCHEMA_VERSION",
     "MANIFEST_SCHEMA_SHA256",
     "MANIFEST_SCHEMA_VERSION",
     "OUTPUT_SCHEMA_VERSION",
@@ -64,6 +74,7 @@ __all__ = [
     "TARGET_POPULATION_OUTPUT_PROFILE",
     "OUTPUT_METRIC_CONTRACTS",
     "build_run_manifest",
+    "campaign_analysis_schema_descriptor",
     "export_policy_batch",
     "render_epgc_subsidy_requirement_svg",
     "render_harm_distribution_svg",
@@ -83,6 +94,7 @@ __all__ = [
     "write_harm_distribution_svg",
     "write_harm_revenue_frontier_svg",
     "write_json_atomic",
+    "write_joint_uncertainty_outputs",
     "write_production_monetary_outputs",
     "write_opportunity_cost_decomposition_svg",
     "write_spending_distribution_svg",

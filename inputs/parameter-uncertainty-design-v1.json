@@ -1,0 +1,94 @@
+{
+  "correlation_matrix": null,
+  "correlation_source": null,
+  "design_id": "illustrative.policy-model-joint-parameters.v1",
+  "design_seed": 730241,
+  "draw_count": 32,
+  "method": "SEEDED_LATIN_HYPERCUBE_V1",
+  "oat_role": "DIAGNOSTIC_ONLY",
+  "parameters": [
+    {
+      "lower_bound": 0.015,
+      "nominal_value": 0.025,
+      "parameter_id": "decision.habit_learning_rate",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.04
+    },
+    {
+      "lower_bound": 0.94,
+      "nominal_value": 0.97,
+      "parameter_id": "decision.habit_persistence",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.99
+    },
+    {
+      "lower_bound": 0.08,
+      "nominal_value": 0.12,
+      "parameter_id": "decision.reinforcement_learning_rate",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.18
+    },
+    {
+      "lower_bound": 0.4,
+      "nominal_value": 0.65,
+      "parameter_id": "decision.temperature",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Existing OAT diagnostic range, explicitly reused only as non-probabilistic joint-design bounds.",
+      "upper_bound": 1.0
+    },
+    {
+      "lower_bound": 0.05,
+      "nominal_value": 0.1,
+      "parameter_id": "harm.affordable_spending_share",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Existing OAT diagnostic range, explicitly reused only as non-probabilistic joint-design bounds.",
+      "upper_bound": 0.2
+    },
+    {
+      "lower_bound": 0.2,
+      "nominal_value": 0.35,
+      "parameter_id": "harm.opaque_spending_weight",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.5
+    },
+    {
+      "lower_bound": 0.2,
+      "nominal_value": 0.35,
+      "parameter_id": "harm.random_reward_spending_weight",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.5
+    },
+    {
+      "lower_bound": 0.15,
+      "nominal_value": 0.25,
+      "parameter_id": "harm.sleep_debt_weight",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.4
+    },
+    {
+      "lower_bound": 0.2,
+      "nominal_value": 0.35,
+      "parameter_id": "harm.time_pressure_spending_weight",
+      "probability_distribution": null,
+      "provenance_status": "ILLUSTRATIVE_RANGE",
+      "source": "Declared engineering range for joint-design diagnostics; not empirically calibrated and not a probability distribution.",
+      "upper_bound": 0.5
+    }
+  ],
+  "probability_interpretation": "NONE_ILLUSTRATIVE_DESIGN_POINTS",
+  "schema_version": "1.0"
+}

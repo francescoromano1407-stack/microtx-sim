@@ -9,17 +9,26 @@ The repository has two explicit run-configuration TOML schemas:
   `microtx_sim.policy_config.load_policy_config()`.
 
 Both loaders construct immutable dataclasses and reject missing or unknown
-fields. The policy loader additionally performs strict runtime type/range checks
-and accepts only `provenance_status = "synthetic"`.
+fields. The policy loader additionally performs strict runtime type/range
+checks. Development policy runs require `provenance_status = "synthetic"`;
+campaign-shaped files can declare another recognized status, but execution
+still requires calibrated provenance and all independent campaign gates.
 
-Three run configurations are supplied:
+Five run configurations are supplied:
 
 | File | Purpose | Scale | Status |
 | --- | --- | --- | --- |
 | `configs/smoke.toml` | Short connectivity check | 384 players, 3 companies, 4 games, 3 one-day cycles; full history and memory ledger | `SYNTHETIC` and executable only as a non-campaign run |
 | `configs/policy_prototype.toml` | Reproducible seven-scenario policy prototype | 1,000 players, 14 days, 3 seeds, 7 scenarios | Strictly `synthetic`; tested but not empirically calibrated |
 | `configs/policy_prospective.toml` | Opt-in prospective-plan validation fixture | 16 designed test players, 14 days, 3 fixed seeds, 7 scenarios | `UNREGISTERED`, illustrative/test population provenance, and explicitly not campaign-ready |
+| `configs/policy_campaign.toml` | Complete fail-closed full-campaign configuration | 50,000 projected players, 14 days, 150 fixed seeds, 7 scenarios | Schema-valid pre-campaign candidate; illustrative population and money bridge, unquantified required uncertainty, and `campaign_ready=false`; not executed |
 | `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles; final-only history and SQLite ledger | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
+
+The campaign-shaped file is a binding contract, not permission to execute.
+Passing its strict TOML loader cannot override provenance, registration,
+population, monetary, uncertainty, convergence, or clean-environment gates.
+See [Full campaign contract and readiness](campaign_contract.md). No full
+scientific or production campaign has been run.
 
 Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
@@ -263,6 +272,14 @@ Schema-v2 plans also bind a four-file prospective output contract. In addition
 to the exact per-seed files, it writes `primary_aggregate.csv` and
 `primary_aggregate_metadata.json` using the predeclared equal-seed normal 95%
 Monte Carlo convention. The interval describes simulator variability only.
+
+The checked-in schema-v3 successor retains that primary aggregate and adds an
+immutable amendment naming its schema-v2 parent and every changed scientific or
+implementation input. Its campaign output profile additionally declares joint
+uncertainty, convergence, production-monetary, execution-receipt, attestation,
+and pre-campaign-report artifacts. Those declarations are production-shaped
+contracts only; unavailable uncertainty components and other readiness
+blockers remain explicit and keep execution closed.
 
 A money-valued plan also requires an explicit opt-in prospective money execution
 and a complete coherent dated conversion basis; omission fails before treatment.

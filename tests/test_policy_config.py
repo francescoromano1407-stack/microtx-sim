@@ -10,6 +10,8 @@ from microtx_sim.policy_config import (
     AnalysisPlanSelection,
     PolicyConfigurationError,
     PolicyRunPurpose,
+    PolicySimulationLayer,
+    UncertaintyAvailability,
     load_policy_config,
 )
 from microtx_sim.config import PopulationExecutionMode
@@ -24,6 +26,7 @@ class PolicyConfigTests(unittest.TestCase):
     def test_checked_in_campaign_candidate_requires_projected_population(self) -> None:
         config = load_policy_config(CAMPAIGN_CONFIG)
         self.assertIs(config.run_purpose, PolicyRunPurpose.CAMPAIGN)
+        self.assertTrue(config.full_campaign_config)
         self.assertEqual(config.provenance_status, "illustrative")
         self.assertIsNotNone(config.population)
         assert config.population is not None
@@ -32,8 +35,183 @@ class PolicyConfigTests(unittest.TestCase):
             PopulationExecutionMode.PROJECTED_V1,
         )
         self.assertIsNotNone(config.analysis_plan)
+        assert config.analysis_plan is not None
+        self.assertEqual(
+            config.analysis_plan.parent_plan_id,
+            "illustrative.prospective.composite-harm.baseline-vs-safe.v2",
+        )
         self.assertTrue(config.output.include_player_rows)
         self.assertEqual(config.batch.player_count, 50_000)
+        self.assertEqual(config.batch.days, 14)
+        self.assertEqual(len(config.batch.seeds), 150)
+        self.assertEqual(config.batch.seeds, tuple(sorted(config.batch.seeds)))
+        self.assertTrue({101, 202, 303}.issubset(config.batch.seeds))
+        assert config.campaign is not None
+        self.assertFalse(config.campaign.allow_synthetic)
+        self.assertTrue(config.campaign.fail_closed)
+        self.assertFalse(config.campaign.campaign_ready)
+        self.assertIs(
+            config.campaign.simulation_layer,
+            PolicySimulationLayer.POLICY_ORCHESTRATOR,
+        )
+        assert config.uncertainty is not None
+        self.assertEqual(config.uncertainty.minimum_retained_seeds, 100)
+        self.assertIs(
+            config.uncertainty.population_uncertainty,
+            UncertaintyAvailability.UNQUANTIFIED,
+        )
+        self.assertIs(
+            config.uncertainty.monetary_rate_uncertainty,
+            UncertaintyAvailability.UNQUANTIFIED,
+        )
+        assert config.convergence is not None
+        self.assertEqual(config.convergence.block_size, 50)
+        self.assertEqual(config.convergence.required_status, "CONVERGED")
+        assert config.population_contract is not None
+        self.assertTrue(
+            config.population_contract.require_per_seed_assignment_identity
+        )
+        self.assertEqual(
+            config.population_contract.weight_application,
+            "WITHIN_SEED_BEFORE_CROSS_SEED_AGGREGATION",
+        )
+        assert config.monetary_contract is not None
+        self.assertEqual(config.monetary_contract.target_currency, "EUR")
+        self.assertEqual(
+            config.monetary_contract.target_minor_unit_name,
+            "euro cent",
+        )
+        self.assertFalse(
+            config.monetary_contract.observed_real_world_spending
+        )
+        assert config.output_contract is not None
+        self.assertEqual(len(config.output_contract.expected_artifacts), 25)
+        assert config.ledger is not None
+        self.assertTrue(config.ledger.persistent)
+        self.assertFalse(config.ledger.temporary)
+        assert config.execution_receipt is not None
+        self.assertTrue(config.execution_receipt.require_clean_working_tree)
+
+    def test_full_campaign_sections_are_collectively_required(self) -> None:
+        original = CAMPAIGN_CONFIG.read_text("utf-8")
+        incomplete = original.split("\n[execution_receipt]\n", 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "incomplete-campaign.toml"
+            path.write_text(incomplete, "utf-8")
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "missing required sections: execution_receipt",
+            ):
+                load_policy_config(path)
+
+    def test_full_campaign_seed_design_is_strict_and_large_enough(self) -> None:
+        original = CAMPAIGN_CONFIG.read_text("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unsorted = root / "unsorted-seeds.toml"
+            unsorted.write_text(
+                original.replace(
+                    "seeds = [101, 102, 103",
+                    "seeds = [102, 101, 103",
+                    1,
+                ),
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "strictly ascending",
+            ):
+                load_policy_config(unsorted)
+
+            too_few = root / "too-few-seeds.toml"
+            lines = original.splitlines()
+            lines = [
+                "seeds = [101, 202, 303]"
+                if line.startswith("seeds = [")
+                else line
+                for line in lines
+            ]
+            too_few.write_text("\n".join(lines) + "\n", "utf-8")
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "at least 100 seeds",
+            ):
+                load_policy_config(too_few)
+
+    def test_full_campaign_fail_closed_invariants_are_not_overridable(self) -> None:
+        original = CAMPAIGN_CONFIG.read_text("utf-8")
+        mutations = (
+            (
+                "allow_synthetic = false",
+                "allow_synthetic = true",
+                "allow_synthetic = false",
+            ),
+            (
+                "campaign_ready = false",
+                "campaign_ready = true",
+                "campaign_ready must remain false",
+            ),
+            (
+                'backend = "sqlite"',
+                'backend = "memory"',
+                "SQLite ledger",
+            ),
+            (
+                "temporary = false",
+                "temporary = true",
+                "cannot be temporary",
+            ),
+            (
+                "observed_real_world_spending = false",
+                "observed_real_world_spending = true",
+                "not observed spending",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, (old, new, message) in enumerate(mutations):
+                with self.subTest(mutation=new):
+                    path = root / f"unsafe-{index}.toml"
+                    path.write_text(original.replace(old, new, 1), "utf-8")
+                    with self.assertRaisesRegex(
+                        PolicyConfigurationError,
+                        message,
+                    ):
+                        load_policy_config(path)
+
+    def test_full_campaign_tables_remain_strict(self) -> None:
+        original = CAMPAIGN_CONFIG.read_text("utf-8")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            unknown = root / "unknown-campaign-key.toml"
+            unknown.write_text(
+                original.replace(
+                    'primary_estimand_id = "primary.composite-harm.baseline-vs-safe.v1"',
+                    'primary_estimand_id = "primary.composite-harm.baseline-vs-safe.v1"\nunknown = true',
+                    1,
+                ),
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "campaign keys differ",
+            ):
+                load_policy_config(unknown)
+
+            incomplete_identity = root / "incomplete-plan-identity.toml"
+            incomplete_identity.write_text(
+                original.replace(
+                    'expected_plan_id = "illustrative.prospective.composite-harm.baseline-vs-safe.v3"\n',
+                    "",
+                    1,
+                ),
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "identities must be supplied together",
+            ):
+                load_policy_config(incomplete_identity)
 
     def test_checked_in_policy_config_is_strict_and_complete(self) -> None:
         config = load_policy_config(CONFIG)

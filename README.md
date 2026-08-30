@@ -117,6 +117,14 @@ optimal funding policy.
   a separate prospective profile. It remains `UNREGISTERED`,
   `preregistered=false`, and `campaign_ready=false` and is selected only by
   `configs/policy_prospective.toml`.
+- A separate schema-v3 successor plan preserves that primary estimand and its
+  parent artifact while binding the 150-seed campaign candidate, projected
+  population, monetary production basis, deterministic joint parameter design,
+  blockwise convergence, policy-only flow, production-shaped outputs, and
+  execution attestation. The parameter ranges are illustrative rather than
+  calibrated distributions; population and monetary-rate uncertainty remain
+  unquantified. `configs/policy_campaign.toml` therefore remains fail-closed,
+  and no full campaign was run.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.
@@ -206,6 +214,7 @@ Start with the [documentation index](docs/index.md). The main references are:
 - [Simulated lifecycle](docs/simulation_lifecycle.md)
 - [Causal design](docs/causal_design.md)
 - [Prospective analysis plan](docs/analysis_plan.md)
+- [Full campaign contract and readiness](docs/campaign_contract.md)
 - [Synthetic policy prototype](docs/policy_prototype.md)
 - [Configuration reference](docs/configuration.md)
 - [Data sources and lineage](docs/data_sources.md)

@@ -28,6 +28,44 @@ STANDALONE_SENSITIVITY_SCHEMA_VERSION: Final[str] = "1.0"
 TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION: Final[str] = "1.0"
 PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE: Final[str] = "prospective_analysis"
 PROSPECTIVE_ANALYSIS_SCHEMA_VERSION: Final[str] = "1.0"
+CAMPAIGN_ANALYSIS_OUTPUT_PROFILE: Final[str] = "campaign_joint_uncertainty"
+CAMPAIGN_ANALYSIS_SCHEMA_VERSION: Final[str] = "1.0"
+
+UNCERTAINTY_REALIZATION_COLUMNS: Final[tuple[str, ...]] = (
+    "seed",
+    "parameter_draw_id",
+    "parameter_draw_sha256",
+    "population_design_id",
+    "population_replicate_id",
+    "population_design_sha256",
+    "monetary_rate_draw_id",
+    "monetary_rate_basis_id",
+    "monetary_rate_basis_sha256",
+    "scenario_id",
+    "primary_estimand_id",
+    "pretreatment_cohort_sha256",
+    "population_weights_sha256",
+    "identity_sha256",
+    "estimate",
+    "valid",
+    "invalid_reason",
+)
+
+CONVERGENCE_CHECKPOINT_COLUMNS: Final[tuple[str, ...]] = (
+    "completed_realization_count",
+    "retained_seed_count",
+    "cumulative_point_estimate",
+    "cumulative_monte_carlo_standard_error",
+    "interval_width",
+    "absolute_change_from_previous",
+    "relative_change_from_previous",
+    "invalid_count",
+    "rejected_count",
+    "excluded_count",
+    "sensitivity_instability",
+    "status",
+    "blockers",
+)
 
 PRIMARY_AGGREGATE_COLUMNS: Final[tuple[str, ...]] = (
     "plan_id",
@@ -334,6 +372,25 @@ POLICY_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
     "harm_revenue_frontier.svg",
     "opportunity_cost_decomposition.svg",
     "epgc_subsidy_requirement.svg",
+)
+
+CAMPAIGN_UNCERTAINTY_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
+    "uncertainty_realizations.csv",
+    "uncertainty_summary.json",
+    "convergence_checkpoints.csv",
+    "execution-receipt.json",
+    "execution-attestation.json",
+    "pre-campaign-validation-report.json",
+)
+
+CAMPAIGN_ANALYSIS_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
+    POLICY_ARTIFACT_FILENAMES
+    + PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES
+    + (
+        "production_monetary_estimates.csv",
+        "production_monetary_metadata.json",
+    )
+    + CAMPAIGN_UNCERTAINTY_ARTIFACT_FILENAMES
 )
 
 STANDALONE_SENSITIVITY_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
@@ -680,6 +737,78 @@ PROSPECTIVE_ANALYSIS_SCHEMA_SHA256: Final[str] = (
 )
 
 
+def campaign_analysis_schema_descriptor() -> dict[str, object]:
+    """Return the additive pre-production campaign output contract.
+
+    The profile extends the existing policy, prospective, and monetary
+    profiles without relabelling any of them.  Presence of these files does
+    not imply that their scientific or provenance gates passed.
+    """
+
+    return {
+        "output_profile": CAMPAIGN_ANALYSIS_OUTPUT_PROFILE,
+        "output_profile_schema_version": CAMPAIGN_ANALYSIS_SCHEMA_VERSION,
+        "artifact_files": list(CAMPAIGN_ANALYSIS_ARTIFACT_FILENAMES),
+        "component_profiles": {
+            "root_policy": {
+                "output_schema_version": OUTPUT_SCHEMA_VERSION,
+                "artifact_files": list(POLICY_ARTIFACT_FILENAMES),
+            },
+            "prospective_analysis": {
+                "output_profile_schema_sha256": (
+                    PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
+                ),
+                "artifact_files": list(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES),
+            },
+            "production_monetary": {
+                "schema_version": "1.0",
+                "artifact_files": [
+                    "production_monetary_estimates.csv",
+                    "production_monetary_metadata.json",
+                ],
+                "conversion_before_population_aggregation_required": True,
+                "raw_cross_currency_pooling_allowed": False,
+            },
+            "joint_uncertainty": {
+                "schema_version": "1.0",
+                "artifact_files": list(
+                    CAMPAIGN_UNCERTAINTY_ARTIFACT_FILENAMES
+                ),
+                "table_columns": {
+                    "uncertainty_realizations.csv": list(
+                        UNCERTAINTY_REALIZATION_COLUMNS
+                    ),
+                    "convergence_checkpoints.csv": list(
+                        CONVERGENCE_CHECKPOINT_COLUMNS
+                    ),
+                },
+                "missing_component_representation": "UNAVAILABLE_NOT_ZERO",
+                "oat_role": "DIAGNOSTIC_ONLY",
+            },
+        },
+        "manifest_must_reference_execution_receipt": True,
+        "pre_and_post_execution_attestation_required": True,
+        "campaign_ready_is_derived_from_all_gates": True,
+        "campaign_ready": False,
+    }
+
+
+def _campaign_analysis_schema_digest() -> str:
+    encoded = json.dumps(
+        campaign_analysis_schema_descriptor(),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+CAMPAIGN_ANALYSIS_SCHEMA_SHA256: Final[str] = (
+    _campaign_analysis_schema_digest()
+)
+
+
 def stamp_target_population_estimand_schema(
     metadata: Mapping[str, object],
 ) -> dict[str, object]:
@@ -772,6 +901,12 @@ def stamp_target_population_estimand_schema(
 
 __all__ = [
     "ARTIFACT_FILENAMES",
+    "CAMPAIGN_ANALYSIS_ARTIFACT_FILENAMES",
+    "CAMPAIGN_ANALYSIS_OUTPUT_PROFILE",
+    "CAMPAIGN_ANALYSIS_SCHEMA_SHA256",
+    "CAMPAIGN_ANALYSIS_SCHEMA_VERSION",
+    "CAMPAIGN_UNCERTAINTY_ARTIFACT_FILENAMES",
+    "CONVERGENCE_CHECKPOINT_COLUMNS",
     "EPGC_FINANCING_COLUMNS",
     "LEGACY_OUTPUT_SCHEMA_VERSION",
     "MANIFEST_SCHEMA_SHA256",
@@ -804,6 +939,8 @@ __all__ = [
     "TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION",
     "TARGET_POPULATION_OUTPUT_PROFILE",
     "TABLE_COLUMNS",
+    "UNCERTAINTY_REALIZATION_COLUMNS",
+    "campaign_analysis_schema_descriptor",
     "manifest_schema_descriptor",
     "prospective_analysis_schema_descriptor",
     "standalone_sensitivity_schema_descriptor",

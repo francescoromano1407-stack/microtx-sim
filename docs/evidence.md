@@ -206,9 +206,12 @@ causal design, batch, model inputs, harm weights, population adapter, metric
 registry, output profile, and fixed seeds before treatment, then binds selected
 weights, balance, projection, metric contract, and exact results after the run.
 The standalone writer still re-attests only the supplied pairs. Analysis-plan
-schema v1 and run-binding schema v2 are unregistered and campaign-ineligible. A
-money-valued estimand additionally requires an explicit opt-in prospective money
-execution with a complete dated currency/price-period basis; omission fails
+schemas v1 and v2, the schema-v3 successor, and run-binding schema v2 remain
+unregistered and campaign-ineligible. The successor adds content-addressed
+uncertainty, convergence, flow, and attestation declarations without promoting
+their scientific readiness. A money-valued estimand additionally requires an
+explicit opt-in prospective money execution with a complete dated
+currency/price-period basis; omission fails
 before treatment rather than silently interpreting simulation cents as
 currency.
 
@@ -347,11 +350,15 @@ subgates false, and population-design schema v1 remains campaign-ineligible.
 `public_population_comparability` and `campaign_ready` remain false.
 
 Passing this software gate will be necessary but not sufficient. The policy
-prototype already supplies repeated-seed Monte Carlo intervals, OAT sensitivity,
-and a versioned run manifest, but those are structural diagnostics. A scientific
-campaign still requires frozen inputs, independent extraction review,
-calibrated and held-out validation targets, prespecified estimands, joint
-uncertainty, power analysis, and governance for any empirical data.
+prototype supplies repeated-seed Monte Carlo intervals and OAT sensitivity; the
+campaign framework additionally supplies deterministic joint propagation,
+variance decomposition, blockwise convergence, and execution attestation. The
+current joint inputs remain scientifically insufficient because parameter
+ranges are illustrative and population and monetary-rate uncertainty designs
+are unavailable. A scientific campaign still requires frozen inputs,
+independent extraction review, calibrated and held-out validation targets,
+admissible uncertainty designs, power analysis, and governance for any
+empirical data.
 No full campaign has been run or authorised by this infrastructure milestone.
 
 ## Updating evidence

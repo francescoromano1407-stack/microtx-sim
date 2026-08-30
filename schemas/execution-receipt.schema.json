@@ -1,0 +1,950 @@
+{
+  "$id": "https://microtx-sim.invalid/schemas/execution-receipt-1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "const": "https://microtx-sim.invalid/schemas/execution-receipt-1.0.json"
+    },
+    "execution_gate": {
+      "additionalProperties": false,
+      "properties": {
+        "blockers": {
+          "$ref": "#/$defs/blockers"
+        },
+        "campaign_execution_admissible": {
+          "const": false
+        }
+      },
+      "required": [
+        "campaign_execution_admissible",
+        "blockers"
+      ],
+      "type": "object"
+    },
+    "execution_receipt_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "identity_payload": {
+      "additionalProperties": false,
+      "properties": {
+        "campaign": {
+          "additionalProperties": false,
+          "properties": {
+            "configuration_artifact_id": {
+              "const": "campaign_configuration"
+            },
+            "plan_id": {
+              "$ref": "#/$defs/identifier"
+            },
+            "plan_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "prospective_plan_artifact_id": {
+              "const": "prospective_analysis_plan"
+            }
+          },
+          "required": [
+            "configuration_artifact_id",
+            "prospective_plan_artifact_id",
+            "plan_id",
+            "plan_sha256"
+          ],
+          "type": "object"
+        },
+        "dependency_environment": {
+          "additionalProperties": false,
+          "properties": {
+            "algorithm": {
+              "const": "microtx_sim.installed_python_distributions.v1"
+            },
+            "dependency_set_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "package_count": {
+              "$ref": "#/$defs/nonnegativeInteger"
+            },
+            "package_manager_runtime": {
+              "additionalProperties": false,
+              "properties": {
+                "pip_version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "setuptools_version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "uv_distribution_version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "uv_cli": {
+                  "$ref": "#/$defs/externalCommandIdentity"
+                }
+              },
+              "required": [
+                "pip_version",
+                "setuptools_version",
+                "uv_distribution_version",
+                "uv_cli"
+              ],
+              "type": "object"
+            },
+            "packages": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "$ref": "#/$defs/nonemptyString"
+                  },
+                  "normalized_name": {
+                    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "type": "string"
+                  },
+                  "version": {
+                    "$ref": "#/$defs/nonemptyString"
+                  }
+                },
+                "required": [
+                  "name",
+                  "normalized_name",
+                  "version"
+                ],
+                "type": "object"
+              },
+              "type": "array",
+              "uniqueItems": true
+            }
+          },
+          "required": [
+            "algorithm",
+            "package_count",
+            "packages",
+            "dependency_set_sha256",
+            "package_manager_runtime"
+          ],
+          "type": "object"
+        },
+        "encoding_contract": {
+          "additionalProperties": false,
+          "properties": {
+            "canonical_identity_encoding": {
+              "const": "UTF-8"
+            },
+            "canonical_identity_serialization": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "command_version_output_encoding": {
+              "const": "UTF-8 with terminal CR/LF removed"
+            },
+            "file_hash_encoding": {
+              "const": "raw bytes without newline transformation"
+            },
+            "path_encoding": {
+              "const": "UTF-8 with POSIX '/' separators"
+            }
+          },
+          "required": [
+            "canonical_identity_encoding",
+            "canonical_identity_serialization",
+            "path_encoding",
+            "file_hash_encoding",
+            "command_version_output_encoding"
+          ],
+          "type": "object"
+        },
+        "expected_output_artifacts": {
+          "items": {
+            "$ref": "#/$defs/relativePath"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "input_artifacts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/fileIdentity"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/identifier"
+          },
+          "properties": {
+            "campaign_configuration": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "monetary_conversion_table": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "monetary_source_artifact": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "monetary_source_bundle": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "population_design": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "population_evidence": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "population_runtime_mapping": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "population_source_artifact": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "population_source_registry": {
+              "$ref": "#/$defs/fileIdentity"
+            },
+            "prospective_analysis_plan": {
+              "$ref": "#/$defs/fileIdentity"
+            }
+          },
+          "required": [
+            "campaign_configuration",
+            "prospective_analysis_plan",
+            "population_source_registry",
+            "population_evidence",
+            "population_source_artifact",
+            "population_design",
+            "population_runtime_mapping",
+            "monetary_source_bundle",
+            "monetary_source_artifact",
+            "monetary_conversion_table"
+          ],
+          "type": "object"
+        },
+        "input_identities": {
+          "additionalProperties": {
+            "$ref": "#/$defs/semanticIdentity"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/identifier"
+          },
+          "properties": {
+            "metric_contract_registry": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "manifest_schema": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "monetary_conversion_basis": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "monetary_rate_evidence": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "output_schema": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "population_adapter": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "population_assignment": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "population_balance": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "population_execution": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "population_lineage": {
+              "$ref": "#/$defs/semanticIdentity"
+            },
+            "prospective_plan_semantic": {
+              "$ref": "#/$defs/semanticIdentity"
+            }
+          },
+          "required": [
+            "prospective_plan_semantic",
+            "population_adapter",
+            "population_execution",
+            "population_assignment",
+            "population_balance",
+            "population_lineage",
+            "monetary_conversion_basis",
+            "monetary_rate_evidence",
+            "metric_contract_registry",
+            "output_schema",
+            "manifest_schema"
+          ],
+          "type": "object"
+        },
+        "ledger": {
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "configuration": {
+              "type": "object"
+            },
+            "configuration_sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          },
+          "required": [
+            "backend",
+            "configuration",
+            "configuration_sha256"
+          ],
+          "type": "object"
+        },
+        "model_version": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "operating_system": {
+          "additionalProperties": false,
+          "properties": {
+            "architecture": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "machine": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "platform": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "processor": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "release": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "system": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "version": {
+              "$ref": "#/$defs/nonemptyString"
+            }
+          },
+          "required": [
+            "system",
+            "release",
+            "version",
+            "platform",
+            "machine",
+            "architecture",
+            "processor"
+          ],
+          "type": "object"
+        },
+        "project_files": {
+          "additionalProperties": false,
+          "properties": {
+            "pyproject.toml": {
+              "$ref": "#/$defs/projectFileIdentity"
+            },
+            "uv.lock": {
+              "$ref": "#/$defs/projectFileIdentity"
+            }
+          },
+          "required": [
+            "pyproject.toml",
+            "uv.lock"
+          ],
+          "type": "object"
+        },
+        "python_runtime": {
+          "additionalProperties": false,
+          "properties": {
+            "base_prefix": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "byte_order": {
+              "enum": [
+                "big",
+                "little"
+              ]
+            },
+            "cache_tag": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "compiler": {
+              "type": "string"
+            },
+            "executable_byte_length": {
+              "$ref": "#/$defs/nonnegativeInteger"
+            },
+            "executable_path": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "executable_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "filesystem_encoding": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "full_version": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "implementation": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "prefix": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "version": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "version_info": {
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "items": false,
+              "maxItems": 5,
+              "minItems": 5,
+              "type": "array"
+            },
+            "virtual_environment": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "implementation",
+            "version",
+            "version_info",
+            "full_version",
+            "compiler",
+            "cache_tag",
+            "byte_order",
+            "filesystem_encoding",
+            "executable_path",
+            "executable_byte_length",
+            "executable_sha256",
+            "prefix",
+            "base_prefix",
+            "virtual_environment"
+          ],
+          "type": "object"
+        },
+        "receipt_contract": {
+          "additionalProperties": false,
+          "properties": {
+            "identity_algorithm": {
+              "const": "microtx_sim.execution_receipt.canonical_json_utf8.v1"
+            },
+            "schema_id": {
+              "const": "https://microtx-sim.invalid/schemas/execution-receipt-1.0.json"
+            },
+            "schema_version": {
+              "const": "1.0"
+            }
+          },
+          "required": [
+            "schema_id",
+            "schema_version",
+            "identity_algorithm"
+          ],
+          "type": "object"
+        },
+        "repository": {
+          "additionalProperties": false,
+          "properties": {
+            "branch": {
+              "$ref": "#/$defs/nonemptyString"
+            },
+            "commit": {
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+              "type": "string"
+            },
+            "git_tree_object": {
+              "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$",
+              "type": "string"
+            },
+            "object_format": {
+              "enum": [
+                "sha1",
+                "sha256"
+              ]
+            },
+            "root": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "status_porcelain_v1": {
+              "const": ""
+            },
+            "working_tree_clean": {
+              "const": true
+            }
+          },
+          "required": [
+            "root",
+            "branch",
+            "commit",
+            "object_format",
+            "git_tree_object",
+            "working_tree_clean",
+            "status_porcelain_v1"
+          ],
+          "type": "object"
+        },
+        "run": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "items": {
+                "$ref": "#/$defs/nonemptyString"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "execution_mode": {
+              "$ref": "#/$defs/nonemptyString"
+            }
+          },
+          "required": [
+            "command",
+            "execution_mode"
+          ],
+          "type": "object"
+        },
+        "source_tree": {
+          "additionalProperties": false,
+          "properties": {
+            "algorithm": {
+              "const": "microtx_sim.git_tracked_worktree.raw_bytes_and_modes.v1"
+            },
+            "source_tree_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "tracked_byte_length": {
+              "$ref": "#/$defs/nonnegativeInteger"
+            },
+            "tracked_file_count": {
+              "$ref": "#/$defs/nonnegativeInteger"
+            }
+          },
+          "required": [
+            "algorithm",
+            "tracked_file_count",
+            "tracked_byte_length",
+            "source_tree_sha256"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "receipt_contract",
+        "encoding_contract",
+        "repository",
+        "source_tree",
+        "python_runtime",
+        "operating_system",
+        "dependency_environment",
+        "project_files",
+        "campaign",
+        "input_artifacts",
+        "input_identities",
+        "expected_output_artifacts",
+        "ledger",
+        "run",
+        "model_version"
+      ],
+      "type": "object"
+    },
+    "identity_verification": {
+      "additionalProperties": false,
+      "properties": {
+        "all_referenced_file_hashes_match": {
+          "const": true
+        },
+        "identity_verification_implies_scientific_readiness": {
+          "const": false
+        },
+        "status": {
+          "const": "VERIFIED"
+        }
+      },
+      "required": [
+        "status",
+        "all_referenced_file_hashes_match",
+        "identity_verification_implies_scientific_readiness"
+      ],
+      "type": "object"
+    },
+    "receipt_schema_version": {
+      "const": "1.0"
+    },
+    "scientific_readiness": {
+      "additionalProperties": false,
+      "properties": {
+        "blockers": {
+          "$ref": "#/$defs/blockers"
+        },
+        "campaign_ready": {
+          "const": false
+        }
+      },
+      "required": [
+        "campaign_ready",
+        "blockers"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "$schema",
+    "receipt_schema_version",
+    "identity_payload",
+    "execution_receipt_sha256",
+    "identity_verification",
+    "execution_gate",
+    "scientific_readiness"
+  ],
+  "title": "microtx-sim technical execution receipt",
+  "type": "object",
+  "$defs": {
+    "absolutePath": {
+      "minLength": 1,
+      "pattern": "^(?:/|[A-Za-z]:/)",
+      "not": {
+        "pattern": "\\\\"
+      },
+      "type": "string"
+    },
+    "blockers": {
+      "items": {
+        "$ref": "#/$defs/nonemptyString"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "executionVerification": {
+      "additionalProperties": false,
+      "properties": {
+        "blockers": {
+          "$ref": "#/$defs/blockers"
+        },
+        "campaign_execution_admissible": {
+          "const": false
+        },
+        "expected_receipt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "identity_payload_match": {
+          "const": true
+        },
+        "observed_receipt_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "phase": {
+          "enum": [
+            "PRE_EXECUTION",
+            "POST_EXECUTION"
+          ]
+        },
+        "schema_version": {
+          "const": "1.0"
+        },
+        "status": {
+          "const": "VERIFIED"
+        }
+      },
+      "required": [
+        "schema_version",
+        "phase",
+        "status",
+        "expected_receipt_sha256",
+        "observed_receipt_sha256",
+        "identity_payload_match",
+        "campaign_execution_admissible",
+        "blockers"
+      ],
+      "type": "object"
+    },
+    "externalCommandIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "executable_byte_length": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "executable_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "executable_sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "AVAILABLE",
+            "UNAVAILABLE"
+          ]
+        },
+        "version_output": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "executable_byte_length": {
+              "$ref": "#/$defs/nonnegativeInteger"
+            },
+            "executable_path": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "executable_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "status": {
+              "const": "AVAILABLE"
+            },
+            "version_output": {
+              "$ref": "#/$defs/nonemptyString"
+            }
+          }
+        },
+        {
+          "properties": {
+            "executable_byte_length": {
+              "type": "null"
+            },
+            "executable_path": {
+              "type": "null"
+            },
+            "executable_sha256": {
+              "type": "null"
+            },
+            "status": {
+              "const": "UNAVAILABLE"
+            },
+            "version_output": {
+              "type": "null"
+            }
+          }
+        }
+      ],
+      "required": [
+        "command",
+        "status",
+        "executable_path",
+        "executable_byte_length",
+        "executable_sha256",
+        "version_output"
+      ],
+      "type": "object"
+    },
+    "fileIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_length": {
+          "$ref": "#/$defs/nonnegativeInteger"
+        },
+        "hash_scope": {
+          "const": "raw file bytes"
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "path_base": {
+          "const": "repository_root"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "path_base",
+        "byte_length",
+        "sha256",
+        "hash_scope"
+      ],
+      "type": "object"
+    },
+    "identifier": {
+      "maxLength": 192,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "type": "string"
+    },
+    "nonemptyString": {
+      "minLength": 1,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
+      "type": "string"
+    },
+    "nonnegativeInteger": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "projectFileIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "byte_length": {
+          "$ref": "#/$defs/nonnegativeInteger"
+        },
+        "hash_scope": {
+          "const": "raw file bytes"
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "path_base": {
+          "const": "repository_root"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "required": [
+        "path",
+        "path_base",
+        "byte_length",
+        "sha256",
+        "hash_scope"
+      ],
+      "type": "object"
+    },
+    "relativePath": {
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:/)\\S(?:[\\s\\S]*\\S)?$",
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "(^|/)\\.\\.?(/|$)"
+          },
+          {
+            "pattern": "^/"
+          },
+          {
+            "pattern": "\\\\"
+          }
+        ]
+      },
+      "type": "string"
+    },
+    "semanticIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "hash_scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required_for_execution": {
+          "type": "boolean"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/nonemptyString"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "AVAILABLE",
+            "UNAVAILABLE"
+          ]
+        },
+        "unavailable_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "hash_scope": {
+              "const": "declared canonical semantic payload"
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "status": {
+              "const": "AVAILABLE"
+            },
+            "unavailable_reason": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "hash_scope": {
+              "type": "null"
+            },
+            "sha256": {
+              "type": "null"
+            },
+            "status": {
+              "const": "UNAVAILABLE"
+            },
+            "unavailable_reason": {
+              "$ref": "#/$defs/nonemptyString"
+            }
+          }
+        }
+      ],
+      "required": [
+        "schema_version",
+        "status",
+        "sha256",
+        "hash_scope",
+        "unavailable_reason",
+        "required_for_execution"
+      ],
+      "type": "object"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    }
+  }
+}

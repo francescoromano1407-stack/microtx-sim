@@ -1,8 +1,9 @@
 # Documentation index
 
-This documentation describes the stable, tested synthetic prototype as it
-exists in the repository. It separates implemented software behaviour from
-calibration plans and should be read before interpreting any simulation output.
+This documentation describes the stable, tested synthetic prototype and its
+fail-closed pre-campaign infrastructure as they exist in the repository. It
+separates implemented software behaviour from calibration plans and readiness
+claims and should be read before interpreting any simulation output.
 
 ## Start here
 
@@ -15,6 +16,7 @@ calibration plans and should be read before interpreting any simulation output.
 | [Simulation lifecycle](simulation_lifecycle.md) | Exact ordering of one tick, events, phase coordination, and paired runs. |
 | [Causal design](causal_design.md) | Estimand, paired worlds, common random numbers, interventions, assumptions, and future campaign design. |
 | [Prospective analysis plan](analysis_plan.md) | Concrete opt-in plan, pre-run validation, exact run binding, plan-level Monte Carlo aggregate, and fail-closed campaign scope. |
+| [Full campaign contract](campaign_contract.md) | Successor-plan binding, uncertainty and convergence, execution attestation, layer boundaries, and fail-closed readiness states. |
 
 ## Running and extending the project
 
@@ -41,6 +43,13 @@ prototype. It can reproducibly generate six CSV files, one manifest, one
 Markdown summary, and five SVG charts. `configs/smoke.toml` remains a three-cycle
 structural check. The larger `configs/base.toml` is a future-scale architecture
 scenario and is deliberately blocked by provenance validation.
+
+`configs/policy_campaign.toml` is a separate, complete campaign-shaped
+configuration bound to a schema-v3 successor plan, formal uncertainty and
+convergence contracts, projected population and monetary inputs, a persistent
+ledger, and execution attestation. It remains deliberately blocked and was not
+executed. Its hashes establish identity only, and its unavailable scientific
+inputs cannot be replaced by zero-variance assumptions or readiness labels.
 
 Population evidence/design, an optional exact runtime mapping/adapter, per-seed
 projection and pre-treatment balance lineage, and a separate two-file target-

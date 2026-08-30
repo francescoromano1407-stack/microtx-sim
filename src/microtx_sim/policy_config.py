@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite
 import os
 from pathlib import Path
+import re
 from typing import Mapping
 import tomllib
 
@@ -19,6 +21,11 @@ from .metrics.harm import (
     WelfareHarmWeights,
 )
 from .simulation.policy_orchestrator import ProducerAssumptions
+from .types import LedgerBackend
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_BLOCKED_IDENTITY = re.compile(r"BLOCKED_PENDING_[A-Z0-9_]+\Z")
 
 
 class PolicyConfigurationError(ValueError):
@@ -30,6 +37,20 @@ class PolicyRunPurpose(str, Enum):
 
     DEVELOPMENT = "development"
     CAMPAIGN = "campaign"
+
+
+class PolicySimulationLayer(str, Enum):
+    """The one simulation layer authorized by a policy campaign contract."""
+
+    POLICY_ORCHESTRATOR = "policy_orchestrator"
+
+
+class UncertaintyAvailability(str, Enum):
+    """Whether a declared source has an admissible uncertainty design."""
+
+    QUANTIFIED = "QUANTIFIED"
+    UNQUANTIFIED = "UNQUANTIFIED"
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,18 +77,531 @@ class PolicyOutputConfig:
 
 @dataclass(frozen=True, slots=True)
 class AnalysisPlanSelection:
-    """Non-verifying locator for an optional prospective analysis plan."""
+    """Non-verifying locator and optional expected plan identities."""
 
     plan_path: Path
+    expected_plan_id: str | None = None
+    expected_plan_sha256: str | None = None
+    parent_plan_path: Path | None = None
+    parent_plan_id: str | None = None
+    parent_plan_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.plan_path, Path):
             raise TypeError("analysis plan_path must be a Path")
         if not str(self.plan_path):
             raise ValueError("analysis plan_path cannot be empty")
+        optional = (
+            self.expected_plan_id,
+            self.expected_plan_sha256,
+            self.parent_plan_path,
+            self.parent_plan_id,
+            self.parent_plan_sha256,
+        )
+        if any(value is not None for value in optional) and any(
+            value is None for value in optional
+        ):
+            raise ValueError(
+                "analysis plan expected and parent identities must be supplied "
+                "together"
+            )
+        if self.expected_plan_id is not None:
+            _identity_text_or_placeholder(
+                self.expected_plan_id,
+                name="analysis expected_plan_id",
+            )
+            _identity_sha256_or_placeholder(
+                self.expected_plan_sha256,
+                name="analysis expected_plan_sha256",
+            )
+            if not isinstance(self.parent_plan_path, Path) or not str(
+                self.parent_plan_path
+            ):
+                raise TypeError("analysis parent_plan_path must be a Path")
+            _identity_text_or_placeholder(
+                self.parent_plan_id,
+                name="analysis parent_plan_id",
+            )
+            _identity_sha256_or_placeholder(
+                self.parent_plan_sha256,
+                name="analysis parent_plan_sha256",
+            )
 
     def snapshot(self) -> dict[str, str]:
-        return {"plan_path": str(self.plan_path)}
+        payload = {"plan_path": str(self.plan_path)}
+        if self.expected_plan_id is not None:
+            assert self.expected_plan_sha256 is not None
+            assert self.parent_plan_path is not None
+            assert self.parent_plan_id is not None
+            assert self.parent_plan_sha256 is not None
+            payload.update(
+                {
+                    "expected_plan_id": self.expected_plan_id,
+                    "expected_plan_sha256": self.expected_plan_sha256,
+                    "parent_plan_path": str(self.parent_plan_path),
+                    "parent_plan_id": self.parent_plan_id,
+                    "parent_plan_sha256": self.parent_plan_sha256,
+                }
+            )
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignControlConfig:
+    """Fail-closed authorization boundary for a full policy campaign."""
+
+    allow_synthetic: bool
+    fail_closed: bool
+    simulation_layer: PolicySimulationLayer
+    campaign_ready: bool
+    primary_estimand_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.allow_synthetic) is not bool:
+            raise TypeError("campaign allow_synthetic must be boolean")
+        if self.allow_synthetic:
+            raise ValueError("full campaigns require allow_synthetic = false")
+        if type(self.fail_closed) is not bool or not self.fail_closed:
+            raise ValueError("full campaigns require fail_closed = true")
+        if type(self.simulation_layer) is not PolicySimulationLayer:
+            raise TypeError("campaign simulation_layer is invalid")
+        if type(self.campaign_ready) is not bool:
+            raise TypeError("campaign campaign_ready must be boolean")
+        _nonempty_text(self.primary_estimand_id, name="campaign primary_estimand_id")
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignUncertaintyConfig:
+    """Bindings for fixed-seed and joint uncertainty execution."""
+
+    seed_design: str
+    minimum_retained_seeds: int
+    common_random_numbers: bool
+    identical_pretreatment_cohorts: bool
+    population_weights_within_seed: bool
+    outcome_dependent_seed_exclusion: bool
+    parameter_design_path: Path
+    parameter_design_id: str
+    parameter_design_sha256: str
+    parameter_uncertainty: UncertaintyAvailability
+    monetary_rate_uncertainty: UncertaintyAvailability
+    population_uncertainty: UncertaintyAvailability
+    combined_uncertainty_required: bool
+    oat_role: str
+    variance_decomposition_method: str
+
+    def __post_init__(self) -> None:
+        if self.seed_design != "FIXED_ASCENDING":
+            raise ValueError("campaign seed_design must be FIXED_ASCENDING")
+        _positive_integer(
+            self.minimum_retained_seeds,
+            name="uncertainty minimum_retained_seeds",
+        )
+        if self.minimum_retained_seeds < 100:
+            raise ValueError(
+                "campaign uncertainty requires at least 100 retained seeds"
+            )
+        required_true = (
+            "common_random_numbers",
+            "identical_pretreatment_cohorts",
+            "population_weights_within_seed",
+            "combined_uncertainty_required",
+        )
+        for name in required_true:
+            if type(getattr(self, name)) is not bool or not getattr(self, name):
+                raise ValueError(f"campaign uncertainty requires {name} = true")
+        if type(self.outcome_dependent_seed_exclusion) is not bool:
+            raise TypeError("outcome_dependent_seed_exclusion must be boolean")
+        if self.outcome_dependent_seed_exclusion:
+            raise ValueError("outcome-dependent seed exclusion is prohibited")
+        if not isinstance(self.parameter_design_path, Path) or not str(
+            self.parameter_design_path
+        ):
+            raise TypeError("parameter_design_path must be a Path")
+        _identity_text_or_placeholder(
+            self.parameter_design_id,
+            name="uncertainty parameter_design_id",
+        )
+        _identity_sha256_or_placeholder(
+            self.parameter_design_sha256,
+            name="uncertainty parameter_design_sha256",
+        )
+        for name in (
+            "parameter_uncertainty",
+            "monetary_rate_uncertainty",
+            "population_uncertainty",
+        ):
+            if type(getattr(self, name)) is not UncertaintyAvailability:
+                raise TypeError(f"uncertainty {name} availability is invalid")
+        if self.oat_role != "DIAGNOSTIC_ONLY":
+            raise ValueError("OAT sensitivity must be DIAGNOSTIC_ONLY")
+        if (
+            self.variance_decomposition_method
+            != "ORTHOGONAL_FINITE_FULL_FACTORIAL_ANOVA_SUM_OF_SQUARES_DIVIDED_BY_N_V1"
+        ):
+            raise ValueError("unsupported variance decomposition method")
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignConvergenceConfig:
+    """Deterministic blockwise convergence and invalid-run thresholds."""
+
+    block_size: int
+    minimum_retained_seeds: int
+    maximum_mcse: float
+    maximum_interval_width: float
+    maximum_absolute_change: float
+    maximum_relative_change: float
+    maximum_invalid_rate: float
+    consecutive_passing_checkpoints: int
+    sensitivity_instability_allowed: bool
+    required_status: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "block_size",
+            "minimum_retained_seeds",
+            "consecutive_passing_checkpoints",
+        ):
+            _positive_integer(getattr(self, name), name=f"convergence {name}")
+        if self.minimum_retained_seeds < 100:
+            raise ValueError(
+                "campaign convergence requires at least 100 retained seeds"
+            )
+        for name in (
+            "maximum_mcse",
+            "maximum_interval_width",
+            "maximum_absolute_change",
+            "maximum_relative_change",
+        ):
+            _positive_finite(getattr(self, name), name=f"convergence {name}")
+        _finite_number(
+            self.maximum_invalid_rate,
+            name="convergence maximum_invalid_rate",
+        )
+        if not 0.0 <= self.maximum_invalid_rate < 1.0:
+            raise ValueError("maximum_invalid_rate must be in [0, 1)")
+        if type(self.sensitivity_instability_allowed) is not bool:
+            raise TypeError("sensitivity_instability_allowed must be boolean")
+        if self.sensitivity_instability_allowed:
+            raise ValueError("campaign convergence cannot allow instability")
+        if self.required_status != "CONVERGED":
+            raise ValueError("campaign convergence required_status must be CONVERGED")
+
+
+@dataclass(frozen=True, slots=True)
+class PopulationContractConfig:
+    """Exact projected-population identities and application policies."""
+
+    design_id: str
+    design_schema_version: str
+    design_sha256: str
+    runtime_mapping_id: str
+    runtime_mapping_schema_version: str
+    runtime_mapping_sha256: str
+    adapter_id: str
+    adapter_schema_version: str
+    adapter_sha256: str
+    execution_input_schema_version: str
+    execution_input_sha256: str
+    assignment_schema_version: str
+    balance_schema_version: str
+    lineage_schema_version: str
+    require_per_seed_execution_identity: bool
+    require_per_seed_assignment_identity: bool
+    require_per_seed_balance_identity: bool
+    require_per_seed_lineage_identity: bool
+    apportionment_method: str
+    weight_application: str
+    identical_weights_across_scenarios: bool
+    empirical_validation_status: str
+    uncertainty_status: UncertaintyAvailability
+    uncertainty_design_id: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "design_id",
+            "runtime_mapping_id",
+            "adapter_id",
+            "uncertainty_design_id",
+        ):
+            _identity_text_or_placeholder(
+                getattr(self, name),
+                name=f"population contract {name}",
+            )
+        for name in (
+            "design_schema_version",
+            "runtime_mapping_schema_version",
+            "adapter_schema_version",
+            "execution_input_schema_version",
+            "assignment_schema_version",
+            "balance_schema_version",
+            "lineage_schema_version",
+        ):
+            _nonempty_text(getattr(self, name), name=f"population contract {name}")
+        for name in (
+            "design_sha256",
+            "runtime_mapping_sha256",
+            "adapter_sha256",
+            "execution_input_sha256",
+        ):
+            _identity_sha256_or_placeholder(
+                getattr(self, name),
+                name=f"population contract {name}",
+            )
+        for name in (
+            "require_per_seed_execution_identity",
+            "require_per_seed_assignment_identity",
+            "require_per_seed_balance_identity",
+            "require_per_seed_lineage_identity",
+        ):
+            if type(getattr(self, name)) is not bool or not getattr(self, name):
+                raise ValueError(f"population contract requires {name} = true")
+        if self.apportionment_method != "exact_rational_hamilton/1":
+            raise ValueError("unsupported population apportionment_method")
+        if self.weight_application != "WITHIN_SEED_BEFORE_CROSS_SEED_AGGREGATION":
+            raise ValueError("population weights must be applied within each seed")
+        if type(self.identical_weights_across_scenarios) is not bool or not (
+            self.identical_weights_across_scenarios
+        ):
+            raise ValueError(
+                "population weights must be identical across paired scenarios"
+            )
+        if self.empirical_validation_status not in {"VALIDATED", "UNAVAILABLE"}:
+            raise ValueError("invalid empirical population validation status")
+        if type(self.uncertainty_status) is not UncertaintyAvailability:
+            raise TypeError("population uncertainty_status is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class MonetaryContractConfig:
+    """Production monetary basis, exact inputs, and uncertainty limitation."""
+
+    profile_path: Path
+    source_bundle_path: Path
+    source_artifact_path: Path
+    conversion_table_path: Path
+    bundle_id: str
+    source_bundle_sha256: str
+    source_artifact_sha256: str
+    conversion_table_sha256: str
+    conversion_basis_id: str
+    conversion_basis_sha256: str
+    rate_evidence_sha256: str
+    target_currency: str
+    target_minor_unit_name: str
+    quote_convention: str
+    scale_convention: str
+    rate_period_start: str
+    rate_period_end: str
+    target_price_period_start: str
+    target_price_period_end: str
+    missing_date_policy: str
+    identity_missing_date_policy: str
+    rounding_method: str
+    rounding_scope: str
+    point_rate_status: str
+    rate_uncertainty_status: UncertaintyAvailability
+    source_bundle_signature_status: str
+    simulation_bridge_status: str
+    observed_real_world_spending: bool
+    raw_cross_currency_pooling: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "profile_path",
+            "source_bundle_path",
+            "source_artifact_path",
+            "conversion_table_path",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, Path) or not str(value):
+                raise TypeError(f"monetary {name} must be a Path")
+        for name in ("bundle_id", "conversion_basis_id"):
+            _identity_text_or_placeholder(
+                getattr(self, name), name=f"monetary {name}"
+            )
+        for name in (
+            "source_bundle_sha256",
+            "source_artifact_sha256",
+            "conversion_table_sha256",
+            "conversion_basis_sha256",
+            "rate_evidence_sha256",
+        ):
+            _identity_sha256_or_placeholder(
+                getattr(self, name), name=f"monetary {name}"
+            )
+        if self.target_currency != "EUR":
+            raise ValueError("current monetary production contract targets EUR")
+        if self.target_minor_unit_name != "euro cent":
+            raise ValueError(
+                "current monetary production contract uses the euro cent"
+            )
+        for name in (
+            "quote_convention",
+            "scale_convention",
+            "rate_period_start",
+            "rate_period_end",
+            "target_price_period_start",
+            "target_price_period_end",
+            "missing_date_policy",
+            "identity_missing_date_policy",
+            "rounding_method",
+            "rounding_scope",
+        ):
+            _nonempty_text(getattr(self, name), name=f"monetary {name}")
+        if self.point_rate_status != "OFFICIAL_POINT_OBSERVATION":
+            raise ValueError("monetary point_rate_status is invalid")
+        if type(self.rate_uncertainty_status) is not UncertaintyAvailability:
+            raise TypeError("monetary rate_uncertainty_status is invalid")
+        if self.source_bundle_signature_status not in {"VERIFIED", "MISSING"}:
+            raise ValueError("monetary source bundle signature status is invalid")
+        if self.simulation_bridge_status != "ILLUSTRATIVE":
+            raise ValueError(
+                "the current simulation-cent monetary bridge is ILLUSTRATIVE"
+            )
+        if type(self.observed_real_world_spending) is not bool:
+            raise TypeError("observed_real_world_spending must be boolean")
+        if self.observed_real_world_spending:
+            raise ValueError("model monetary values are not observed spending")
+        if self.raw_cross_currency_pooling != "REJECT":
+            raise ValueError("raw cross-currency pooling must be rejected")
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignOutputContractConfig:
+    """Metric-registry and complete production-shaped output selection."""
+
+    metric_registry_schema_version: str
+    metric_registry_sha256: str
+    output_schema_version: str
+    output_schema_sha256: str
+    output_profile_id: str
+    output_profile_schema_version: str
+    output_profile_sha256: str
+    expected_artifacts: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in (
+            "metric_registry_schema_version",
+            "output_schema_version",
+            "output_profile_schema_version",
+        ):
+            _nonempty_text(getattr(self, name), name=f"output contract {name}")
+        for name in (
+            "metric_registry_sha256",
+            "output_schema_sha256",
+            "output_profile_sha256",
+        ):
+            _identity_sha256_or_placeholder(
+                getattr(self, name), name=f"output contract {name}"
+            )
+        if self.output_profile_id != "campaign_joint_uncertainty":
+            raise ValueError(
+                "full campaign output_profile_id must be campaign_joint_uncertainty"
+            )
+        if (
+            type(self.expected_artifacts) is not tuple
+            or not self.expected_artifacts
+            or any(
+                type(value) is not str or not value.strip()
+                for value in self.expected_artifacts
+            )
+        ):
+            raise ValueError("expected_artifacts must be a non-empty tuple")
+        if len(set(self.expected_artifacts)) != len(self.expected_artifacts):
+            raise ValueError("expected_artifacts cannot contain duplicates")
+        required = {
+            "manifest.json",
+            "execution-receipt.json",
+            "execution-attestation.json",
+            "uncertainty_realizations.csv",
+            "uncertainty_summary.json",
+            "convergence_checkpoints.csv",
+            "pre-campaign-validation-report.json",
+        }
+        missing = sorted(required - set(self.expected_artifacts))
+        if missing:
+            raise ValueError(
+                f"full campaign expected_artifacts missing required files: {missing}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignLedgerConfig:
+    """Persistent, caller-owned policy campaign ledger."""
+
+    backend: LedgerBackend
+    path: Path
+    persistent: bool
+    temporary: bool
+
+    def __post_init__(self) -> None:
+        if self.backend is not LedgerBackend.SQLITE:
+            raise ValueError("full campaigns require a SQLite ledger")
+        if not isinstance(self.path, Path) or not str(self.path):
+            raise TypeError("ledger path must be a Path")
+        if self.path.suffix.lower() not in {".sqlite", ".sqlite3", ".db"}:
+            raise ValueError("campaign ledger path must identify a SQLite file")
+        if type(self.persistent) is not bool or not self.persistent:
+            raise ValueError("full campaign ledger must be persistent")
+        if type(self.temporary) is not bool or self.temporary:
+            raise ValueError("full campaign ledger cannot be temporary")
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionReceiptPolicyConfig:
+    """Pre/post technical identity verification required around execution."""
+
+    schema_path: Path
+    schema_version: str
+    identity_algorithm: str
+    receipt_path: Path
+    attestation_path: Path
+    require_clean_working_tree: bool
+    verify_active_commit: bool
+    verify_source_tree: bool
+    verify_interpreter: bool
+    verify_dependencies: bool
+    reject_environment_drift: bool
+    manifest_reference_required: bool
+    run_command: tuple[str, ...]
+    execution_mode: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "schema_path",
+            "receipt_path",
+            "attestation_path",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, Path) or not str(value):
+                raise TypeError(f"execution receipt {name} must be a Path")
+        _nonempty_text(self.schema_version, name="execution receipt schema_version")
+        if (
+            self.identity_algorithm
+            != "microtx_sim.execution_receipt.canonical_json_utf8.v1"
+        ):
+            raise ValueError("unsupported execution receipt identity algorithm")
+        for name in (
+            "require_clean_working_tree",
+            "verify_active_commit",
+            "verify_source_tree",
+            "verify_interpreter",
+            "verify_dependencies",
+            "reject_environment_drift",
+            "manifest_reference_required",
+        ):
+            if type(getattr(self, name)) is not bool or not getattr(self, name):
+                raise ValueError(f"execution receipt requires {name} = true")
+        if (
+            type(self.run_command) is not tuple
+            or not self.run_command
+            or any(type(value) is not str or not value for value in self.run_command)
+        ):
+            raise ValueError("execution receipt run_command must be non-empty")
+        if self.execution_mode != "FULL_CAMPAIGN":
+            raise ValueError("execution receipt execution_mode must be FULL_CAMPAIGN")
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,12 +619,23 @@ class PolicyPrototypeConfig:
     population: PopulationProjectionConfig | None = None
     analysis_plan: AnalysisPlanSelection | None = None
     run_purpose: PolicyRunPurpose = PolicyRunPurpose.DEVELOPMENT
+    full_campaign_config: bool = False
+    campaign: CampaignControlConfig | None = None
+    uncertainty: CampaignUncertaintyConfig | None = None
+    convergence: CampaignConvergenceConfig | None = None
+    population_contract: PopulationContractConfig | None = None
+    monetary_contract: MonetaryContractConfig | None = None
+    output_contract: CampaignOutputContractConfig | None = None
+    ledger: CampaignLedgerConfig | None = None
+    execution_receipt: ExecutionReceiptPolicyConfig | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("configuration name cannot be empty")
         if type(self.run_purpose) is not PolicyRunPurpose:
             raise TypeError("run_purpose must be PolicyRunPurpose")
+        if type(self.full_campaign_config) is not bool:
+            raise TypeError("full_campaign_config must be boolean")
         allowed_provenance = {
             "synthetic",
             "illustrative",
@@ -152,6 +697,111 @@ class PolicyPrototypeConfig:
                 "analysis_plan requires output.include_player_rows = true "
                 "because schema-v1 planned metrics bind to player_outcomes.csv"
             )
+        campaign_sections = {
+            "campaign": (self.campaign, CampaignControlConfig),
+            "uncertainty": (self.uncertainty, CampaignUncertaintyConfig),
+            "convergence": (self.convergence, CampaignConvergenceConfig),
+            "population_contract": (
+                self.population_contract,
+                PopulationContractConfig,
+            ),
+            "monetary_contract": (
+                self.monetary_contract,
+                MonetaryContractConfig,
+            ),
+            "output_contract": (
+                self.output_contract,
+                CampaignOutputContractConfig,
+            ),
+            "ledger": (self.ledger, CampaignLedgerConfig),
+            "execution_receipt": (
+                self.execution_receipt,
+                ExecutionReceiptPolicyConfig,
+            ),
+        }
+        for name, (value, expected_type) in campaign_sections.items():
+            if value is not None and type(value) is not expected_type:
+                raise TypeError(f"{name} must be {expected_type.__name__} or None")
+        if self.full_campaign_config:
+            if self.run_purpose is not PolicyRunPurpose.CAMPAIGN:
+                raise ValueError(
+                    "meta.full_campaign_config = true requires "
+                    "run_purpose = 'campaign'"
+                )
+            missing = sorted(
+                name for name, (value, _) in campaign_sections.items() if value is None
+            )
+            if missing:
+                raise ValueError(
+                    "full campaign configuration is missing required sections: "
+                    + ", ".join(missing)
+                )
+            assert self.campaign is not None
+            assert self.uncertainty is not None
+            assert self.convergence is not None
+            assert self.population_contract is not None
+            assert self.monetary_contract is not None
+            assert self.analysis_plan is not None
+            if len(self.batch.seeds) < self.uncertainty.minimum_retained_seeds:
+                raise ValueError(
+                    "full campaign fixed seed set is smaller than the declared "
+                    "minimum_retained_seeds"
+                )
+            if (
+                self.convergence.minimum_retained_seeds
+                != self.uncertainty.minimum_retained_seeds
+            ):
+                raise ValueError(
+                    "uncertainty and convergence minimum_retained_seeds must match"
+                )
+            if self.population is None:
+                raise ValueError("full campaign requires projected population")
+            if self.population.adapter_id != self.population_contract.adapter_id:
+                raise ValueError(
+                    "population adapter_id conflicts with population_contract"
+                )
+            if self.analysis_plan.expected_plan_id is None:
+                raise ValueError(
+                    "full campaign analysis_plan requires expected and parent "
+                    "identities"
+                )
+            required_unavailable = any(
+                value is not UncertaintyAvailability.QUANTIFIED
+                for value in (
+                    self.uncertainty.parameter_uncertainty,
+                    self.uncertainty.monetary_rate_uncertainty,
+                    self.uncertainty.population_uncertainty,
+                )
+            )
+            has_placeholder = _contains_blocked_placeholder(
+                self.analysis_plan.snapshot()
+            ) or _contains_blocked_placeholder(
+                {
+                    "parameter_design_sha256": (
+                        self.uncertainty.parameter_design_sha256
+                    ),
+                    "population": self.population_contract,
+                    "monetary": self.monetary_contract,
+                    "output": self.output_contract,
+                }
+            )
+            authenticated_rate_source = (
+                self.monetary_contract.source_bundle_signature_status == "VERIFIED"
+            )
+            empirically_validated_population = (
+                self.population_contract.empirical_validation_status == "VALIDATED"
+            )
+            if (
+                required_unavailable
+                or has_placeholder
+                or not authenticated_rate_source
+                or not empirically_validated_population
+            ) and self.campaign.campaign_ready:
+                raise ValueError(
+                    "campaign_ready must remain false while required identities, "
+                    "uncertainty, authentication, or population validation are "
+                    "unavailable"
+                )
 
 
 def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
@@ -171,6 +821,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
         producer = _section(raw, "producer")
         epgc = _section(raw, "epgc")
         output = _section(raw, "output")
+        full_campaign_config = _optional_boolean(
+            meta.get("full_campaign_config", False),
+            name="meta.full_campaign_config",
+        )
         population = _population_projection_config(
             raw.get("population"),
             config_path=config_path,
@@ -179,13 +833,37 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             raw.get("analysis_plan"),
             config_path=config_path,
         )
+        campaign = _campaign_control(raw.get("campaign"))
+        uncertainty = _campaign_uncertainty(
+            raw.get("uncertainty"),
+            config_path=config_path,
+        )
+        convergence = _campaign_convergence(raw.get("convergence"))
+        population_contract = _population_contract(
+            raw.get("population_contract")
+        )
+        monetary_contract = _monetary_contract(
+            raw.get("monetary_contract"),
+            config_path=config_path,
+        )
+        output_contract = _campaign_output_contract(raw.get("output_contract"))
+        ledger = _campaign_ledger(
+            raw.get("ledger"),
+            config_path=config_path,
+        )
+        execution_receipt = _execution_receipt_policy(
+            raw.get("execution_receipt"),
+            config_path=config_path,
+        )
         _required_and_optional_keys(
             meta,
             {"name", "provenance_status", "notes"},
-            {"run_purpose"},
+            {"run_purpose", "full_campaign_config"},
             "meta",
         )
         _exact_keys(run, {"seeds", "days", "player_count"}, "policy_run")
+        if full_campaign_config:
+            _validate_full_campaign_seeds(run["seeds"])
         _exact_keys(
             decision,
             {
@@ -301,6 +979,15 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             population=population,
             analysis_plan=analysis_plan,
             run_purpose=_policy_run_purpose(meta.get("run_purpose")),
+            full_campaign_config=full_campaign_config,
+            campaign=campaign,
+            uncertainty=uncertainty,
+            convergence=convergence,
+            population_contract=population_contract,
+            monetary_contract=monetary_contract,
+            output_contract=output_contract,
+            ledger=ledger,
+            execution_receipt=execution_receipt,
         )
     except (KeyError, TypeError, ValueError, OSError) as exc:
         if isinstance(exc, PolicyConfigurationError):
@@ -327,6 +1014,17 @@ def _strict_top_level(raw: Mapping[str, object]) -> None:
         actual.remove("population")
     if "analysis_plan" in actual:
         actual.remove("analysis_plan")
+    for optional in (
+        "campaign",
+        "uncertainty",
+        "convergence",
+        "population_contract",
+        "monetary_contract",
+        "output_contract",
+        "ledger",
+        "execution_receipt",
+    ):
+        actual.discard(optional)
     missing = sorted(expected - actual)
     unknown = sorted(actual - expected)
     if missing or unknown:
@@ -351,16 +1049,479 @@ def _analysis_plan_selection(
         return None
     if type(value) is not dict:
         raise ValueError("[analysis_plan] must be a TOML table")
-    _exact_keys(value, {"plan_path"}, "analysis_plan")
+    _required_and_optional_keys(
+        value,
+        {"plan_path"},
+        {
+            "expected_plan_id",
+            "expected_plan_sha256",
+            "parent_plan_path",
+            "parent_plan_id",
+            "parent_plan_sha256",
+        },
+        "analysis_plan",
+    )
+    identity_fields = {
+        "expected_plan_id",
+        "expected_plan_sha256",
+        "parent_plan_path",
+        "parent_plan_id",
+        "parent_plan_sha256",
+    }
+    present = identity_fields.intersection(value)
+    if present and present != identity_fields:
+        raise ValueError(
+            "analysis plan expected and parent identities must be supplied together"
+        )
     raw_path = value["plan_path"]
     if type(raw_path) is not str or not raw_path:
         raise ValueError("analysis plan_path must be non-empty text")
-    config_root = Path(os.path.abspath(os.fspath(config_path))).parent
-    candidate = Path(raw_path)
-    selected = candidate if candidate.is_absolute() else config_root / candidate
-    return AnalysisPlanSelection(
-        plan_path=Path(os.path.abspath(os.fspath(selected)))
+    selected = _resolved_config_path(
+        raw_path,
+        config_path=config_path,
+        name="analysis plan_path",
     )
+    parent_path = (
+        _resolved_config_path(
+            value["parent_plan_path"],
+            config_path=config_path,
+            name="analysis parent_plan_path",
+        )
+        if identity_fields
+        and "parent_plan_path" in value
+        else None
+    )
+    return AnalysisPlanSelection(
+        plan_path=selected,
+        expected_plan_id=value.get("expected_plan_id"),
+        expected_plan_sha256=value.get("expected_plan_sha256"),
+        parent_plan_path=parent_path,
+        parent_plan_id=value.get("parent_plan_id"),
+        parent_plan_sha256=value.get("parent_plan_sha256"),
+    )
+
+
+def _campaign_control(value: object) -> CampaignControlConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="campaign")
+    _exact_keys(
+        values,
+        {
+            "allow_synthetic",
+            "fail_closed",
+            "simulation_layer",
+            "campaign_ready",
+            "primary_estimand_id",
+        },
+        "campaign",
+    )
+    try:
+        layer = PolicySimulationLayer(values["simulation_layer"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "campaign simulation_layer must be 'policy_orchestrator'"
+        ) from exc
+    return CampaignControlConfig(
+        allow_synthetic=values["allow_synthetic"],
+        fail_closed=values["fail_closed"],
+        simulation_layer=layer,
+        campaign_ready=values["campaign_ready"],
+        primary_estimand_id=values["primary_estimand_id"],
+    )
+
+
+def _campaign_uncertainty(
+    value: object,
+    *,
+    config_path: Path,
+) -> CampaignUncertaintyConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="uncertainty")
+    _exact_keys(
+        values,
+        {
+            "seed_design",
+            "minimum_retained_seeds",
+            "common_random_numbers",
+            "identical_pretreatment_cohorts",
+            "population_weights_within_seed",
+            "outcome_dependent_seed_exclusion",
+            "parameter_design_path",
+            "parameter_design_id",
+            "parameter_design_sha256",
+            "parameter_uncertainty",
+            "monetary_rate_uncertainty",
+            "population_uncertainty",
+            "combined_uncertainty_required",
+            "oat_role",
+            "variance_decomposition_method",
+        },
+        "uncertainty",
+    )
+    return CampaignUncertaintyConfig(
+        seed_design=values["seed_design"],
+        minimum_retained_seeds=values["minimum_retained_seeds"],
+        common_random_numbers=values["common_random_numbers"],
+        identical_pretreatment_cohorts=values[
+            "identical_pretreatment_cohorts"
+        ],
+        population_weights_within_seed=values[
+            "population_weights_within_seed"
+        ],
+        outcome_dependent_seed_exclusion=values[
+            "outcome_dependent_seed_exclusion"
+        ],
+        parameter_design_path=_resolved_config_path(
+            values["parameter_design_path"],
+            config_path=config_path,
+            name="uncertainty parameter_design_path",
+        ),
+        parameter_design_id=values["parameter_design_id"],
+        parameter_design_sha256=values["parameter_design_sha256"],
+        parameter_uncertainty=_uncertainty_availability(
+            values["parameter_uncertainty"],
+            name="uncertainty parameter_uncertainty",
+        ),
+        monetary_rate_uncertainty=_uncertainty_availability(
+            values["monetary_rate_uncertainty"],
+            name="uncertainty monetary_rate_uncertainty",
+        ),
+        population_uncertainty=_uncertainty_availability(
+            values["population_uncertainty"],
+            name="uncertainty population_uncertainty",
+        ),
+        combined_uncertainty_required=values["combined_uncertainty_required"],
+        oat_role=values["oat_role"],
+        variance_decomposition_method=values["variance_decomposition_method"],
+    )
+
+
+def _campaign_convergence(
+    value: object,
+) -> CampaignConvergenceConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="convergence")
+    expected = {
+        "block_size",
+        "minimum_retained_seeds",
+        "maximum_mcse",
+        "maximum_interval_width",
+        "maximum_absolute_change",
+        "maximum_relative_change",
+        "maximum_invalid_rate",
+        "consecutive_passing_checkpoints",
+        "sensitivity_instability_allowed",
+        "required_status",
+    }
+    _exact_keys(values, expected, "convergence")
+    return CampaignConvergenceConfig(**values)
+
+
+def _population_contract(value: object) -> PopulationContractConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="population_contract")
+    expected = {
+        "design_id",
+        "design_schema_version",
+        "design_sha256",
+        "runtime_mapping_id",
+        "runtime_mapping_schema_version",
+        "runtime_mapping_sha256",
+        "adapter_id",
+        "adapter_schema_version",
+        "adapter_sha256",
+        "execution_input_schema_version",
+        "execution_input_sha256",
+        "assignment_schema_version",
+        "balance_schema_version",
+        "lineage_schema_version",
+        "require_per_seed_execution_identity",
+        "require_per_seed_assignment_identity",
+        "require_per_seed_balance_identity",
+        "require_per_seed_lineage_identity",
+        "apportionment_method",
+        "weight_application",
+        "identical_weights_across_scenarios",
+        "empirical_validation_status",
+        "uncertainty_status",
+        "uncertainty_design_id",
+    }
+    _exact_keys(values, expected, "population_contract")
+    return PopulationContractConfig(
+        **{
+            **values,
+            "uncertainty_status": _uncertainty_availability(
+                values["uncertainty_status"],
+                name="population_contract uncertainty_status",
+            ),
+        }
+    )
+
+
+def _monetary_contract(
+    value: object,
+    *,
+    config_path: Path,
+) -> MonetaryContractConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="monetary_contract")
+    expected = {
+        "profile_path",
+        "source_bundle_path",
+        "source_artifact_path",
+        "conversion_table_path",
+        "bundle_id",
+        "source_bundle_sha256",
+        "source_artifact_sha256",
+        "conversion_table_sha256",
+        "conversion_basis_id",
+        "conversion_basis_sha256",
+        "rate_evidence_sha256",
+        "target_currency",
+        "target_minor_unit_name",
+        "quote_convention",
+        "scale_convention",
+        "rate_period_start",
+        "rate_period_end",
+        "target_price_period_start",
+        "target_price_period_end",
+        "missing_date_policy",
+        "identity_missing_date_policy",
+        "rounding_method",
+        "rounding_scope",
+        "point_rate_status",
+        "rate_uncertainty_status",
+        "source_bundle_signature_status",
+        "simulation_bridge_status",
+        "observed_real_world_spending",
+        "raw_cross_currency_pooling",
+    }
+    _exact_keys(values, expected, "monetary_contract")
+    paths = {
+        name: _resolved_config_path(
+            values[name],
+            config_path=config_path,
+            name=f"monetary {name}",
+        )
+        for name in (
+            "profile_path",
+            "source_bundle_path",
+            "source_artifact_path",
+            "conversion_table_path",
+        )
+    }
+    return MonetaryContractConfig(
+        **{
+            **values,
+            **paths,
+            "rate_uncertainty_status": _uncertainty_availability(
+                values["rate_uncertainty_status"],
+                name="monetary rate_uncertainty_status",
+            ),
+        }
+    )
+
+
+def _campaign_output_contract(
+    value: object,
+) -> CampaignOutputContractConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="output_contract")
+    expected = {
+        "metric_registry_schema_version",
+        "metric_registry_sha256",
+        "output_schema_version",
+        "output_schema_sha256",
+        "output_profile_id",
+        "output_profile_schema_version",
+        "output_profile_sha256",
+        "expected_artifacts",
+    }
+    _exact_keys(values, expected, "output_contract")
+    artifacts = values["expected_artifacts"]
+    if type(artifacts) is not list:
+        raise ValueError("output_contract expected_artifacts must be an array")
+    return CampaignOutputContractConfig(
+        **{**values, "expected_artifacts": tuple(artifacts)}
+    )
+
+
+def _campaign_ledger(
+    value: object,
+    *,
+    config_path: Path,
+) -> CampaignLedgerConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="ledger")
+    _exact_keys(
+        values,
+        {"backend", "path", "persistent", "temporary"},
+        "ledger",
+    )
+    try:
+        backend = LedgerBackend(values["backend"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("ledger backend must be 'sqlite'") from exc
+    return CampaignLedgerConfig(
+        backend=backend,
+        path=_resolved_config_path(
+            values["path"],
+            config_path=config_path,
+            name="ledger path",
+        ),
+        persistent=values["persistent"],
+        temporary=values["temporary"],
+    )
+
+
+def _execution_receipt_policy(
+    value: object,
+    *,
+    config_path: Path,
+) -> ExecutionReceiptPolicyConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="execution_receipt")
+    expected = {
+        "schema_path",
+        "schema_version",
+        "identity_algorithm",
+        "receipt_path",
+        "attestation_path",
+        "require_clean_working_tree",
+        "verify_active_commit",
+        "verify_source_tree",
+        "verify_interpreter",
+        "verify_dependencies",
+        "reject_environment_drift",
+        "manifest_reference_required",
+        "run_command",
+        "execution_mode",
+    }
+    _exact_keys(values, expected, "execution_receipt")
+    command = values["run_command"]
+    if type(command) is not list:
+        raise ValueError("execution_receipt run_command must be an array")
+    paths = {
+        name: _resolved_config_path(
+            values[name],
+            config_path=config_path,
+            name=f"execution receipt {name}",
+        )
+        for name in ("schema_path", "receipt_path", "attestation_path")
+    }
+    return ExecutionReceiptPolicyConfig(
+        **{**values, **paths, "run_command": tuple(command)}
+    )
+
+
+def _optional_table(value: object, *, name: str) -> dict[str, object]:
+    if type(value) is not dict:
+        raise ValueError(f"[{name}] must be a TOML table")
+    return value
+
+
+def _optional_boolean(value: object, *, name: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be boolean")
+    return value
+
+
+def _nonempty_text(value: object, *, name: str) -> str:
+    if type(value) is not str or not value.strip():
+        raise ValueError(f"{name} must be non-empty text")
+    return value
+
+
+def _identity_text_or_placeholder(value: object, *, name: str) -> str:
+    result = _nonempty_text(value, name=name)
+    if any(character.isspace() for character in result):
+        raise ValueError(f"{name} cannot contain whitespace")
+    return result
+
+
+def _identity_sha256_or_placeholder(value: object, *, name: str) -> str:
+    if type(value) is not str or not (
+        _SHA256.fullmatch(value) or _BLOCKED_IDENTITY.fullmatch(value)
+    ):
+        raise ValueError(
+            f"{name} must be lowercase SHA-256 hex or an explicit "
+            "BLOCKED_PENDING_* placeholder"
+        )
+    return value
+
+
+def _positive_integer(value: object, *, name: str) -> int:
+    if type(value) is not int or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _finite_number(value: object, *, name: str) -> float:
+    if type(value) not in {int, float} or isinstance(value, bool):
+        raise ValueError(f"{name} must be numeric")
+    result = float(value)
+    if not isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    return result
+
+
+def _positive_finite(value: object, *, name: str) -> float:
+    result = _finite_number(value, name=name)
+    if result <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return result
+
+
+def _uncertainty_availability(
+    value: object,
+    *,
+    name: str,
+) -> UncertaintyAvailability:
+    try:
+        return UncertaintyAvailability(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{name} must be QUANTIFIED, UNQUANTIFIED, or UNAVAILABLE"
+        ) from exc
+
+
+def _resolved_config_path(
+    value: object,
+    *,
+    config_path: Path,
+    name: str,
+) -> Path:
+    if type(value) is not str or not value:
+        raise ValueError(f"{name} must be non-empty text")
+    root = Path(os.path.abspath(os.fspath(config_path))).parent
+    candidate = Path(value)
+    selected = candidate if candidate.is_absolute() else root / candidate
+    return Path(os.path.abspath(os.fspath(selected)))
+
+
+def _validate_full_campaign_seeds(value: object) -> None:
+    if type(value) is not list:
+        raise ValueError("full campaign seeds must be a TOML array")
+    if len(value) < 100:
+        raise ValueError("full campaign fixed seed set requires at least 100 seeds")
+    if any(type(seed) is not int or isinstance(seed, bool) for seed in value):
+        raise ValueError("full campaign seeds must be integers")
+    if value != sorted(value) or len(value) != len(set(value)):
+        raise ValueError(
+            "full campaign fixed seeds must be unique and strictly ascending"
+        )
+
+
+def _contains_blocked_placeholder(value: object) -> bool:
+    return "BLOCKED_PENDING_" in repr(value)
 
 
 def _policy_run_purpose(value: object) -> PolicyRunPurpose:
@@ -403,10 +1564,20 @@ def _exact_keys(
 
 __all__ = [
     "AnalysisPlanSelection",
+    "CampaignControlConfig",
+    "CampaignConvergenceConfig",
+    "CampaignLedgerConfig",
+    "CampaignOutputContractConfig",
+    "CampaignUncertaintyConfig",
+    "ExecutionReceiptPolicyConfig",
+    "MonetaryContractConfig",
     "PolicyConfigurationError",
     "PolicyOutputConfig",
     "PolicyPrototypeConfig",
     "PolicyRunPurpose",
+    "PolicySimulationLayer",
+    "PopulationContractConfig",
     "PopulationProjectionConfig",
+    "UncertaintyAvailability",
     "load_policy_config",
 ]

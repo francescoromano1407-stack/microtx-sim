@@ -54,7 +54,12 @@ from .scenarios import ScenarioId
 
 ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "1.0"
 PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "2.0"
+CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "3.0"
 MAX_ANALYSIS_PLAN_BYTES: Final[int] = 1024 * 1024
+ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID: Final[str] = (
+    "runtime.personal.monthly.income.all"
+)
+ALL_HOUSEHOLD_TYPES_ID: Final[str] = "household.all"
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _CONTRACT_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z")
@@ -73,6 +78,17 @@ _V2_CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
     "analysis_plan.schema_v2=campaign_ineligible",
     "analysis_plan.execution_calendar_anchor=unbound",
     "analysis_plan.model_implementation_environment_identity=unbound",
+)
+_V3_CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
+    "analysis_plan.external_registration=unregistered",
+    "analysis_plan.execution_calendar_anchor=unbound",
+    "analysis_plan.population_empirical_validation=missing",
+    "analysis_plan.population_uncertainty=unquantified",
+    "analysis_plan.monetary_source_bundle_signature=missing",
+    "analysis_plan.monetary_simulation_bridge=unvalidated",
+    "analysis_plan.monetary_rate_uncertainty=unquantified",
+    "analysis_plan.parameter_distributions=uncalibrated",
+    "analysis_plan.execution_attestation=unverified",
 )
 _CANONICAL_INCLUSION_FIELDS: Final[tuple[PopulationInclusionField, ...]] = tuple(
     sorted(PopulationInclusionField, key=lambda item: item.value)
@@ -434,10 +450,26 @@ class CanonicalPopulationInclusionPredicate:
             self.monthly_disposable_income_band_ids,
             name="monthly_disposable_income_band_ids",
         )
+        if (
+            ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID
+            in self.monthly_disposable_income_band_ids
+            and self.monthly_disposable_income_band_ids
+            != (ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,)
+        ):
+            raise AnalysisPlanValidationError(
+                "the canonical all-income selector must be used alone"
+            )
         _canonical_identifier_tuple(
             self.household_type_ids,
             name="household_type_ids",
         )
+        if (
+            ALL_HOUSEHOLD_TYPES_ID in self.household_type_ids
+            and self.household_type_ids != (ALL_HOUSEHOLD_TYPES_ID,)
+        ):
+            raise AnalysisPlanValidationError(
+                "the canonical all-household selector must be used alone"
+            )
         _canonical_enum_tuple(
             self.gaming_states,
             enum_type=PopulationGamingState,
@@ -561,6 +593,12 @@ def evaluate_population_inclusion(
             "jurisdiction indices fall outside jurisdiction_codes"
         )
     selected_cells = np.zeros(len(projected_cells), dtype=np.bool_)
+    all_income_bands = predicate.monthly_disposable_income_band_ids == (
+        ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,
+    )
+    all_household_types = predicate.household_type_ids == (
+        ALL_HOUSEHOLD_TYPES_ID,
+    )
     for cell_index, cell in enumerate(projected_cells):
         if not 0 <= cell.jurisdiction_index < len(jurisdiction_codes):
             raise AnalysisPlanVerificationError(
@@ -586,9 +624,11 @@ def evaluate_population_inclusion(
                 not predicate.jurisdiction_codes
                 or cell.jurisdiction_code in predicate.jurisdiction_codes,
                 not predicate.monthly_disposable_income_band_ids
+                or all_income_bands
                 or cell.monthly_disposable_income_band_id
                 in predicate.monthly_disposable_income_band_ids,
                 not predicate.household_type_ids
+                or all_household_types
                 or cell.household_type in predicate.household_type_ids,
                 not predicate.gaming_states
                 or _gaming_state(cell.baseline_gamer) in predicate.gaming_states,
@@ -840,6 +880,7 @@ class ProspectiveAnalysisPlan:
     plan_sha256: str
     declared_harm_weights: WelfareHarmWeights | None = None
     primary_aggregate_rule: PrimaryAggregateRule | None = None
+    amendment_json: str | None = None
     registration_status: AnalysisPlanRegistrationStatus = field(
         default=AnalysisPlanRegistrationStatus.UNREGISTERED,
         init=False,
@@ -855,6 +896,7 @@ class ProspectiveAnalysisPlan:
         if self.schema_version not in {
             ANALYSIS_PLAN_SCHEMA_VERSION,
             PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+            CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
         }:
             raise AnalysisPlanValidationError(
                 "unsupported prospective analysis-plan schema version"
@@ -915,6 +957,7 @@ class ProspectiveAnalysisPlan:
             if (
                 self.declared_harm_weights is not None
                 or self.primary_aggregate_rule is not None
+                or self.amendment_json is not None
             ):
                 raise AnalysisPlanValidationError(
                     "schema-v1 plans cannot declare a plan-level aggregate"
@@ -939,6 +982,36 @@ class ProspectiveAnalysisPlan:
                     "schema-v2 primary_aggregate_rule must be PrimaryAggregateRule"
                 )
             PrimaryAggregateRule.__post_init__(self.primary_aggregate_rule)
+            if self.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+                if self.amendment_json is not None:
+                    raise AnalysisPlanValidationError(
+                        "schema-v2 plans cannot contain a campaign amendment"
+                    )
+            else:
+                if type(self.amendment_json) is not str:
+                    raise TypeError(
+                        "schema-v3 plans require a canonical amendment payload"
+                    )
+                amendment = _parse_amendment_json(self.amendment_json)
+                _validate_campaign_amendment(amendment)
+                scientific_change = _required_mapping(
+                    amendment,
+                    "scientific_change",
+                )
+                if (
+                    scientific_change["current_estimand_id"]
+                    != self.primary_estimand.estimand_id
+                    or scientific_change["current_specification_sha256"]
+                    != self.primary_estimand.specification_sha256
+                ):
+                    raise AnalysisPlanValidationError(
+                        "amendment current primary estimand identity differs "
+                        "from the successor plan"
+                    )
+                if len(self.stopping_rule.seeds) < 100:
+                    raise AnalysisPlanValidationError(
+                        "schema-v3 campaign plans require at least 100 fixed seeds"
+                    )
         if self.registration_status is not AnalysisPlanRegistrationStatus.UNREGISTERED:
             raise AnalysisPlanValidationError(
                 "schema-v1 analysis plans must remain UNREGISTERED"
@@ -962,6 +1035,16 @@ class ProspectiveAnalysisPlan:
             estimand
             for estimand in self.estimands
             if estimand.role is AnalysisEstimandRole.PRIMARY
+        )
+
+    @property
+    def amendment(self) -> dict[str, object] | None:
+        """Return a detached copy of the canonical schema-v3 amendment."""
+
+        return (
+            _parse_amendment_json(self.amendment_json)
+            if self.amendment_json is not None
+            else None
         )
 
     def attestation_payload(self) -> dict[str, object]:
@@ -993,7 +1076,10 @@ class ProspectiveAnalysisPlan:
             "campaign_ready": self.campaign_ready,
             "campaign_blockers": list(self.campaign_blockers),
         }
-        if self.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+        if self.schema_version in {
+            PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+            CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
+        }:
             assert self.declared_harm_weights is not None
             assert self.primary_aggregate_rule is not None
             payload["declared_harm_weights"] = _harm_weights_snapshot(
@@ -1002,6 +1088,9 @@ class ProspectiveAnalysisPlan:
             payload["primary_aggregate_rule"] = (
                 self.primary_aggregate_rule.snapshot()
             )
+        if self.schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+            assert self.amendment_json is not None
+            payload["amendment"] = _parse_amendment_json(self.amendment_json)
         return payload
 
     def snapshot(self) -> dict[str, object]:
@@ -1108,8 +1197,9 @@ def build_prospective_analysis_plan(
     estimands: Sequence[PlannedPopulationEstimand],
     declared_harm_weights: WelfareHarmWeights | None = None,
     primary_aggregate_rule: PrimaryAggregateRule | None = None,
+    amendment: Mapping[str, object] | None = None,
 ) -> ProspectiveAnalysisPlan:
-    """Canonicalize estimands and build a self-attested v1 or v2 plan.
+    """Canonicalize estimands and build a self-attested v1, v2, or v3 plan.
 
     Supplying both ``declared_harm_weights`` and ``primary_aggregate_rule``
     selects schema v2.  Omitting both preserves the legacy schema-v1 builder
@@ -1133,11 +1223,40 @@ def build_prospective_analysis_plan(
         raise AnalysisPlanValidationError(
             "declared_harm_weights and primary_aggregate_rule must be supplied together"
         )
+    if amendment is not None and not all(aggregate_fields):
+        raise AnalysisPlanValidationError(
+            "a campaign amendment requires the schema-v2 aggregate declarations"
+        )
     schema_version = (
-        PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
-        if all(aggregate_fields)
-        else ANALYSIS_PLAN_SCHEMA_VERSION
+        CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION
+        if amendment is not None
+        else (
+            PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+            if all(aggregate_fields)
+            else ANALYSIS_PLAN_SCHEMA_VERSION
+        )
     )
+    amendment_json = None
+    if amendment is not None:
+        if not isinstance(amendment, Mapping):
+            raise TypeError("amendment must be a mapping")
+        amendment_payload = json.loads(
+            json.dumps(
+                amendment,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+        _validate_campaign_amendment(amendment_payload)
+        amendment_json = json.dumps(
+            amendment_payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
     if declared_harm_weights is not None:
         if type(declared_harm_weights) is not WelfareHarmWeights:
             raise TypeError("declared_harm_weights must be WelfareHarmWeights")
@@ -1168,6 +1287,7 @@ def build_prospective_analysis_plan(
         estimands=selected,
         declared_harm_weights=declared_harm_weights,
         primary_aggregate_rule=primary_aggregate_rule,
+        amendment_json=amendment_json,
     )
     return ProspectiveAnalysisPlan(
         schema_version=schema_version,
@@ -1185,6 +1305,7 @@ def build_prospective_analysis_plan(
         plan_sha256=_canonical_sha256(payload),
         declared_harm_weights=declared_harm_weights,
         primary_aggregate_rule=primary_aggregate_rule,
+        amendment_json=amendment_json,
     )
 
 
@@ -1289,6 +1410,7 @@ def _plan_attestation_payload(
     estimands: tuple[PlannedPopulationEstimand, ...],
     declared_harm_weights: WelfareHarmWeights | None = None,
     primary_aggregate_rule: PrimaryAggregateRule | None = None,
+    amendment_json: str | None = None,
 ) -> dict[str, object]:
     if type(stopping_rule) is not FixedSeedStoppingRule:
         raise TypeError("stopping_rule must be FixedSeedStoppingRule")
@@ -1310,7 +1432,10 @@ def _plan_attestation_payload(
         "campaign_ready": False,
         "campaign_blockers": list(_campaign_blockers(schema_version)),
     }
-    if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+    if schema_version in {
+        PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+        CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
+    }:
         if type(declared_harm_weights) is not WelfareHarmWeights:
             raise TypeError("schema-v2 declared_harm_weights must be WelfareHarmWeights")
         if type(primary_aggregate_rule) is not PrimaryAggregateRule:
@@ -1319,7 +1444,21 @@ def _plan_attestation_payload(
             declared_harm_weights
         )
         payload["primary_aggregate_rule"] = primary_aggregate_rule.snapshot()
-    elif declared_harm_weights is not None or primary_aggregate_rule is not None:
+        if schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+            if type(amendment_json) is not str:
+                raise TypeError("schema-v3 amendment_json must be canonical text")
+            amendment = _parse_amendment_json(amendment_json)
+            _validate_campaign_amendment(amendment)
+            payload["amendment"] = amendment
+        elif amendment_json is not None:
+            raise AnalysisPlanValidationError(
+                "schema-v2 plans cannot contain a campaign amendment"
+            )
+    elif (
+        declared_harm_weights is not None
+        or primary_aggregate_rule is not None
+        or amendment_json is not None
+    ):
         raise AnalysisPlanValidationError(
             "schema-v1 plans cannot contain schema-v2 aggregate declarations"
         )
@@ -1352,6 +1491,7 @@ _PLAN_KEYS_V2 = frozenset(
         {"declared_harm_weights", "primary_aggregate_rule"}
     )
 )
+_PLAN_KEYS_V3 = frozenset(set(_PLAN_KEYS_V2).union({"amendment"}))
 _STOPPING_KEYS = frozenset(
     {
         "rule_id",
@@ -1458,6 +1598,7 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
     if schema_version not in {
         ANALYSIS_PLAN_SCHEMA_VERSION,
         PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+        CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
     }:
         raise AnalysisPlanValidationError(
             "unsupported prospective analysis-plan schema version"
@@ -1465,9 +1606,13 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
     _exact_keys(
         row,
         (
-            _PLAN_KEYS_V2
-            if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
-            else _PLAN_KEYS_V1
+            _PLAN_KEYS_V3
+            if schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION
+            else (
+                _PLAN_KEYS_V2
+                if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+                else _PLAN_KEYS_V1
+            )
         ),
         name="analysis plan",
     )
@@ -1513,16 +1658,33 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
         _harm_weights_from_snapshot(
             _required_mapping(row, "declared_harm_weights")
         )
-        if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+        if schema_version in {
+            PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+            CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
+        }
         else None
     )
     primary_aggregate_rule = (
         _primary_aggregate_rule_from_snapshot(
             _required_mapping(row, "primary_aggregate_rule")
         )
-        if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+        if schema_version in {
+            PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+            CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
+        }
         else None
     )
+    amendment_json = None
+    if schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+        amendment_row = _required_mapping(row, "amendment")
+        _validate_campaign_amendment(dict(amendment_row))
+        amendment_json = json.dumps(
+            amendment_row,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
     plan = ProspectiveAnalysisPlan(
         schema_version=schema_version,
         plan_id=_required_string(row, "plan_id"),
@@ -1563,6 +1725,7 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
         plan_sha256=_required_string(row, "plan_sha256"),
         declared_harm_weights=declared_harm_weights,
         primary_aggregate_rule=primary_aggregate_rule,
+        amendment_json=amendment_json,
     )
     if plan.snapshot() != dict(row):
         raise AnalysisPlanValidationError(
@@ -2189,11 +2352,572 @@ def _harm_weights_snapshot(weights: WelfareHarmWeights) -> dict[str, float]:
     }
 
 
+_AMENDMENT_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "amendment_schema_version",
+        "parent_plan",
+        "scientific_change",
+        "changed_inputs",
+        "population_contract",
+        "monetary_contract",
+        "uncertainty_design",
+        "convergence_rule",
+        "execution_attestation",
+        "simulation_flow",
+        "readiness_consequences",
+    }
+)
+
+
+def _parse_amendment_json(value: str) -> dict[str, object]:
+    if type(value) is not str or not value:
+        raise AnalysisPlanValidationError("amendment payload must be JSON text")
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise AnalysisPlanValidationError("amendment payload is invalid JSON") from exc
+    if type(decoded) is not dict:
+        raise AnalysisPlanValidationError("amendment payload must be an object")
+    canonical = json.dumps(
+        decoded,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if canonical != value:
+        raise AnalysisPlanValidationError(
+            "amendment payload must use canonical JSON encoding"
+        )
+    return decoded
+
+
+def _amendment_mapping(
+    row: Mapping[str, object], key: str
+) -> Mapping[str, object]:
+    return _required_mapping(row, key)
+
+
+def _validate_campaign_amendment(row: Mapping[str, object]) -> None:
+    """Validate the immutable scientific/provenance delta carried by schema v3."""
+
+    if not isinstance(row, Mapping):
+        raise AnalysisPlanValidationError("campaign amendment must be a mapping")
+    _exact_keys(row, _AMENDMENT_KEYS, name="campaign amendment")
+    if _required_string(row, "amendment_schema_version") != "1.0":
+        raise AnalysisPlanValidationError(
+            "unsupported campaign amendment schema version"
+        )
+    parent = _amendment_mapping(row, "parent_plan")
+    _exact_keys(
+        parent,
+        {
+            "artifact_path",
+            "schema_version",
+            "plan_id",
+            "plan_sha256",
+            "file_sha256",
+        },
+        name="amendment parent_plan",
+    )
+    parent_path = _required_string(parent, "artifact_path")
+    if "\\" in parent_path or parent_path.startswith("/") or ".." in parent_path.split("/"):
+        raise AnalysisPlanValidationError(
+            "parent plan artifact_path must be a canonical repository-relative POSIX path"
+        )
+    if _required_string(parent, "schema_version") != PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+        raise AnalysisPlanValidationError("schema-v3 parent must be a schema-v2 plan")
+    _identifier(_required_string(parent, "plan_id"), name="parent plan_id")
+    _sha256_digest(_required_string(parent, "plan_sha256"), name="parent plan_sha256")
+    _sha256_digest(_required_string(parent, "file_sha256"), name="parent file_sha256")
+
+    scientific = _amendment_mapping(row, "scientific_change")
+    _exact_keys(
+        scientific,
+        {
+            "primary_estimand_changed",
+            "original_estimand_id",
+            "current_estimand_id",
+            "original_specification_sha256",
+            "current_specification_sha256",
+            "explanation",
+        },
+        name="amendment scientific_change",
+    )
+    if _required_bool(scientific, "primary_estimand_changed"):
+        raise AnalysisPlanValidationError(
+            "this successor plan declares that the primary estimand is preserved"
+        )
+    original_id = _required_string(scientific, "original_estimand_id")
+    current_id = _required_string(scientific, "current_estimand_id")
+    if original_id != current_id:
+        raise AnalysisPlanValidationError(
+            "preserved primary estimand IDs must be identical"
+        )
+    original_sha = _required_string(scientific, "original_specification_sha256")
+    current_sha = _required_string(scientific, "current_specification_sha256")
+    _sha256_digest(original_sha, name="original primary specification")
+    _sha256_digest(current_sha, name="current primary specification")
+    if original_sha != current_sha:
+        raise AnalysisPlanValidationError(
+            "preserved primary estimand specifications must be identical"
+        )
+    _nonempty_text(_required_string(scientific, "explanation"), name="scientific explanation")
+
+    raw_inputs = _required_list(row, "changed_inputs")
+    if not raw_inputs:
+        raise AnalysisPlanValidationError("changed_inputs cannot be empty")
+    roles: list[str] = []
+    for index, value in enumerate(raw_inputs):
+        item = _require_mapping(value, name=f"changed_inputs[{index}]")
+        _exact_keys(
+            item,
+            {
+                "role",
+                "artifact_path",
+                "schema_version",
+                "file_sha256",
+                "semantic_sha256",
+                "change_type",
+                "readiness_status",
+                "readiness_consequence",
+            },
+            name=f"changed_inputs[{index}]",
+        )
+        role = _required_string(item, "role")
+        _identifier(role, name=f"changed_inputs[{index}].role")
+        roles.append(role)
+        _nonempty_text(
+            _required_string(item, "artifact_path"),
+            name=f"changed_inputs[{index}].artifact_path",
+        )
+        _nonempty_text(
+            _required_string(item, "schema_version"),
+            name=f"changed_inputs[{index}].schema_version",
+        )
+        _sha256_digest(
+            _required_string(item, "file_sha256"),
+            name=f"changed_inputs[{index}].file_sha256",
+        )
+        _sha256_digest(
+            _required_string(item, "semantic_sha256"),
+            name=f"changed_inputs[{index}].semantic_sha256",
+        )
+        for field_name in (
+            "change_type",
+            "readiness_status",
+            "readiness_consequence",
+        ):
+            _nonempty_text(
+                _required_string(item, field_name),
+                name=f"changed_inputs[{index}].{field_name}",
+            )
+    if roles != sorted(roles) or len(roles) != len(set(roles)):
+        raise AnalysisPlanValidationError(
+            "changed_inputs must be unique and sorted by role"
+        )
+
+    population = _amendment_mapping(row, "population_contract")
+    required_population = {
+        "mode",
+        "design_id",
+        "design_file_sha256",
+        "design_sha256",
+        "runtime_mapping_id",
+        "runtime_mapping_file_sha256",
+        "runtime_mapping_sha256",
+        "adapter_id",
+        "adapter_sha256",
+        "apportionment_plan_sha256",
+        "population_input_sha256",
+        "cell_count",
+        "target_design_units",
+        "assignment_identity_policy",
+        "balance_identity_policy",
+        "lineage_identity_policy",
+        "uncertainty_status",
+        "empirical_validation_claimed",
+    }
+    _exact_keys(population, required_population, name="population_contract")
+    if _required_string(population, "mode") != "projected_v1":
+        raise AnalysisPlanValidationError("campaign population mode must be projected_v1")
+    for field_name in (
+        "design_file_sha256",
+        "design_sha256",
+        "runtime_mapping_file_sha256",
+        "runtime_mapping_sha256",
+        "adapter_sha256",
+        "apportionment_plan_sha256",
+        "population_input_sha256",
+    ):
+        _sha256_digest(_required_string(population, field_name), name=field_name)
+    for field_name in ("cell_count", "target_design_units"):
+        _strict_json_int(population.get(field_name), name=field_name)
+    if _required_bool(population, "empirical_validation_claimed"):
+        raise AnalysisPlanValidationError(
+            "the current projected population cannot claim empirical validation"
+        )
+    if _required_string(population, "uncertainty_status") != "UNQUANTIFIED":
+        raise AnalysisPlanValidationError(
+            "current population uncertainty must remain UNQUANTIFIED"
+        )
+
+    monetary = _amendment_mapping(row, "monetary_contract")
+    required_monetary = {
+        "source_bundle_id",
+        "source_bundle_file_sha256",
+        "source_bundle_semantic_sha256",
+        "source_artifact_sha256s",
+        "conversion_table_sha256",
+        "target_currency",
+        "quote_convention",
+        "scale_convention",
+        "rate_period_start",
+        "rate_period_end",
+        "price_period_start",
+        "price_period_end",
+        "missing_date_policy",
+        "rounding_rule",
+        "rounding_boundary",
+        "conversion_basis_sha256",
+        "source_bundle_signature_status",
+        "simulation_bridge_status",
+        "rate_uncertainty_status",
+        "observed_real_world_spending_claimed",
+    }
+    _exact_keys(monetary, required_monetary, name="monetary_contract")
+    for field_name in (
+        "source_bundle_file_sha256",
+        "source_bundle_semantic_sha256",
+        "conversion_table_sha256",
+        "conversion_basis_sha256",
+    ):
+        _sha256_digest(_required_string(monetary, field_name), name=field_name)
+    artifacts = _required_mapping(monetary, "source_artifact_sha256s")
+    if not artifacts:
+        raise AnalysisPlanValidationError("monetary source artifacts cannot be empty")
+    for artifact_name, digest in artifacts.items():
+        _nonempty_text(artifact_name, name="monetary artifact name")
+        _sha256_digest(digest, name=f"monetary artifact {artifact_name}")
+    if _required_string(monetary, "rate_uncertainty_status") != "UNQUANTIFIED":
+        raise AnalysisPlanValidationError("point rates do not quantify rate uncertainty")
+    if _required_string(monetary, "source_bundle_signature_status") != "MISSING":
+        raise AnalysisPlanValidationError("current source-bundle signature is MISSING")
+    if _required_string(monetary, "simulation_bridge_status") != "ILLUSTRATIVE":
+        raise AnalysisPlanValidationError("current simulation bridge is ILLUSTRATIVE")
+    if _required_bool(monetary, "observed_real_world_spending_claimed"):
+        raise AnalysisPlanValidationError(
+            "converted model values cannot be labelled observed spending"
+        )
+
+    uncertainty = _amendment_mapping(row, "uncertainty_design")
+    _exact_keys(
+        uncertainty,
+        {
+            "schema_version",
+            "seed_uncertainty",
+            "parameter_uncertainty",
+            "monetary_rate_uncertainty",
+            "population_uncertainty",
+            "combined_uncertainty",
+            "oat_role",
+        },
+        name="uncertainty_design",
+    )
+    if _required_string(uncertainty, "schema_version") != "1.0":
+        raise AnalysisPlanValidationError("unsupported uncertainty schema")
+    if _required_string(uncertainty, "oat_role") != "DIAGNOSTIC_ONLY":
+        raise AnalysisPlanValidationError("OAT must remain diagnostic only")
+    seed_uncertainty = _required_mapping(uncertainty, "seed_uncertainty")
+    _exact_keys(
+        seed_uncertainty,
+        frozenset(
+            {
+                "status",
+                "fixed_seed_count",
+                "population_weights_applied_within_seed",
+                "common_random_numbers",
+                "identical_pretreatment_cohorts",
+                "outcome_dependent_seed_exclusion_allowed",
+            }
+        ),
+        name="seed_uncertainty",
+    )
+    if _required_string(seed_uncertainty, "status") != "QUANTIFIED_WHEN_COMPLETE":
+        raise AnalysisPlanValidationError(
+            "seed uncertainty is quantified only for a complete fixed-seed design"
+        )
+    if _required_int(seed_uncertainty, "fixed_seed_count") < 100:
+        raise AnalysisPlanValidationError(
+            "seed uncertainty requires at least 100 declared fixed seeds"
+        )
+    for field_name in (
+        "population_weights_applied_within_seed",
+        "common_random_numbers",
+        "identical_pretreatment_cohorts",
+    ):
+        if not _required_bool(seed_uncertainty, field_name):
+            raise AnalysisPlanValidationError(
+                f"seed uncertainty requires {field_name}=true"
+            )
+    if _required_bool(
+        seed_uncertainty,
+        "outcome_dependent_seed_exclusion_allowed",
+    ):
+        raise AnalysisPlanValidationError(
+            "outcome-dependent seed exclusion cannot be allowed"
+        )
+
+    parameter_uncertainty = _required_mapping(
+        uncertainty,
+        "parameter_uncertainty",
+    )
+    _exact_keys(
+        parameter_uncertainty,
+        frozenset(
+            {
+                "status",
+                "design_id",
+                "design_sha256",
+                "method",
+                "probability_interpretation",
+            }
+        ),
+        name="parameter_uncertainty",
+    )
+    if _required_string(
+        parameter_uncertainty,
+        "status",
+    ) != "ILLUSTRATIVE_DESIGN_ONLY":
+        raise AnalysisPlanValidationError(
+            "current parameter uncertainty must remain illustrative"
+        )
+    _identifier(
+        _required_string(parameter_uncertainty, "design_id"),
+        name="parameter uncertainty design_id",
+    )
+    _sha256_digest(
+        _required_string(parameter_uncertainty, "design_sha256"),
+        name="parameter uncertainty design_sha256",
+    )
+    if _required_string(
+        parameter_uncertainty,
+        "method",
+    ) != "SEEDED_LATIN_HYPERCUBE_V1":
+        raise AnalysisPlanValidationError(
+            "unsupported parameter-uncertainty design method"
+        )
+    if _required_string(
+        parameter_uncertainty,
+        "probability_interpretation",
+    ) != "NONE":
+        raise AnalysisPlanValidationError(
+            "illustrative ranges cannot receive a probability interpretation"
+        )
+
+    monetary_uncertainty = _required_mapping(
+        uncertainty,
+        "monetary_rate_uncertainty",
+    )
+    _exact_keys(
+        monetary_uncertainty,
+        frozenset(
+            {"status", "rate_basis_sha256", "point_observation_is_distribution"}
+        ),
+        name="monetary_rate_uncertainty",
+    )
+    if _required_string(monetary_uncertainty, "status") != "UNQUANTIFIED":
+        raise AnalysisPlanValidationError(
+            "point-rate monetary uncertainty must remain unquantified"
+        )
+    _sha256_digest(
+        _required_string(monetary_uncertainty, "rate_basis_sha256"),
+        name="monetary uncertainty rate basis",
+    )
+    if _required_bool(
+        monetary_uncertainty,
+        "point_observation_is_distribution",
+    ):
+        raise AnalysisPlanValidationError(
+            "an official point observation is not a rate distribution"
+        )
+
+    population_uncertainty = _required_mapping(
+        uncertainty,
+        "population_uncertainty",
+    )
+    _exact_keys(
+        population_uncertainty,
+        frozenset(
+            {"status", "uncertainty_design_id", "exact_weighting_is_empirical_validation"}
+        ),
+        name="population_uncertainty",
+    )
+    if _required_string(population_uncertainty, "status") != "UNQUANTIFIED":
+        raise AnalysisPlanValidationError(
+            "current population uncertainty must remain unquantified"
+        )
+    _identifier(
+        _required_string(population_uncertainty, "uncertainty_design_id"),
+        name="population uncertainty design_id",
+    )
+    if _required_bool(
+        population_uncertainty,
+        "exact_weighting_is_empirical_validation",
+    ):
+        raise AnalysisPlanValidationError(
+            "exact weighting cannot claim empirical population validation"
+        )
+
+    combined_uncertainty = _required_mapping(
+        uncertainty,
+        "combined_uncertainty",
+    )
+    _exact_keys(
+        combined_uncertainty,
+        frozenset(
+            {"status", "double_counting_control", "variance_decomposition_method"}
+        ),
+        name="combined_uncertainty",
+    )
+    if _required_string(
+        combined_uncertainty,
+        "status",
+    ) != "UNAVAILABLE_UNTIL_ALL_REQUIRED_COMPONENTS_EXIST":
+        raise AnalysisPlanValidationError(
+            "combined uncertainty must remain unavailable while components are missing"
+        )
+    if _required_string(
+        combined_uncertainty,
+        "double_counting_control",
+    ) != "one complete seed-parameter-population-rate Cartesian identity":
+        raise AnalysisPlanValidationError(
+            "combined uncertainty requires one complete Cartesian identity"
+        )
+    if _required_string(
+        combined_uncertainty,
+        "variance_decomposition_method",
+    ) != "ORTHOGONAL_FINITE_FULL_FACTORIAL_ANOVA_SUM_OF_SQUARES_DIVIDED_BY_N_V1":
+        raise AnalysisPlanValidationError(
+            "unsupported combined variance-decomposition method"
+        )
+
+    convergence = _amendment_mapping(row, "convergence_rule")
+    required_convergence = {
+        "schema_version",
+        "block_size",
+        "minimum_retained_seeds",
+        "maximum_mcse",
+        "maximum_interval_width",
+        "maximum_absolute_change",
+        "maximum_relative_change",
+        "maximum_invalid_rate",
+        "consecutive_passing_checkpoints",
+        "sensitivity_instability_allowed",
+        "outcome_dependent_seed_exclusion_allowed",
+        "required_uncertainty_component_handling",
+    }
+    _exact_keys(convergence, required_convergence, name="convergence_rule")
+    minimum = _strict_json_int(
+        convergence.get("minimum_retained_seeds"),
+        name="minimum_retained_seeds",
+    )
+    if minimum < 100:
+        raise AnalysisPlanValidationError("convergence requires at least 100 seeds")
+    for field_name in ("block_size", "consecutive_passing_checkpoints"):
+        if _required_int(convergence, field_name) <= 0:
+            raise AnalysisPlanValidationError(
+                f"convergence {field_name} must be positive"
+            )
+    for field_name in (
+        "maximum_mcse",
+        "maximum_interval_width",
+        "maximum_absolute_change",
+        "maximum_relative_change",
+    ):
+        value = convergence.get(field_name)
+        if (
+            type(value) not in {int, float}
+            or isinstance(value, bool)
+            or not np.isfinite(float(value))
+            or float(value) <= 0.0
+        ):
+            raise AnalysisPlanValidationError(
+                f"convergence {field_name} must be positive and finite"
+            )
+    invalid_rate = convergence.get("maximum_invalid_rate")
+    if (
+        type(invalid_rate) not in {int, float}
+        or isinstance(invalid_rate, bool)
+        or not np.isfinite(float(invalid_rate))
+        or not 0.0 <= float(invalid_rate) < 1.0
+    ):
+        raise AnalysisPlanValidationError(
+            "maximum_invalid_rate must be finite and in [0, 1)"
+        )
+    if _required_bool(convergence, "sensitivity_instability_allowed"):
+        raise AnalysisPlanValidationError("sensitivity instability cannot be allowed")
+    if _required_bool(convergence, "outcome_dependent_seed_exclusion_allowed"):
+        raise AnalysisPlanValidationError("outcome-dependent exclusion cannot be allowed")
+    if _required_string(convergence, "required_uncertainty_component_handling") != "FAIL_CLOSED":
+        raise AnalysisPlanValidationError("missing uncertainty components must fail closed")
+
+    attestation = _amendment_mapping(row, "execution_attestation")
+    for field_name in (
+        "receipt_schema_version",
+        "pre_run_required",
+        "post_run_required",
+        "clean_tree_required",
+        "environment_match_required",
+        "mismatch_handling",
+    ):
+        if field_name not in attestation:
+            raise AnalysisPlanValidationError(
+                f"execution_attestation missing {field_name}"
+            )
+    if any(
+        not _required_bool(attestation, field_name)
+        for field_name in (
+            "pre_run_required",
+            "post_run_required",
+            "clean_tree_required",
+            "environment_match_required",
+        )
+    ):
+        raise AnalysisPlanValidationError("all execution attestation gates are required")
+    if _required_string(attestation, "mismatch_handling") != "REJECT_OR_INVALIDATE":
+        raise AnalysisPlanValidationError("attestation mismatches must invalidate the run")
+
+    flow = _amendment_mapping(row, "simulation_flow")
+    if _required_string(flow, "execution_layer") != "policy_welfare_v1":
+        raise AnalysisPlanValidationError(
+            "the preserved primary estimand requires policy_welfare_v1"
+        )
+    if flow.get("strategic_world_layer_included") is not False:
+        raise AnalysisPlanValidationError(
+            "the strategic World layer cannot be silently composed"
+        )
+
+    readiness = _amendment_mapping(row, "readiness_consequences")
+    if readiness.get("campaign_ready") is not False:
+        raise AnalysisPlanValidationError("schema-v3 amendment must fail closed")
+    blockers = readiness.get("blockers")
+    if type(blockers) is not list or not all(type(item) is str for item in blockers):
+        raise AnalysisPlanValidationError("readiness blockers must be a string list")
+    missing_blockers = sorted(set(_V3_CAMPAIGN_BLOCKERS).difference(blockers))
+    if missing_blockers:
+        raise AnalysisPlanValidationError(
+            "readiness consequences omit fixed blockers: " + ", ".join(missing_blockers)
+        )
+
+
 def _campaign_blockers(schema_version: str) -> tuple[str, ...]:
     if schema_version == ANALYSIS_PLAN_SCHEMA_VERSION:
         return _CAMPAIGN_BLOCKERS
     if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
         return _V2_CAMPAIGN_BLOCKERS
+    if schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+        return _V3_CAMPAIGN_BLOCKERS
     raise AnalysisPlanValidationError(
         "unsupported prospective analysis-plan schema version"
     )
@@ -2204,6 +2928,9 @@ _POPULATION_OUTCOME_SEMANTICS = _outcome_semantics_registry()
 
 __all__ = [
     "ANALYSIS_PLAN_SCHEMA_VERSION",
+    "ALL_HOUSEHOLD_TYPES_ID",
+    "ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID",
+    "CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION",
     "PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION",
     "MAX_ANALYSIS_PLAN_BYTES",
     "AnalysisEstimandRole",

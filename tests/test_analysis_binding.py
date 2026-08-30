@@ -583,7 +583,11 @@ class AnalysisBindingTests(unittest.TestCase):
             ),
             (
                 "household_type_ids",
-                tuple(sorted((valid_household, "household.typo"))),
+                (
+                    ("household.typo",)
+                    if valid_household == "household.all"
+                    else tuple(sorted((valid_household, "household.typo")))
+                ),
             ),
         )
         for field_name, values in invalid_selections:

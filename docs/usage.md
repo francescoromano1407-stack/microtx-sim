@@ -65,7 +65,29 @@ marginal initializer by default. `configs/policy_prospective.toml` selects the
 checked-in illustrative/test population inputs and the concrete plan; use
 `policy-validate` on that config for non-executing preflight. Its test
 provenance is not campaign-ready. `policy_campaign.toml` selects the checked-in
-mapping but is deliberately blocked before treatment.
+mapping and schema-v3 successor plan but is deliberately blocked before
+treatment. It must not be passed to `policy-batch` or `reproduce` while those
+gates remain closed. See [Full campaign contract and
+readiness](campaign_contract.md) for the non-executing preflight and receipt
+requirements.
+
+## Generate the fail-closed campaign preflight
+
+From a clean committed worktree, the following command re-attests the complete
+campaign contract and writes the configured execution receipt plus the
+pre-campaign validation report:
+
+```text
+python -m microtx_sim campaign-preflight configs/policy_campaign.toml
+```
+
+This command cannot initialize a cohort or run a scenario. A successful command
+means the preflight evidence was generated, not that the campaign is ready. The
+current report has `campaign_ready=false`, zero completed realizations,
+`NON_CONVERGED`, and explicit scientific blockers. If the worktree is dirty,
+receipt creation is rejected and the report records that rejection rather than
+silently trusting the changed source state.
+
 ## Run the seven-scenario batch
 
 ```text

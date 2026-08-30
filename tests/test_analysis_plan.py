@@ -13,6 +13,8 @@ import numpy as np
 from microtx_sim.agents.players import ProjectedPopulationCellMetadata
 from microtx_sim.causal.analysis_plan import (
     ANALYSIS_PLAN_SCHEMA_VERSION,
+    ALL_HOUSEHOLD_TYPES_ID,
+    ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,
     MAX_ANALYSIS_PLAN_BYTES,
     AnalysisEstimandRole,
     AnalysisPlanCampaignError,
@@ -407,6 +409,63 @@ class AnalysisPlanContractTests(unittest.TestCase):
 
 
 class PopulationInclusionPredicateTests(unittest.TestCase):
+    def test_canonical_all_income_selector_expands_over_exact_runtime_domain(self) -> None:
+        cells = (
+            _cell(
+                cell_id="be.low",
+                jurisdiction_code="BE",
+                jurisdiction_index=0,
+                age_min=10,
+                age_max=70,
+                income_band="runtime.be.income.low",
+                household_type="household.all",
+                gamer=False,
+                ever_payer=False,
+            ),
+            _cell(
+                cell_id="be.high",
+                jurisdiction_code="BE",
+                jurisdiction_index=0,
+                age_min=10,
+                age_max=70,
+                income_band="runtime.be.income.high",
+                household_type="household.all",
+                gamer=True,
+                ever_payer=True,
+            ),
+        )
+        predicate = _predicate(
+            age_min_inclusive=10,
+            age_max_exclusive=70,
+            income_bands=(ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,),
+            household_types=(ALL_HOUSEHOLD_TYPES_ID,),
+            gaming_states=(),
+            payer_states=(),
+        )
+        observed = predicate.evaluate(
+            jurisdiction_codes=("BE",),
+            jurisdiction=np.asarray([0, 0], dtype=np.int16),
+            age_years=np.asarray([20, 40], dtype=np.int16),
+            is_minor=np.asarray([False, False], dtype=np.bool_),
+            projected_cells=cells,
+            cell_indices=(0, 1),
+        )
+        np.testing.assert_array_equal(observed, np.asarray([True, True]))
+        with self.assertRaisesRegex(
+            AnalysisPlanValidationError,
+            "all-income selector must be used alone",
+        ):
+            _predicate(
+                income_bands=tuple(
+                    sorted(
+                        (
+                            ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,
+                            "runtime.be.income.low",
+                        )
+                    )
+                )
+            )
+
     def test_predicate_executes_all_joint_cell_and_player_filters(self) -> None:
         cells = (
             _cell(

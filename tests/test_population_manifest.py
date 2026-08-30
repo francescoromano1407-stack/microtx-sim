@@ -36,6 +36,10 @@ from microtx_sim.consumers.decision import DecisionParameters  # noqa: E402
 from microtx_sim.data.population_evidence import (  # noqa: E402
     PopulationGamingState,
 )
+from microtx_sim.execution_attestation import (  # noqa: E402
+    CampaignExecutionRejectedError,
+)
+from microtx_sim.outputs.export import export_policy_batch  # noqa: E402
 from microtx_sim.outputs.manifest import build_run_manifest  # noqa: E402
 from microtx_sim.policy_config import (  # noqa: E402
     AnalysisPlanSelection,
@@ -277,18 +281,20 @@ class PopulationManifestTests(unittest.TestCase):
                 "development",
             )
 
-    def test_campaign_manifest_gate_fails_closed(self) -> None:
+    def test_campaign_manifest_and_legacy_export_fail_before_writes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config, batch, _adapter, loaded, binding = self._fixture(root)
+            output = root / "campaign-output-must-not-exist"
             campaign_config = replace(
                 config,
                 run_purpose=PolicyRunPurpose.CAMPAIGN,
                 provenance_status="calibrated",
+                output=replace(config.output, output_dir=output),
             )
             with self.assertRaisesRegex(
-                ValueError,
-                "campaign population manifest gate failed closed",
+                CampaignExecutionRejectedError,
+                "legacy policy exporter is not a campaign fallback",
             ):
                 build_run_manifest(
                     campaign_config,
@@ -299,6 +305,22 @@ class PopulationManifestTests(unittest.TestCase):
                     analysis_plan=loaded,
                     analysis_binding=binding,
                 )
+            with self.assertRaisesRegex(
+                CampaignExecutionRejectedError,
+                "legacy policy exporter is not a campaign fallback",
+            ):
+                export_policy_batch(
+                    campaign_config,
+                    batch,
+                    None,
+                    config_path=CONFIG_PATH,
+                    repository_root=ROOT,
+                    output_dir=output,
+                    created_utc="2026-08-30T00:00:00+00:00",
+                    analysis_plan=loaded,
+                    analysis_binding=binding,
+                )
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

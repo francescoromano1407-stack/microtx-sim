@@ -1,11 +1,12 @@
 [meta]
-name = "four_country_weighted_population_campaign_candidate"
+name = "four_country_full_policy_campaign_BLOCKED"
 run_purpose = "campaign"
+full_campaign_config = true
 provenance_status = "illustrative"
-notes = "CAMPAIGN BLOCKED: the projected joint design is complete but model-based, unsigned, and not empirically calibrated; the prospective plan path is reserved for the separately owned schema-v2 analysis contract."
+notes = "FULL CAMPAIGN CONFIGURATION. CAMPAIGN BLOCKED: the successor plan is unregistered; projected population is illustrative and not empirically validated; parameter ranges are not calibrated distributions; population and monetary-rate uncertainty are unquantified; ECB source-bundle signature is missing; the simulation-cent bridge is illustrative. Pre-campaign validation only."
 
 [policy_run]
-seeds = [101, 202, 303]
+seeds = [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 303]
 days = 14
 player_count = 50000
 
@@ -68,13 +69,171 @@ maximum_budget_cents = 3000000
 output_dir = "artifacts/policy_campaign_BLOCKED"
 histogram_bins = 20
 include_player_rows = true
-run_sensitivity = false
+run_sensitivity = true
 
 [population]
 mode = "projected_v1"
 design_bundle_path = "../data/provenance/population_design.toml"
 runtime_mapping_bundle_path = "../data/provenance/population_runtime_mapping.json"
 adapter_id = "campaign.standardized.population.v2"
+evidence_bundle_path = "../data/provenance/population_bundle.toml"
+source_registry_path = "../data/provenance/sources.toml"
 
 [analysis_plan]
-plan_path = "../data/provenance/prospective_analysis_plan.json"
+plan_path = "../inputs/prospective-analysis-plan-amendment-v3.json"
+expected_plan_id = "illustrative.prospective.composite-harm.baseline-vs-safe.v3"
+expected_plan_sha256 = "1f27f290179cb054da10d97fce877ca9b17582f82f7d18e76788575afb18a023"
+parent_plan_path = "../inputs/prospective-analysis-plan.json"
+parent_plan_id = "illustrative.prospective.composite-harm.baseline-vs-safe.v2"
+parent_plan_sha256 = "7467f50b19d54d63ec6ab56df6e9bb5fdf580bc149688178cbe12d8da9b71c82"
+
+[campaign]
+allow_synthetic = false
+fail_closed = true
+simulation_layer = "policy_orchestrator"
+campaign_ready = false
+primary_estimand_id = "primary.composite-harm.baseline-vs-safe.v1"
+
+[uncertainty]
+seed_design = "FIXED_ASCENDING"
+minimum_retained_seeds = 100
+common_random_numbers = true
+identical_pretreatment_cohorts = true
+population_weights_within_seed = true
+outcome_dependent_seed_exclusion = false
+parameter_design_path = "../inputs/parameter-uncertainty-design-v1.json"
+parameter_design_id = "illustrative.policy-model-joint-parameters.v1"
+parameter_design_sha256 = "985c7dd6d51b40cc7de17094b899a37ca77617651be5309d75bc43bb67311dbe"
+parameter_uncertainty = "UNQUANTIFIED"
+monetary_rate_uncertainty = "UNQUANTIFIED"
+population_uncertainty = "UNQUANTIFIED"
+combined_uncertainty_required = true
+oat_role = "DIAGNOSTIC_ONLY"
+variance_decomposition_method = "ORTHOGONAL_FINITE_FULL_FACTORIAL_ANOVA_SUM_OF_SQUARES_DIVIDED_BY_N_V1"
+
+[convergence]
+block_size = 50
+minimum_retained_seeds = 100
+maximum_mcse = 0.0025
+maximum_interval_width = 0.01
+maximum_absolute_change = 0.0025
+maximum_relative_change = 0.025
+maximum_invalid_rate = 0.0
+consecutive_passing_checkpoints = 2
+sensitivity_instability_allowed = false
+required_status = "CONVERGED"
+
+[population_contract]
+design_id = "standardized-four-country-person-population-2024-v1"
+design_schema_version = "1"
+design_sha256 = "97bf32f2cc1494ecaedd2f5090184dd4c1c8d1d62de51d99cd26f0e7f13ea823"
+runtime_mapping_id = "standardized-four-country-runtime-income-v2"
+runtime_mapping_schema_version = "2"
+runtime_mapping_sha256 = "fafcf88bcac0f67a9e5e9fc8090c65dda58431a1db7ef65d155bb0ee448d062a"
+adapter_id = "campaign.standardized.population.v2"
+adapter_schema_version = "2"
+adapter_sha256 = "f732b2e49b3c561ac244c5039734bf228d88e10653fe9ad3faa7c77a1cc9a28c"
+execution_input_schema_version = "1.0"
+execution_input_sha256 = "587fcf06461353ed471d956906218f520b7f9152dd035a144aebcaeb9cf12ea5"
+assignment_schema_version = "1"
+balance_schema_version = "1.0"
+lineage_schema_version = "2.0"
+require_per_seed_execution_identity = true
+require_per_seed_assignment_identity = true
+require_per_seed_balance_identity = true
+require_per_seed_lineage_identity = true
+apportionment_method = "exact_rational_hamilton/1"
+weight_application = "WITHIN_SEED_BEFORE_CROSS_SEED_AGGREGATION"
+identical_weights_across_scenarios = true
+empirical_validation_status = "UNAVAILABLE"
+uncertainty_status = "UNQUANTIFIED"
+uncertainty_design_id = "UNAVAILABLE_NO_ADMISSIBLE_POPULATION_UNCERTAINTY_DESIGN"
+
+[monetary_contract]
+profile_path = "jurisdictions.toml"
+source_bundle_path = "../inputs/monetary/ecb-eur-fx-2024-v1/bundle.toml"
+source_artifact_path = "../inputs/monetary/ecb-eur-fx-2024-v1/artifacts/ecb_exr_annual_2024.csv"
+conversion_table_path = "../inputs/monetary/ecb-eur-fx-2024-v1/artifacts/conversion_rates.csv"
+bundle_id = "ecb-eur-fx-2024-v1"
+source_bundle_sha256 = "671a86aa8f30de590887220a19555063856444260ddd13b66b64a83737644a91"
+source_artifact_sha256 = "b0fb474d450be165866f0b0e034681132ebb984da68bf2101bd40682f1099e86"
+conversion_table_sha256 = "e1277dca9c457a0881ae7dc624f0748aa371159d91d7c081decf9ed15e0e528a"
+conversion_basis_id = "ecb-eur-fx-2024-v1.euro-cent.production-basis"
+conversion_basis_sha256 = "a560c04ae7cb4bf3fe2f1c4d53aa097bc570a9f56dc71ea5c870b26afb902d80"
+rate_evidence_sha256 = "b00e371d077f812d687f436889b3e4b85d9f2a77c74bc965ba0d78cf9fead8e6"
+target_currency = "EUR"
+target_minor_unit_name = "euro cent"
+quote_convention = "target minor units per source minor unit"
+scale_convention = "local nominal monthly anchor minor units per 180000 simulation_cents"
+rate_period_start = "2024-01-01"
+rate_period_end = "2024-12-31"
+target_price_period_start = "2024-01-01"
+target_price_period_end = "2024-12-31"
+missing_date_policy = "use the official annual observation without local date filling or imputation"
+identity_missing_date_policy = "not applicable to an identity conversion"
+rounding_method = "nearest_minor_unit_half_away_from_zero"
+rounding_scope = "AFTER_AGGREGATION"
+point_rate_status = "OFFICIAL_POINT_OBSERVATION"
+rate_uncertainty_status = "UNQUANTIFIED"
+source_bundle_signature_status = "MISSING"
+simulation_bridge_status = "ILLUSTRATIVE"
+observed_real_world_spending = false
+raw_cross_currency_pooling = "REJECT"
+
+[output_contract]
+metric_registry_schema_version = "1.0"
+metric_registry_sha256 = "1fc38d396d85cbd829bc60de0cb5d6f3c63a0996e40a74a60a431db28a32d966"
+output_schema_version = "3.0"
+output_schema_sha256 = "c5d823c3c36ec7a8d8a28acef1362d9234a4a6bf3e134abd66486ca2b38eb103"
+output_profile_id = "campaign_joint_uncertainty"
+output_profile_schema_version = "1.0"
+output_profile_sha256 = "497979c495d1829a77583d95270d3990a5a1758d2c8be02a8dd507c49c1c043e"
+expected_artifacts = [
+  "seed_results.csv",
+  "scenario_summary.csv",
+  "player_outcomes.csv",
+  "opportunity_cost_decomposition.csv",
+  "epgc_financing.csv",
+  "sensitivity.csv",
+  "manifest.json",
+  "summary.md",
+  "harm_distribution.svg",
+  "spending_distribution.svg",
+  "harm_revenue_frontier.svg",
+  "opportunity_cost_decomposition.svg",
+  "epgc_subsidy_requirement.svg",
+  "target_population_estimands.csv",
+  "target_population_estimand_metadata.json",
+  "primary_aggregate.csv",
+  "primary_aggregate_metadata.json",
+  "production_monetary_estimates.csv",
+  "production_monetary_metadata.json",
+  "uncertainty_realizations.csv",
+  "uncertainty_summary.json",
+  "convergence_checkpoints.csv",
+  "execution-receipt.json",
+  "execution-attestation.json",
+  "pre-campaign-validation-report.json",
+]
+
+[ledger]
+backend = "sqlite"
+path = "../artifacts/policy_campaign_BLOCKED/campaign-ledger.sqlite3"
+persistent = true
+temporary = false
+
+[execution_receipt]
+schema_path = "../schemas/execution-receipt.schema.json"
+schema_version = "1.0"
+identity_algorithm = "microtx_sim.execution_receipt.canonical_json_utf8.v1"
+receipt_path = "../artifacts/policy_campaign_BLOCKED/execution-receipt.json"
+attestation_path = "../artifacts/policy_campaign_BLOCKED/execution-attestation.json"
+require_clean_working_tree = true
+verify_active_commit = true
+verify_source_tree = true
+verify_interpreter = true
+verify_dependencies = true
+reject_environment_drift = true
+manifest_reference_required = true
+run_command = ["microtx-sim", "policy-batch", "configs/policy_campaign.toml"]
+execution_mode = "FULL_CAMPAIGN"

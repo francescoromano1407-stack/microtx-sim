@@ -30,6 +30,14 @@ from ..causal.analysis_plan import (
 )
 from ..causal.design import assess_causal_design
 from ..data.lineage import ProfileInputLineage
+from ..execution_attestation import (
+    CampaignExecutionRejectedError,
+    ExecutionReceipt,
+    ExecutionReceiptVerification,
+    ExecutionVerificationPhase,
+    attach_verified_execution_receipt,
+    require_campaign_execution,
+)
 from ..data.profiles import (
     ProfileValidationError,
     monetary_evidence_assessment_from_snapshot,
@@ -52,8 +60,17 @@ def build_run_manifest(
     command: Sequence[str] | None = None,
     analysis_plan: LoadedProspectiveAnalysisPlan | None = None,
     analysis_binding: RunAnalysisBinding | None = None,
+    execution_receipt: ExecutionReceipt | None = None,
+    execution_verification: ExecutionReceiptVerification | None = None,
+    execution_receipt_relative_path: str = "execution-receipt.json",
 ) -> dict[str, object]:
     """Build a self-contained run manifest without claiming empirical validity."""
+
+    require_campaign_export_attestation(
+        config,
+        execution_receipt=execution_receipt,
+        execution_verification=execution_verification,
+    )
 
     config_file = Path(config_path).resolve()
     repository = Path(repository_root).resolve()
@@ -379,7 +396,55 @@ def build_run_manifest(
             manifest["prospective_monetary_output_execution"] = (
                 monetary_lineage_payload(analysis_binding)
             )
+    if (execution_receipt is None) != (execution_verification is None):
+        raise ValueError(
+            "execution receipt and verification must be supplied together"
+        )
+    if execution_receipt is not None and execution_verification is not None:
+        manifest["campaign_ready"] = False
+        manifest = attach_verified_execution_receipt(
+            manifest,
+            receipt=execution_receipt,
+            verification=execution_verification,
+            receipt_relative_path=execution_receipt_relative_path,
+        )
     return manifest
+
+
+def require_campaign_export_attestation(
+    config: PolicyPrototypeConfig,
+    *,
+    execution_receipt: ExecutionReceipt | None,
+    execution_verification: ExecutionReceiptVerification | None,
+) -> None:
+    """Reject every campaign use of the legacy exporter unless a gate opens.
+
+    The current receipt schema deliberately fixes campaign execution
+    admissibility to false, so even a technically matching receipt cannot open
+    this path.  A future schema and dedicated joint campaign executor must
+    explicitly change that contract; legacy/prospective output must never be
+    silently relabelled as the complete campaign profile.
+    """
+
+    if not isinstance(config, PolicyPrototypeConfig):
+        raise TypeError("config must be PolicyPrototypeConfig")
+    campaign_requested = (
+        config.run_purpose is PolicyRunPurpose.CAMPAIGN
+        or config.full_campaign_config
+    )
+    if not campaign_requested:
+        return
+    if execution_receipt is None or execution_verification is None:
+        raise CampaignExecutionRejectedError(
+            "campaign export requires a verified POST_EXECUTION receipt and "
+            "the dedicated joint uncertainty/convergence output path; the "
+            "legacy policy exporter is not a campaign fallback"
+        )
+    if execution_verification.phase is not ExecutionVerificationPhase.POST_EXECUTION:
+        raise CampaignExecutionRejectedError(
+            "campaign export requires POST_EXECUTION receipt verification"
+        )
+    require_campaign_execution(execution_receipt, execution_verification)
 
 
 _LEGACY_ROOT_TABLES = (
@@ -1399,4 +1464,4 @@ def _git_state(repository: Path) -> tuple[str | None, bool | None]:
         return None, None
 
 
-__all__ = ["build_run_manifest"]
+__all__ = ["build_run_manifest", "require_campaign_export_attestation"]

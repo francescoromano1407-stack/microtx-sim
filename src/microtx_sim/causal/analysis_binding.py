@@ -56,6 +56,8 @@ from ..metrics.population_estimands import (
 from ..rng import validate_seed
 from ..simulation.policy_orchestrator import PolicyScenarioResult
 from .analysis_plan import (
+    ALL_HOUSEHOLD_TYPES_ID,
+    ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,
     PlannedPopulationEstimand,
     PopulationOutcomeMetric,
     PopulationOutcomeMetricSemantics,
@@ -736,6 +738,22 @@ def _validate_inclusion_predicate_domains(
         for field_name, domain in domains:
             requested = getattr(predicate, field_name)
             if not requested:
+                continue
+            if (
+                field_name == "monthly_disposable_income_band_ids"
+                and requested == (ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID,)
+            ):
+                # This versioned selector means the complete exact runtime
+                # income-band domain.  It preserves the parent plan's
+                # all-income population predicate when a newer mapping
+                # exposes jurisdiction-specific band identifiers.
+                continue
+            if (
+                field_name == "household_type_ids"
+                and requested == (ALL_HOUSEHOLD_TYPES_ID,)
+            ):
+                # The parent plan's all-household selector expands over the
+                # exact household domain exposed by the successor mapping.
                 continue
             missing = set(requested).difference(domain)
             if missing:
@@ -1725,8 +1743,17 @@ def _target_output_profile_sha256() -> str:
 
 
 def _plan_output_profile_sha256(plan: ProspectiveAnalysisPlan) -> str:
-    from .analysis_plan import PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
-    from ..outputs.schema import PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
+    from .analysis_plan import (
+        CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
+        PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+    )
+    from ..outputs.schema import (
+        CAMPAIGN_ANALYSIS_SCHEMA_SHA256,
+        PROSPECTIVE_ANALYSIS_SCHEMA_SHA256,
+    )
+
+    if plan.schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+        return CAMPAIGN_ANALYSIS_SCHEMA_SHA256
 
     if plan.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
         return PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
@@ -1734,8 +1761,17 @@ def _plan_output_profile_sha256(plan: ProspectiveAnalysisPlan) -> str:
 
 
 def _plan_output_profile_id(plan: ProspectiveAnalysisPlan) -> str:
-    from .analysis_plan import PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
-    from ..outputs.schema import PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE
+    from .analysis_plan import (
+        CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION,
+        PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+    )
+    from ..outputs.schema import (
+        CAMPAIGN_ANALYSIS_OUTPUT_PROFILE,
+        PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE,
+    )
+
+    if plan.schema_version == CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+        return CAMPAIGN_ANALYSIS_OUTPUT_PROFILE
 
     if plan.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
         return PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE
