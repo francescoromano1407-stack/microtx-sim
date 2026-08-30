@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 from hashlib import sha256
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -590,7 +591,6 @@ class ProfilePopulationBindingTests(unittest.TestCase):
         self.assertEqual(
             assessment.blockers,
             (
-                "population.structure=unavailable",
                 "population.source_evidence=missing",
                 "population.calibration_targets=missing",
                 "population.heldout_validation_targets=missing",
@@ -603,7 +603,7 @@ class ProfilePopulationBindingTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ProfileValidationError,
-            "population.structure=unavailable",
+            "population.source_evidence=missing",
         ):
             bundle.validate_population_for_campaign()
 
@@ -630,9 +630,9 @@ class ProfilePopulationBindingTests(unittest.TestCase):
             payload["population_evidence_summary"],
             {
                 "present": True,
-                "artifact_count": 0,
-                "binding_count": 0,
-                "verified_result_count": 0,
+                "artifact_count": 1,
+                "binding_count": 8,
+                "verified_result_count": 8,
                 "signature_status": "MISSING",
             },
         )
@@ -658,7 +658,12 @@ class ProfilePopulationBindingTests(unittest.TestCase):
             readiness["typed_assessment"],
             payload["population_evidence_assessment"],
         )
-        self.assertEqual(readiness["manifest_gate"], _FALSE_POPULATION_GATE)
+        expected_registered_gate = dict(_FALSE_POPULATION_GATE)
+        expected_registered_gate["structure_coherent"] = True
+        self.assertEqual(
+            readiness["manifest_gate"],
+            expected_registered_gate,
+        )
 
         without_lineage = _population_readiness_payload(
             payload,
@@ -754,6 +759,12 @@ class ProfilePopulationBindingTests(unittest.TestCase):
             jurisdictions.write_bytes(DEFAULT_JURISDICTIONS_PATH.read_bytes())
             sources.write_bytes(DEFAULT_SOURCES_PATH.read_bytes())
             population.write_bytes(DEFAULT_POPULATION_BUNDLE_PATH.read_bytes())
+            shutil.copytree(
+                DEFAULT_POPULATION_BUNDLE_PATH.with_name(
+                    "population_artifacts"
+                ),
+                root / "population_artifacts",
+            )
 
             bundle = load_profile_bundle(
                 jurisdictions,

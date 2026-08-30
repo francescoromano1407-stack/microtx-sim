@@ -1454,6 +1454,35 @@ def _check_household_membership(
     )
     household_sizes = household_end - household_start
     household_groups = ordered_group[household_start]
+    ordered_minor = players.is_minor[order]
+    household_minor_counts = np.add.reduceat(
+        ordered_minor.astype(np.int64, copy=False),
+        household_start,
+    )
+    household_type_by_group = tuple(key[2] for key in canonical_keys)
+    with_minor_group = np.asarray(
+        [value == "household.with-minor" for value in household_type_by_group],
+        dtype=np.bool_,
+    )
+    without_minor_group = np.asarray(
+        [
+            value in {"household.one-person", "household.multi-no-minor"}
+            for value in household_type_by_group
+        ],
+        dtype=np.bool_,
+    )
+    if np.any(
+        with_minor_group[household_groups] & (household_minor_counts == 0)
+    ):
+        raise PopulationBalanceValidationError(
+            "runtime household.with-minor group contains a household without a minor"
+        )
+    if np.any(
+        without_minor_group[household_groups] & (household_minor_counts != 0)
+    ):
+        raise PopulationBalanceValidationError(
+            "runtime no-minor household group contains a minor"
+        )
     capacity_by_group = np.asarray(
         [group_specifications[key][0] for key in canonical_keys],
         dtype=np.int64,

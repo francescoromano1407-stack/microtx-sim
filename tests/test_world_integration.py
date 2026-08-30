@@ -55,6 +55,23 @@ class _IncomeMutationIntervention:
 
 class WorldIntegrationTests(unittest.TestCase):
     @staticmethod
+    def _registered_population_selection() -> PopulationProjectionConfig:
+        root = Path(__file__).resolve().parents[1]
+        return PopulationProjectionConfig(
+            mode=PopulationExecutionMode.PROJECTED_V1,
+            design_bundle_path=(
+                root / "data" / "provenance" / "population_design.toml"
+            ),
+            runtime_mapping_bundle_path=(
+                root
+                / "data"
+                / "provenance"
+                / "population_runtime_mapping.json"
+            ),
+            adapter_id="campaign.standardized.population.v2",
+        )
+
+    @staticmethod
     def _assert_array_dataclass_equal(
         case: unittest.TestCase,
         left: object,
@@ -228,6 +245,7 @@ class WorldIntegrationTests(unittest.TestCase):
                 allow_synthetic=False,
                 ledger_backend=LedgerBackend.SQLITE,
             ),
+            population=self._registered_population_selection(),
         )
         with self.assertRaisesRegex(
             ConfigurationError,
@@ -247,6 +265,7 @@ class WorldIntegrationTests(unittest.TestCase):
                 allow_synthetic=False,
                 ledger_backend=LedgerBackend.SQLITE,
             ),
+            population=self._registered_population_selection(),
         )
         ledger = Ledger.temporary()
         fake_world = SimpleNamespace(

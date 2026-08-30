@@ -63,7 +63,7 @@ These tasks block scientific interpretation.
    identities to complete domains, declared calibration/validation source-unit
    partitions and target counts, and implements deterministic exact-rational
    Hamilton allocation with analysis and expansion weights. The checked-in
-   design is empty and `ILLUSTRATIVE`. Its record and cluster identities are
+   design is complete but `ILLUSTRATIVE`. Its record and cluster identities are
    declarations, not authenticity or independently held-out proof, so static
    schema v1 remains `campaign_ready=false` even when declarations are complete.
 
@@ -73,8 +73,8 @@ These tasks block scientific interpretation.
    static `PopulationApportionmentPlan`, consumes its exact counts and rational
    weights without a second allocation, and binds the resulting projection and
    ordered player assignment. Market and policy configurations can select it;
-   omission preserves the legacy marginal generator. No supplied configuration
-   selects it and no runtime mapping is checked in.
+   omission preserves the legacy marginal generator. The blocked campaign
+   candidate selects the checked-in schema-v2 mapping; development defaults do not.
 
    Policy batch and sensitivity execution now retain exact per-seed projection,
    cohort, weight, and pre-treatment population-balance lineage. The balance

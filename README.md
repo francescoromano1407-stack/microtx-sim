@@ -50,15 +50,18 @@ optimal funding policy.
 - A separate population-evidence bundle schema version 1 can attest exact CSV
   bytes and strict joint age × household-income-band × household-type × gaming
   × pre-treatment payer-history cells whose reduced rational masses sum exactly
-  to one. The checked-in population bundle is empty, `ILLUSTRATIVE`, unsigned,
-  and always reports `campaign_ready=false`. Schema v1 does not declare complete
+  to one. The checked-in population bundle now contains 1,728 explicit model-based
+  joint rows (calibration and validation declarations for all four jurisdictions),
+  but remains `ILLUSTRATIVE`, unsigned, and always reports
+  `campaign_ready=false`. Schema v1 does not declare complete
   income/household domains or a disjoint sample partition, so even a populated
   bundle cannot clear calibration-target or held-out-validation subgates.
 - A separate static population-design schema can bind those exact evidence
   results to complete age, income, household, gaming, and payer-history domains,
   declared calibration/validation source-unit partitions, target counts, and a
   deterministic exact-rational Hamilton apportionment plan. The checked-in
-  `population_design.toml` is also empty and `ILLUSTRATIVE`. Partition record and
+  `population_design.toml` selects a complete equal-country standardized design
+  of 40,000 design-person equivalents and remains `ILLUSTRATIVE`. Partition record and
   cluster hashes are declarations, not publisher-authenticity or independently
   held-out proof, and population-design schema v1 remains fail-closed for
   campaign use.
@@ -72,9 +75,10 @@ optimal funding policy.
   consumes its exact cell counts and rational weights without reallocating them,
   and binds the explicit conversion from source household-income/type semantics
   to runtime personal monthly disposable-income intervals and modeled household
-  sizes. No checked-in configuration selects this path and no runtime mapping
-  bundle is checked in, so the supplied runs retain the legacy marginal
-  initializer.
+  sizes. `population_runtime_mapping.json` declares the schema-v2 bounded
+  log-normal transport assumptions, and `policy_campaign.toml` selects it only as
+  a fail-closed campaign candidate. Supplied development runs still retain the
+  legacy marginal initializer unless they opt in explicitly.
 - A selected projection is content-addressed through adapter, runtime projection,
   ordered player IDs, and assignment identities. Batch and sensitivity runs
   record the same per-seed cohort, exact weights, and pre-treatment balance

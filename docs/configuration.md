@@ -112,9 +112,9 @@ coherent bundle. `CALIBRATION` and `VALIDATION` remain provenance labels only
 until a future schema binds domains, band definitions, and a disjoint holdout.
 
 Schema version 1 supports only signature status `MISSING` and always emits
-`campaign_ready=false`. The checked-in bundle has zero artifacts and bindings,
-is `ILLUSTRATIVE`, and is unsigned. It therefore selects no target population
-and supplies no calibration or held-out validation targets. Hashes prove exact
+`campaign_ready=false`. The checked-in bundle has one artifact, eight bindings,
+and 1,728 complete modeled rows, but is `ILLUSTRATIVE` and unsigned. It supplies
+neither empirical calibration nor genuinely held-out validation. Hashes prove exact
 reproduction of declared bytes and recipes, not publisher authenticity or
 calibration.
 
@@ -129,9 +129,10 @@ calibration/validation partition declarations. It can then construct a
 deterministic `exact_rational_hamilton/1` apportionment plan with exact per-cell
 analysis and expansion weights.
 
-The checked-in design is intentionally empty and `ILLUSTRATIVE`: it declares no
-age, income, or household domains, no jurisdiction targets, no evidence results,
-and no partition records. Even a declaration-complete schema-v1 design is not
+The checked-in design is complete and `ILLUSTRATIVE`: it declares six age bands,
+three income bands per jurisdiction, three household types, four equal 10,000-unit
+standardized targets, evidence results, and partition records. A declaration-complete
+schema-v1 design is not
 proof that record or cluster identities are authentic or that validation units
 were independently held out. Signed immutable source-unit keys and external
 review remain absent, so `campaign_ready` is always false.
@@ -156,9 +157,9 @@ Relative paths are resolved from the configuration file. Unknown or missing
 keys and modes other than `projected_v1` are rejected. Parsing only creates file
 locators; CLI validation and execution reopen and re-attest the files against
 the selected profile's population evidence. If the section is absent, the
-legacy marginal initializer and legacy output semantics are unchanged. None of
-the checked-in configurations contains this section, and no runtime mapping
-bundle is checked in.
+legacy marginal initializer and legacy output semantics are unchanged. The
+fail-closed `policy_campaign.toml` candidate contains this section and selects
+the checked-in schema-v2 runtime mapping; normal development configs do not.
 
 The strict JSON runtime-mapping bundle is the sole bridge from each static
 jurisdiction × household-income-band × household-type key to a runtime personal
@@ -172,9 +173,10 @@ Schema version 1 accepts exactly these JSON fields:
 
 | Object | Required fields |
 | --- | --- |
-| Bundle | `schema_version` (integer `1`), `mapping_id`, `design_id`, `design_bundle_sha256`, `domain_sha256`, `source_income_concept`, `runtime_income_concept`, and non-empty `entries` array |
+| Bundle | `schema_version` (integer `1` or `2`), `mapping_id`, `design_id`, `design_bundle_sha256`, `domain_sha256`, `source_income_concept`, `runtime_income_concept`, and non-empty `entries` array |
 | Entry source key/meaning | `jurisdiction_code`, `source_household_income_band_id`, `source_household_income_definition`, `source_household_income_currency`, `source_household_income_period`, lower/upper unbounded flags and exact rational bound pairs, `source_household_type_id`, `source_household_type_definition` |
 | Entry runtime meaning | `runtime_personal_monthly_disposable_income_band_id`, `runtime_personal_monthly_disposable_income_currency`, inclusive minimum cents, exclusive maximum cents, positive `modeled_players_per_household`, `conversion_recipe_id`, and lowercase hexadecimal `conversion_recipe_sha256` |
+| Schema-v2 income model | Exact target quantity, `LOG_NORMAL`, median cents, reduced positive rational log-sigma, matching inclusive bounds/currency/time period, source and calibration target, transformation, censoring and rounding rules, plus an explicit `NONE` minor-gaming adjustment with an insufficient-evidence reason |
 
 Entries must be in canonical source-key order, cover the design's source
 income/household keys exactly once, and cannot alias distinct source bands to
@@ -298,7 +300,8 @@ underlying parameters describe any observed game or jurisdiction.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `name` | non-empty string | Run name stored in CLI output and `manifest.json`. |
-| `provenance_status` | string | Must be exactly `synthetic`. |
+| `provenance_status` | string | Development runs require `synthetic`; campaign candidates retain an explicit status and execution separately requires `calibrated`. |
+| `run_purpose` | optional `development` or `campaign` | Defaults to `development`; `campaign` activates projected-population, plan, retained-player, and no-fallback gates. |
 | `notes` | string | Interpretation warning retained in the manifest. |
 
 ### `[policy_run]`

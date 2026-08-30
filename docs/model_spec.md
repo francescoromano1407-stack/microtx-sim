@@ -102,8 +102,8 @@ partitions and target counts, then produce deterministic exact-rational Hamilton
 cell counts and analysis/expansion weights. Its partition identities remain
 declarations, not proof of publisher authenticity or independent holdout.
 
-Both checked-in population defaults are empty and `ILLUSTRATIVE`, and no
-checked-in configuration selects projected execution. An optional
+The checked-in population evidence and design are complete but `ILLUSTRATIVE`.
+The blocked `policy_campaign.toml` candidate selects projected execution; an optional
 `[population]` section can select a strict file-backed runtime mapping and exact
 adapter. The mapping explicitly keeps source household-income/type semantics
 separate from runtime personal monthly disposable-income intervals and modeled

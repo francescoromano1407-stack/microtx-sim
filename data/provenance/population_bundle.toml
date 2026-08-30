@@ -1,11 +1,248 @@
 schema_version = 1
-bundle_id = "default-empty-population-evidence"
+bundle_id = "illustrative-four-country-joint-population-2024-v1"
 provenance_status = "ILLUSTRATIVE"
-source_registry_sha256 = "acd5093e72963d6d5906b0914512514bba7cea38fa048871130a9d5390bea870"
+source_registry_sha256 = "da65c31a1829779b24dd3665e163448c901a6df556d601f409132e090a2fc1c9"
 artifact_root = "population_artifacts"
-notes = "No immutable joint-population extracts or signature are registered; this empty bundle cannot support campaign population claims."
-artifacts = []
-bindings = []
+notes = "Complete illustrative joint recipe: P(age)*P(household|age)*P(income|age,household,jurisdiction)*P(gaming|age,jurisdiction,role)*P(payer|age,income,gaming,role). Every factor and role adjustment is stated in each binding; no additional independence is implied. Exact 10,000-unit jurisdiction counts use Hamilton floor-plus-largest-remainder integerization. Evidence household source order is canonical ordinals 2/0/1 and design construction maps semantic keys to canonical 0/1/2. Official sources are contextual anchors only; assumptions are unsigned and campaign readiness is false."
+
+[[artifacts]]
+artifact_id = "joint.population.2024"
+relative_path = "joint_population.csv"
+media_type = "text/csv"
+sha256 = "2f52f5400985dcf3b65183c4710d409d068852031c26fef5c9b8db8a1604a188"
+byte_length = 225806
+
+[[bindings]]
+binding_id = "00.be.calibration"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.be.calibration"
+jurisdiction_code = "BE"
+geography = "Belgium"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "EUR"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "CALIBRATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_BE_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"BE\",\"target_population_id\":\"standardized.person.2024.be.calibration\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "01.be.validation"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.be.validation"
+jurisdiction_code = "BE"
+geography = "Belgium"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "EUR"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "VALIDATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_BE_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"BE\",\"target_population_id\":\"standardized.person.2024.be.validation\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "02.jp.calibration"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.jp.calibration"
+jurisdiction_code = "JP"
+geography = "Japan"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "JPY"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "CALIBRATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_JP_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"JP\",\"target_population_id\":\"standardized.person.2024.jp.calibration\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "03.jp.validation"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.jp.validation"
+jurisdiction_code = "JP"
+geography = "Japan"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "JPY"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "VALIDATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_JP_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"JP\",\"target_population_id\":\"standardized.person.2024.jp.validation\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "04.kr.calibration"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.kr.calibration"
+jurisdiction_code = "KR"
+geography = "South Korea"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "KRW"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "CALIBRATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_KR_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"KR\",\"target_population_id\":\"standardized.person.2024.kr.calibration\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "05.kr.validation"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.kr.validation"
+jurisdiction_code = "KR"
+geography = "South Korea"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "KRW"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "VALIDATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_KR_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"KR\",\"target_population_id\":\"standardized.person.2024.kr.validation\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "06.uk.calibration"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.uk.calibration"
+jurisdiction_code = "UK"
+geography = "United Kingdom"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "GBP"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "CALIBRATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_UK_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"UK\",\"target_population_id\":\"standardized.person.2024.uk.calibration\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "07.uk.validation"
+artifact_id = "joint.population.2024"
+target_population_id = "standardized.person.2024.uk.validation"
+jurisdiction_code = "UK"
+geography = "United Kingdom"
+reference_period_start = 2024-01-01
+reference_period_end = 2024-12-31
+population_base = "10,000 standardized design-person units per jurisdiction; not national headcounts; canonical age-band percentage shares 10-17/18-24/25-34/35-44/45-54/55-69=BE=11/12/17/18/18/24;JP=8/10/16/19/22/25;KR=9/12/18/20/22/19;UK=12/12/17/18/18/23; exact cell counts use floor quotas then largest rational remainders with source ordinal as final tie-break"
+universe = "usual-resident gamers and non-gamers aged 10 to 69"
+unit_of_analysis = "one modeled usual-resident person/player"
+eligibility = "usual resident of UK, KR, JP, or BE and aged 10 to 69 before treatment"
+exclusion = "outside the four jurisdictions, outside the age frame, or missing any declared pre-treatment joint field"
+age_min_inclusive = 10
+age_max_exclusive = 70
+household_income_definition = "modeled annual equivalised household disposable-income band; conditional percentages by canonical age ordinal a, canonical household ordinal h, and jurisdiction shift s with BE=0;JP=2;KR=4;UK=0: low=42-4a-5h-s; high=18+3a+5h+s; middle=100-low-high"
+household_income_currency = "GBP"
+household_income_period = "annual 2024 nominal local currency"
+household_income_equivalisation = "conceptual modified-OECD basis; no source microdata transformation has been validated"
+household_definition = "canonical type order one-person/multi-no-minor/with-minor; conditional percentage matrix by canonical age ordinal=0/0/100;45/45/10;35/50/15;25/55/20;27/65/8;38/60/2; with-minor means every realized modeled household contains at least one pre-treatment minor"
+gaming_definition = "pre-treatment current-gaming percentage by canonical age ordinal=BE=84/72/59/48/38/27;JP=85/73/63/52/41/29;KR=82/78/71/62/50/35;UK=90/79/67/54/43/31; calibration uses the base percentages and validation subtracts 4 percentage points with floor 1; depends on jurisdiction, age, and estimand role only and is not caused by income"
+payer_definition = "pre-treatment EVER_PAYER percentage: if gamer, 24+7i+2*max(0,3-a), else 3+2i+max(0,2-a), where a and i are canonical age/income ordinals; validation subtracts 3 with floor 1 for gamers and adds 1 with cap 99 for non-gamers"
+zero_spender_treatment = "never-payers and non-gamers are retained explicitly; no zero-spender deletion"
+estimand_role = "VALIDATION"
+status = "ILLUSTRATIVE"
+source_ids = ["MICROTX_POP_MODEL_UK_2024"]
+retrieved_on = 2026-08-24
+recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"UK\",\"target_population_id\":\"standardized.person.2024.uk.validation\"},\"schema_version\":1}"
 
 [signature]
 status = "MISSING"

@@ -260,3 +260,143 @@ period = "current guidance retrieved 2026-08-24"
 geography = "Belgium"
 supports = ["public_funding", "qualified_expenditure", "final_certification"]
 calibration_status = "ANCHORED"
+
+[[source]]
+id = "ONS_POPULATION_MID_2024"
+publisher = "Office for National Statistics"
+title = "Population estimates for the UK, England, Wales, Scotland and Northern Ireland: mid-2024; MYE2 Persons by single year of age"
+url = "https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/populationestimatesforukenglandandwalesscotlandandnorthernireland/mid2024"
+period = "2024-06-30"
+geography = "United Kingdom"
+supports = ["age_structure", "usual_resident_population"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "DWP_FRS_2023_24"
+publisher = "UK Department for Work and Pensions"
+title = "Family Resources Survey, financial year 2023 to 2024; household, benefit-unit and individual files; UK Data Service SN 9367 edition 2"
+url = "https://doi.org/10.5255/UKDA-SN-9367-2"
+period = "2023-04-01/2024-03-31"
+geography = "United Kingdom"
+supports = ["income_by_age", "income_distribution", "household_composition", "survey_weights"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "KOSIS_POPULATION_AGE_2024"
+publisher = "Statistics Korea"
+title = "Korean population by age; KOSIS table DT_204C110_10, 2024 extract"
+url = "https://kosis.kr/statisticsList/mass/mass_list_e.jsp?list_id=204_20401&org_id=204&process=statHtml&tbl_id=DT_204C110_10&vw_cd=MT_ZTITLE"
+period = "2024"
+geography = "South Korea"
+supports = ["age_structure", "usual_resident_population"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "KOSTAT_HIES_MICRODATA"
+publisher = "Statistics Korea"
+title = "Household Income and Expenditure Survey microdata and codebook; versioned MDIS extract still required"
+url = "https://mdis.kostat.go.kr/"
+period = "2024"
+geography = "South Korea"
+supports = ["income_by_age", "income_distribution", "household_composition", "survey_weights"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "JP_POPULATION_ESTIMATES_2024"
+publisher = "Statistics Bureau of Japan"
+title = "Population Estimates 2024; e-Stat Table 1, population by single year of age and sex at 1 October 2024"
+url = "https://www.e-stat.go.jp/en/stat-search/files?cycle=7&layout=datalist&month=0&page=1&result_back=1&stat_infid=000040268910&tclass1=000001011679&tclass2val=0&toukei=00200524&tstat=000000090001&year=20240"
+period = "2024-10-01"
+geography = "Japan"
+supports = ["age_structure", "usual_resident_population"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "JP_NSFCW_2024_TABLE_7_202_1_1"
+publisher = "Statistics Bureau of Japan"
+title = "2024 National Survey of Family Income, Consumption and Wealth; Table 7-202-1-1"
+url = "https://www.e-stat.go.jp/en/dbview?sid=0004056234"
+period = "2024"
+geography = "Japan"
+supports = ["income_by_age", "income_distribution", "household_composition", "survey_weights"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "STATBEL_POPULATION_2025"
+publisher = "Statbel"
+title = "Population by place of residence, nationality, marital status, age and sex on 1 January 2025"
+url = "https://statbel.fgov.be/en/open-data/population-place-residence-nationality-marital-status-age-and-sex-16"
+period = "2025-01-01"
+geography = "Belgium"
+supports = ["age_structure", "usual_resident_population"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "STATBEL_CENSUS_HOUSEHOLD_2021"
+publisher = "Statbel"
+title = "Census 2021 population by sex, age and position in household"
+url = "https://statbel.fgov.be/nl/open-data/census-2021-bevolking-totaal-belgie-naar-geslacht-leeftijd-h-en-positie-het-huishouden-h"
+period = "2021"
+geography = "Belgium"
+supports = ["income_by_age", "household_composition"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "MICROTX_POP_MODEL_BE_2024"
+publisher = "microtx-sim project"
+title = "Illustrative Belgium joint-cell construction assumptions; not empirical evidence"
+url = "https://github.com/francescoromano1407-stack/microtx-sim/blob/main/docs/population_readiness.md"
+period = "2024"
+geography = "Belgium"
+supports = ["age_structure", "income_distribution", "household_composition", "gaming_reach", "conditional_payer_rate"]
+calibration_status = "ILLUSTRATIVE"
+
+[[source]]
+id = "MICROTX_POP_MODEL_JP_2024"
+publisher = "microtx-sim project"
+title = "Illustrative Japan joint-cell construction assumptions; not empirical evidence"
+url = "https://github.com/francescoromano1407-stack/microtx-sim/blob/main/docs/population_readiness.md"
+period = "2024"
+geography = "Japan"
+supports = ["age_structure", "income_distribution", "household_composition", "gaming_reach", "conditional_payer_rate"]
+calibration_status = "ILLUSTRATIVE"
+
+[[source]]
+id = "MICROTX_POP_MODEL_KR_2024"
+publisher = "microtx-sim project"
+title = "Illustrative South Korea joint-cell construction assumptions; not empirical evidence"
+url = "https://github.com/francescoromano1407-stack/microtx-sim/blob/main/docs/population_readiness.md"
+period = "2024"
+geography = "South Korea"
+supports = ["age_structure", "income_distribution", "household_composition", "gaming_reach", "conditional_payer_rate"]
+calibration_status = "ILLUSTRATIVE"
+
+[[source]]
+id = "MICROTX_POP_MODEL_UK_2024"
+publisher = "microtx-sim project"
+title = "Illustrative United Kingdom joint-cell construction assumptions; not empirical evidence"
+url = "https://github.com/francescoromano1407-stack/microtx-sim/blob/main/docs/population_readiness.md"
+period = "2024"
+geography = "United Kingdom"
+supports = ["age_structure", "income_distribution", "household_composition", "gaming_reach", "conditional_payer_rate"]
+calibration_status = "ILLUSTRATIVE"
+
+[[source]]
+id = "PLAYTIKA_10K_2024"
+publisher = "Playtika Holding Corp. / US Securities and Exchange Commission"
+title = "Playtika Holding Corp. Form 10-K for the year ended 31 December 2024; filed 27 February 2025"
+url = "https://www.sec.gov/Archives/edgar/data/1828016/000182801625000011/playtika-20241231.htm"
+period = "2024"
+geography = "Global company operations"
+supports = ["monetization_plausibility", "payer_conversion_range", "revenue_channel_share", "payment_processing_cost_range"]
+calibration_status = "ANCHORED"
+
+[[source]]
+id = "DOUBLEDOWN_20F_2024"
+publisher = "DoubleDown Interactive Co., Ltd. / US Securities and Exchange Commission"
+title = "DoubleDown Interactive Form 20-F for the year ended 31 December 2024; filed 21 April 2025"
+url = "https://www.sec.gov/Archives/edgar/data/1799567/000162828025018568/ddi-20241231.htm"
+period = "2024"
+geography = "Global company operations"
+supports = ["monetization_plausibility", "payer_conversion_range", "revenue_per_payer_range", "platform_cost_range"]
+calibration_status = "ANCHORED"

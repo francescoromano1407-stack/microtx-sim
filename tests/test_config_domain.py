@@ -174,6 +174,28 @@ adapter_id = "world.population.alias-rejection.v1"
         with self.assertRaisesRegex(ConfigurationError, "ledger_backend='sqlite'"):
             candidate.validate(campaign=True)
 
+    def test_campaign_requires_explicit_projected_population_without_fallback(
+        self,
+    ) -> None:
+        config = load_config(ROOT / "configs" / "smoke.toml")
+        candidate = replace(
+            config,
+            meta=replace(
+                config.meta,
+                provenance_status=ProvenanceStatus.CALIBRATED,
+            ),
+            run=replace(
+                config.run,
+                allow_synthetic=False,
+                ledger_backend=LedgerBackend.SQLITE,
+            ),
+        )
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "population.*projected_v1.*fallback",
+        ):
+            candidate.validate(campaign=True)
+
     def test_step_history_retention_is_typed_and_backward_compatible(self) -> None:
         source = (ROOT / "configs" / "smoke.toml").read_text("utf-8")
         explicit = load_config(ROOT / "configs" / "smoke.toml")

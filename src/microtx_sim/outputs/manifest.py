@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+from fractions import Fraction
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -35,7 +36,8 @@ from ..data.profiles import (
     monetary_structure_assessment_from_snapshot,
     population_evidence_assessment_from_snapshot,
 )
-from ..policy_config import PolicyPrototypeConfig
+from ..metrics.population_estimands import TARGET_POPULATION_OUTPUT_PROFILE
+from ..policy_config import PolicyPrototypeConfig, PolicyRunPurpose
 from .metric_contracts import build_metric_contract_manifest_payload
 
 
@@ -175,6 +177,40 @@ def build_run_manifest(
         }
     else:
         profile_inputs = profile_lineage.manifest_payload()
+    population_execution_payload = (
+        batch.population_execution_lineage.manifest_payload()
+        if batch.population_execution_lineage is not None
+        else None
+    )
+    population_readiness = _population_readiness_payload(
+        profile_inputs,
+        profile_lineage=profile_lineage,
+    )
+    population_output_contract = _population_output_contract(
+        config,
+        batch,
+        analysis_binding=analysis_binding,
+        population_execution_payload=population_execution_payload,
+        population_readiness=population_readiness,
+        profile_lineage=profile_lineage,
+    )
+    campaign_gate = population_output_contract["campaign_gate"]
+    if (
+        config.run_purpose is PolicyRunPurpose.CAMPAIGN
+        and (
+            not isinstance(campaign_gate, dict)
+            or campaign_gate.get("passed") is not True
+        )
+    ):
+        blockers = campaign_gate.get("blockers")
+        rendered = (
+            ", ".join(str(item) for item in blockers)
+            if isinstance(blockers, list)
+            else "population manifest gate is malformed"
+        )
+        raise ValueError(
+            "campaign population manifest gate failed closed: " + rendered
+        )
     run_input_snapshot = batch.run_input_snapshot()
     run_input_sha256 = batch.run_input_sha256()
     causal_design = assess_causal_design(
@@ -220,6 +256,7 @@ def build_run_manifest(
     )
     manifest = {
         "run_name": config.name,
+        "run_purpose": config.run_purpose.value,
         "created_utc": created_utc
         or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "provenance_status": config.provenance_status,
@@ -248,10 +285,8 @@ def build_run_manifest(
             profile_inputs,
             profile_lineage=profile_lineage,
         ),
-        "population_readiness": _population_readiness_payload(
-            profile_inputs,
-            profile_lineage=profile_lineage,
-        ),
+        "population_readiness": population_readiness,
+        "population_output_contract": population_output_contract,
         "causal_design": causal_design,
         "output_metric_contracts": output_metric_contracts,
         "repository": {
@@ -333,10 +368,8 @@ def build_run_manifest(
             "Public financing is a policy simulation, not a legal conclusion or subsidy application.",
         ],
     }
-    if batch.population_execution_lineage is not None:
-        manifest["population_execution"] = (
-            batch.population_execution_lineage.manifest_payload()
-        )
+    if population_execution_payload is not None:
+        manifest["population_execution"] = population_execution_payload
     if analysis_plan is not None and analysis_binding is not None:
         manifest["analysis_plan"] = analysis_plan.manifest_payload()
         manifest["analysis_binding"] = analysis_binding.manifest_payload()
@@ -372,6 +405,457 @@ def build_run_manifest(
                 ),
             }
     return manifest
+
+
+_LEGACY_ROOT_TABLES = (
+    "seed_results.csv",
+    "scenario_summary.csv",
+    "player_outcomes.csv",
+    "opportunity_cost_decomposition.csv",
+    "epgc_financing.csv",
+    "sensitivity.csv",
+)
+
+
+def _population_output_contract(
+    config: PolicyPrototypeConfig,
+    batch: PolicyBatchResult,
+    *,
+    analysis_binding: RunAnalysisBinding | None,
+    population_execution_payload: dict[str, object] | None,
+    population_readiness: dict[str, object],
+    profile_lineage: ProfileInputLineage | None,
+) -> dict[str, object]:
+    """Describe population semantics without changing any legacy output schema."""
+
+    lineage = batch.population_execution_lineage
+    binding_verified = analysis_binding is not None
+    prospective_profile: dict[str, object] = {
+        "binding_present": binding_verified,
+        "profile_declared": binding_verified,
+        "publication_claimed": False,
+        "publication_attestation": (
+            "published artifacts are attested separately by analysis_output_profile"
+        ),
+        "weighted": binding_verified,
+        "role": (
+            "prospective_target_population_estimands"
+            if binding_verified
+            else "unavailable"
+        ),
+        "interpretation": (
+            "exact declared target-population weighted estimands"
+            if binding_verified
+            else "no verified analysis binding; no weighted population claim"
+        ),
+        "analysis_binding_verified": binding_verified,
+        "binding_schema_version": (
+            analysis_binding.schema_version if analysis_binding is not None else None
+        ),
+        "binding_sha256": (
+            analysis_binding.binding_sha256 if analysis_binding is not None else None
+        ),
+        "output_profile_id": (
+            TARGET_POPULATION_OUTPUT_PROFILE
+            if analysis_binding is not None
+            else None
+        ),
+        "output_profile_schema_sha256": (
+            analysis_binding.output_profile_schema_sha256
+            if analysis_binding is not None
+            else None
+        ),
+        "campaign_ready": (
+            analysis_binding.campaign_ready
+            if analysis_binding is not None
+            else False
+        ),
+        "campaign_blockers": (
+            list(analysis_binding.campaign_blockers)
+            if analysis_binding is not None
+            else ["population.analysis_binding=missing"]
+        ),
+    }
+
+    projected: dict[str, object] | None = None
+    blockers: list[str] = []
+    if config.population is None:
+        blockers.append("population.configuration.projected_v1=missing")
+    if lineage is None:
+        blockers.append("population.execution_lineage=missing")
+    else:
+        # This call reopens every registered population file and re-attests the
+        # adapter, assignments, exact weights, and balance artifacts.
+        if population_execution_payload is None:
+            raise ValueError(
+                "projected population lineage lacks its re-attested manifest payload"
+            )
+        adapter = lineage.adapter
+        verification = adapter.verification
+        evidence = verification.evidence_bundle
+        design = verification.bundle
+        mapping = adapter.mapping_bundle
+        seed_profiles = [
+            _population_seed_output_profile(
+                record,
+                adapter=adapter,
+                analysis_binding=analysis_binding,
+            )
+            for record in lineage.seed_records
+        ]
+        projected = {
+            "present": True,
+            "mode": lineage.mode.value,
+            "lineage_schema_version": lineage.schema_version,
+            "lineage_sha256": lineage.lineage_sha256,
+            "population_input_sha256": lineage.input_sha256,
+            "evidence": {
+                "bundle_id": evidence.bundle_id,
+                "schema_version": evidence.schema_version,
+                "population_evidence_bundle_sha256": evidence.bundle_sha256,
+                "source_registry_sha256": evidence.source_registry_sha256,
+                "evidence_result_sha256s": [
+                    result.evidence_sha256
+                    for result in verification.evidence_results
+                ],
+                "provenance_status": evidence.provenance_status.value,
+                "campaign_ready": evidence.campaign_ready,
+                "campaign_blockers": list(evidence.campaign_blockers),
+            },
+            "design": {
+                "design_id": design.design_id,
+                "schema_version": design.schema_version,
+                "design_bundle_sha256": design.bundle_sha256,
+                "verification_sha256": verification.verification_sha256,
+                "domain_sha256": design.domain_sha256,
+                "partition_sha256": design.partition_sha256,
+                "calibration_target_sha256": (
+                    adapter.calibration_target_sha256
+                ),
+                "apportionment_sha256": adapter.apportionment_sha256,
+                "provenance_status": design.provenance_status.value,
+                "campaign_ready": design.campaign_ready,
+                "campaign_blockers": list(design.campaign_blockers),
+            },
+            "adapter": {
+                "adapter_id": adapter.adapter_id,
+                "schema_version": adapter.schema_version,
+                "adapter_sha256": adapter.adapter_sha256,
+                "runtime_projection_id": adapter.runtime_projection_id,
+                "authenticity_verified": adapter.authenticity_verified,
+                "campaign_ready": adapter.campaign_ready,
+            },
+            "runtime_mapping": {
+                "mapping_id": mapping.mapping_id,
+                "schema_version": mapping.schema_version,
+                "mapping_sha256": mapping.mapping_sha256,
+            },
+            "weight_semantics": {
+                "analysis_weight_total": (
+                    "sum of declared per-player analysis weights; never "
+                    "renormalized in the manifest"
+                ),
+                "expansion_weight_total": (
+                    "sum of adapter cell expansion weights selected by each "
+                    "seed record's exact ordered cell indices"
+                ),
+                "exact_representation": "reduced rational numerator/denominator",
+                "target_population_count": (
+                    adapter.apportionment_plan.total_population_count
+                ),
+                "target_population_count_decimal": str(
+                    adapter.apportionment_plan.total_population_count
+                ),
+            },
+            "seed_profiles": seed_profiles,
+        }
+
+        if evidence.campaign_ready is not True:
+            blockers.append("population.evidence.campaign_ready=false")
+        if design.campaign_ready is not True:
+            blockers.append("population.design.campaign_ready=false")
+        if adapter.campaign_ready is not True:
+            blockers.append("population.adapter.campaign_ready=false")
+        if adapter.authenticity_verified is not True:
+            blockers.append("population.adapter.authenticity_verified=false")
+        if mapping.schema_version < 2:
+            blockers.append("population.runtime_mapping.schema_version<2")
+        if adapter.schema_version < 2:
+            blockers.append("population.adapter.schema_version<2")
+        for seed_profile in seed_profiles:
+            full = seed_profile["full_cohort"]
+            if not isinstance(full, dict):
+                blockers.append("population.seed.full_cohort=malformed")
+                continue
+            if full.get("player_count") != batch.spec.player_count:
+                blockers.append("population.seed.full_cohort_count=mismatch")
+            if full.get("exact_analysis_weight_total") != _fraction_payload(
+                Fraction(1, 1)
+            ):
+                blockers.append("population.seed.analysis_weight_total!=1")
+            if full.get("exact_expansion_weight_total") != _fraction_payload(
+                Fraction(adapter.apportionment_plan.total_population_count, 1)
+            ):
+                blockers.append(
+                    "population.seed.expansion_weight_total!=target_population_count"
+                )
+            balance = full.get("pre_treatment_balance")
+            if not isinstance(balance, dict) or (
+                balance.get("exact_balance_passed") is not True
+            ):
+                blockers.append("population.seed.pre_treatment_balance=false")
+            selections = seed_profile.get("selected_profiles")
+            if analysis_binding is not None and (
+                not isinstance(selections, list) or not selections
+            ):
+                blockers.append("population.seed.selected_profile=missing")
+            if isinstance(selections, list):
+                for selection_profile in selections:
+                    if not isinstance(selection_profile, dict):
+                        blockers.append(
+                            "population.seed.selected_profile=malformed"
+                        )
+                        continue
+                    selected_count = selection_profile.get(
+                        "selected_player_count"
+                    )
+                    excluded_count = selection_profile.get(
+                        "excluded_player_count"
+                    )
+                    if (
+                        type(selected_count) is not int
+                        or selected_count <= 0
+                        or selected_count > batch.spec.player_count
+                        or excluded_count
+                        != batch.spec.player_count - selected_count
+                    ):
+                        blockers.append(
+                            "population.seed.selected_excluded_counts=invalid"
+                        )
+                    selected_weight = selection_profile.get(
+                        "exact_analysis_weight_total"
+                    )
+                    selected_expansion = selection_profile.get(
+                        "exact_expansion_weight_total"
+                    )
+                    if not _positive_fraction_payload(selected_weight):
+                        blockers.append(
+                            "population.seed.selected_analysis_weight_total<=0"
+                        )
+                    if not _positive_fraction_payload(selected_expansion):
+                        blockers.append(
+                            "population.seed.selected_expansion_weight_total<=0"
+                        )
+
+    if config.provenance_status != "calibrated":
+        blockers.append("population.configuration.provenance_status!=calibrated")
+    if config.batch.player_count <= 0:
+        blockers.append("population.configuration.player_count<=0")
+    if not config.output.include_player_rows:
+        blockers.append("population.configuration.include_player_rows=false")
+    if config.analysis_plan is None:
+        blockers.append("population.analysis_plan=missing")
+    if analysis_binding is None:
+        blockers.append("population.analysis_binding=missing")
+    elif analysis_binding.campaign_ready is not True:
+        blockers.append("population.analysis_binding.campaign_ready=false")
+    if analysis_binding is not None and (
+        analysis_binding.plan.campaign_ready is not True
+    ):
+        blockers.append("population.analysis_plan.campaign_ready=false")
+    if prospective_profile["weighted"] is not True:
+        blockers.append("population.prospective_output.weighted=false")
+    if profile_lineage is None:
+        blockers.append("population.profile_lineage=missing")
+    readiness_gate = population_readiness["manifest_gate"]
+    if not isinstance(readiness_gate, dict) or (
+        readiness_gate.get("public_population_comparability") is not True
+    ):
+        blockers.append("population.profile_evidence.comparability=false")
+
+    blockers = sorted(set(blockers))
+    gate_passed = not blockers
+    campaign_requested = config.run_purpose is PolicyRunPurpose.CAMPAIGN
+    return {
+        "schema_version": "1.0",
+        "run_purpose": config.run_purpose.value,
+        "legacy_root_tables": {
+            "artifact_files": list(_LEGACY_ROOT_TABLES),
+            "weighted": False,
+            "population_weighting_applied": False,
+            "population_estimate": False,
+            "role": "diagnostic",
+            "interpretation": "unweighted synthetic-player summaries",
+            "units_reinterpreted": False,
+        },
+        "prospective_population_profile": prospective_profile,
+        "projected_population_lineage": projected,
+        "campaign_gate": {
+            "enforced": campaign_requested,
+            "passed": gate_passed,
+            "campaign_ready": campaign_requested and gate_passed,
+            "blockers": blockers,
+        },
+    }
+
+
+def _population_seed_output_profile(
+    record,
+    *,
+    adapter,
+    analysis_binding: RunAnalysisBinding | None,
+) -> dict[str, object]:
+    """Return exact full and selected population totals for one seed."""
+
+    full_count = len(record.exact_weights.player_ids)
+    position_by_player_id = {
+        player_id: position
+        for position, player_id in enumerate(record.exact_weights.player_ids)
+    }
+    full_expansion_total = _expansion_weight_total(
+        record,
+        adapter=adapter,
+        player_ids=record.exact_weights.player_ids,
+        position_by_player_id=position_by_player_id,
+    )
+    selected_profiles: list[dict[str, object]] = []
+    if analysis_binding is not None:
+        for item in analysis_binding.seed_bindings:
+            if item.seed != record.seed:
+                continue
+            selected_count = item.selected_player_count
+            selected_profiles.append(
+                {
+                    "planned_estimand_id": item.planned_estimand.estimand_id,
+                    "resolved_estimand_id": item.spec.estimand_id,
+                    "target_population_id": item.spec.target_population_id,
+                    "target_evidence_sha256": item.spec.target_evidence_sha256,
+                    "estimand_sha256": item.spec.estimand_sha256,
+                    "result_sha256": item.result.result_sha256,
+                    "estimand_role": item.planned_estimand.role.value,
+                    "full_player_count": full_count,
+                    "full_player_count_decimal": str(full_count),
+                    "selected_player_count": selected_count,
+                    "selected_player_count_decimal": str(selected_count),
+                    "excluded_player_count": full_count - selected_count,
+                    "excluded_player_count_decimal": str(
+                        full_count - selected_count
+                    ),
+                    "exact_analysis_weight_total": _fraction_payload(
+                        item.selected_weights.weight_sum
+                    ),
+                    "exact_expansion_weight_total": _fraction_payload(
+                        _expansion_weight_total(
+                            record,
+                            adapter=adapter,
+                            player_ids=item.selected_weights.player_ids,
+                            position_by_player_id=position_by_player_id,
+                        )
+                    ),
+                    "selected_design_weights_sha256": (
+                        item.selected_weights.design_sha256
+                    ),
+                    "balance_report_sha256": item.spec.balance_report_sha256,
+                    "adapter_sha256": adapter.adapter_sha256,
+                    "eligibility_sha256": item.eligibility_sha256,
+                    "metric_contract_sha256": item.metric_contract_sha256,
+                    "runtime_projection_sha256": (
+                        record.runtime_projection_sha256
+                    ),
+                    "assignment_sha256": record.assignment_sha256,
+                    "balance_sha256": record.balance.balance_sha256,
+                    "exact_balance_passed": (
+                        record.balance.exact_balance_passed
+                    ),
+                    "population_seed_record_sha256": (
+                        item.population_seed_record_sha256
+                    ),
+                    "binding_sha256": item.binding_sha256,
+                }
+            )
+    return {
+        "seed": record.seed,
+        "seed_decimal": str(record.seed),
+        "seed_record_sha256": record.seed_record_sha256,
+        "full_cohort": {
+            "player_count": full_count,
+            "player_count_decimal": str(full_count),
+            "exact_analysis_weight_total": _fraction_payload(
+                record.exact_weights.weight_sum
+            ),
+            "exact_expansion_weight_total": _fraction_payload(
+                full_expansion_total
+            ),
+            "exact_target_population_total": _fraction_payload(
+                Fraction(adapter.apportionment_plan.total_population_count, 1)
+            ),
+            "exact_weights_sha256": record.exact_weights.design_sha256,
+            "adapter_sha256": adapter.adapter_sha256,
+            "cell_identity": {
+                "cell_count": len(adapter.cells),
+                "domain_sha256": adapter.apportionment_plan.domain_sha256,
+                "runtime_projection_id": adapter.runtime_projection_id,
+                "runtime_projection_sha256": record.runtime_projection_sha256,
+                "assignment_sha256": record.assignment_sha256,
+                "ordered_player_ids_sha256": record.ordered_player_ids_sha256,
+            },
+            "pre_treatment_balance": {
+                "schema_version": record.balance.schema_version,
+                "balance_sha256": record.balance.balance_sha256,
+                "runtime_membership_sha256": (
+                    record.balance.runtime_membership.membership_sha256
+                ),
+                "exact_balance_passed": record.balance.exact_balance_passed,
+            },
+        },
+        "selected_profiles_available": bool(selected_profiles),
+        "selected_profiles": selected_profiles,
+    }
+
+
+def _expansion_weight_total(
+    record,
+    *,
+    adapter,
+    player_ids: tuple[int, ...],
+    position_by_player_id: dict[int, int],
+) -> Fraction:
+    """Derive an exact expansion total from adapter cells and seed indices."""
+
+    total = Fraction(0, 1)
+    for player_id in player_ids:
+        try:
+            position = position_by_player_id[player_id]
+            cell_index = record.cell_indices[position]
+            expansion_weight = adapter.cells[cell_index].expansion_weight
+        except (KeyError, IndexError) as exc:
+            raise ValueError(
+                "selected population cannot be mapped to exact expansion weights"
+            ) from exc
+        total += Fraction(*expansion_weight)
+    return total
+
+
+def _fraction_payload(value: Fraction) -> dict[str, object]:
+    if type(value) is not Fraction:
+        raise TypeError("exact population total must be fractions.Fraction")
+    return {
+        "numerator": value.numerator,
+        "denominator": value.denominator,
+        "numerator_decimal": str(value.numerator),
+        "denominator_decimal": str(value.denominator),
+    }
+
+
+def _positive_fraction_payload(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    try:
+        numerator = int(str(value["numerator_decimal"]))
+        denominator = int(str(value["denominator_decimal"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return numerator > 0 and denominator > 0
 
 
 def _validate_analysis_composition(
@@ -456,6 +940,7 @@ def _effective_config_snapshot(
     payload = {
         "meta": {
             "name": config.name,
+            "run_purpose": config.run_purpose.value,
             "provenance_status": config.provenance_status,
             "notes": config.notes,
         },

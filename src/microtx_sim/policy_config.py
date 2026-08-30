@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import os
 from pathlib import Path
 from typing import Mapping
@@ -22,6 +23,13 @@ from .simulation.policy_orchestrator import ProducerAssumptions
 
 class PolicyConfigurationError(ValueError):
     """Raised when the policy-prototype configuration is ambiguous or unsafe."""
+
+
+class PolicyRunPurpose(str, Enum):
+    """Whether a policy configuration is developmental or campaign-intended."""
+
+    DEVELOPMENT = "development"
+    CAMPAIGN = "campaign"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,13 +84,27 @@ class PolicyPrototypeConfig:
     output: PolicyOutputConfig
     population: PopulationProjectionConfig | None = None
     analysis_plan: AnalysisPlanSelection | None = None
+    run_purpose: PolicyRunPurpose = PolicyRunPurpose.DEVELOPMENT
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("configuration name cannot be empty")
-        if self.provenance_status != "synthetic":
+        if type(self.run_purpose) is not PolicyRunPurpose:
+            raise TypeError("run_purpose must be PolicyRunPurpose")
+        allowed_provenance = {
+            "synthetic",
+            "illustrative",
+            "anchored",
+            "calibrated",
+        }
+        if self.provenance_status not in allowed_provenance:
+            raise ValueError("policy provenance_status is unsupported")
+        if (
+            self.run_purpose is PolicyRunPurpose.DEVELOPMENT
+            and self.provenance_status != "synthetic"
+        ):
             raise ValueError(
-                "the policy prototype accepts synthetic provenance only"
+                "development policy runs require provenance_status = 'synthetic'"
             )
         if self.population is not None and type(
             self.population
@@ -96,6 +118,28 @@ class PolicyPrototypeConfig:
             raise TypeError(
                 "analysis_plan must be AnalysisPlanSelection or None"
             )
+        if self.run_purpose is PolicyRunPurpose.CAMPAIGN:
+            if self.population is None:
+                raise ValueError(
+                    "campaign policy runs require [population] with "
+                    "mode = 'projected_v1'"
+                )
+            if self.population.mode.value != "projected_v1":
+                raise ValueError(
+                    "campaign policy runs require population.mode = 'projected_v1'"
+                )
+            if self.analysis_plan is None:
+                raise ValueError(
+                    "campaign policy runs require an [analysis_plan] selection"
+                )
+            if self.batch.player_count <= 0:
+                raise ValueError(
+                    "campaign policy runs require a positive player cohort"
+                )
+            if not self.output.include_player_rows:
+                raise ValueError(
+                    "campaign policy runs require output.include_player_rows = true"
+                )
         if self.analysis_plan is not None and self.population is None:
             raise ValueError(
                 "analysis_plan requires projected population execution"
@@ -135,7 +179,12 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             raw.get("analysis_plan"),
             config_path=config_path,
         )
-        _exact_keys(meta, {"name", "provenance_status", "notes"}, "meta")
+        _required_and_optional_keys(
+            meta,
+            {"name", "provenance_status", "notes"},
+            {"run_purpose"},
+            "meta",
+        )
         _exact_keys(run, {"seeds", "days", "player_count"}, "policy_run")
         _exact_keys(
             decision,
@@ -251,6 +300,7 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             ),
             population=population,
             analysis_plan=analysis_plan,
+            run_purpose=_policy_run_purpose(meta.get("run_purpose")),
         )
     except (KeyError, TypeError, ValueError, OSError) as exc:
         if isinstance(exc, PolicyConfigurationError):
@@ -313,6 +363,32 @@ def _analysis_plan_selection(
     )
 
 
+def _policy_run_purpose(value: object) -> PolicyRunPurpose:
+    if value is None:
+        return PolicyRunPurpose.DEVELOPMENT
+    try:
+        return PolicyRunPurpose(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "meta.run_purpose must be 'development' or 'campaign'"
+        ) from exc
+
+
+def _required_and_optional_keys(
+    values: Mapping[str, object],
+    required: set[str],
+    optional: set[str],
+    name: str,
+) -> None:
+    actual = set(values)
+    missing = sorted(required - actual)
+    unknown = sorted(actual - required - optional)
+    if missing or unknown:
+        raise PolicyConfigurationError(
+            f"{name} keys differ: missing={missing}, unknown={unknown}"
+        )
+
+
 def _exact_keys(
     values: Mapping[str, object], expected: set[str], name: str
 ) -> None:
@@ -330,6 +406,7 @@ __all__ = [
     "PolicyConfigurationError",
     "PolicyOutputConfig",
     "PolicyPrototypeConfig",
+    "PolicyRunPurpose",
     "PopulationProjectionConfig",
     "load_policy_config",
 ]

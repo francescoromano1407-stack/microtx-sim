@@ -45,6 +45,8 @@ from .population_evidence import (
     verify_population_evidence_bundle,
 )
 from .population_projection import (
+    POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2,
+    POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2,
     PopulationProjectionAdapter,
     PopulationProjectionExecution,
     build_population_projection_adapter,
@@ -59,6 +61,16 @@ from .profiles import ProfileBundle
 
 POPULATION_EXECUTION_INPUT_SCHEMA_VERSION = "1.0"
 POPULATION_EXECUTION_LINEAGE_SCHEMA_VERSION = "2.0"
+CAMPAIGN_POPULATION_ADAPTER_ID = "campaign.standardized.population.v2"
+CAMPAIGN_POPULATION_EVIDENCE_BUNDLE_ID = (
+    "illustrative-four-country-joint-population-2024-v1"
+)
+CAMPAIGN_POPULATION_DESIGN_ID = (
+    "standardized-four-country-person-population-2024-v1"
+)
+CAMPAIGN_POPULATION_RUNTIME_MAPPING_ID = (
+    "standardized-four-country-runtime-income-v2"
+)
 
 _CAMPAIGN_BLOCKERS = (
     "population.source_authenticity=not_verified",
@@ -78,6 +90,7 @@ def resolve_population_projection_adapter(
     *,
     player_count: int,
     first_player_id: int = 0,
+    campaign: bool = False,
 ) -> PopulationProjectionAdapter:
     """Resolve one configured adapter against the selected profile evidence.
 
@@ -87,6 +100,8 @@ def resolve_population_projection_adapter(
 
     if type(selection) is not PopulationProjectionConfig:
         raise TypeError("selection must be PopulationProjectionConfig")
+    if type(campaign) is not bool:
+        raise TypeError("campaign must be a strict boolean")
     if selection.mode is not PopulationExecutionMode.PROJECTED_V1:
         raise PopulationExecutionValidationError(
             "unsupported population execution mode"
@@ -116,12 +131,116 @@ def resolve_population_projection_adapter(
     mapping = load_population_runtime_mapping_bundle(
         selection.runtime_mapping_bundle_path
     )
-    return build_population_projection_adapter(
+    adapter = build_population_projection_adapter(
         verification,
         plan,
         mapping,
         adapter_id=selection.adapter_id,
     )
+    if campaign:
+        return validate_population_campaign_preflight(adapter)
+    return adapter
+
+
+def validate_population_campaign_preflight(
+    adapter: PopulationProjectionAdapter,
+) -> PopulationProjectionAdapter:
+    """Re-attest every population input required before campaign treatment.
+
+    This gate intentionally evaluates the exact verified objects rather than a
+    caller-controlled readiness flag.  Schema-v1 evidence/design declarations
+    remain incapable of passing because their authenticity, signature, and
+    held-out validation contracts are incomplete.
+    """
+
+    observed = verify_population_projection_adapter(adapter)
+    blockers: list[str] = []
+    verification = observed.verification
+    try:
+        verification.evidence_bundle.validate_for_campaign()
+    except ValueError as exc:
+        blockers.append(str(exc))
+    try:
+        verification.bundle.validate_for_campaign()
+    except ValueError as exc:
+        blockers.append(str(exc))
+    expected_codes = {"BE", "JP", "KR", "UK"}
+    observed_codes = {
+        item.jurisdiction_code for item in verification.bundle.jurisdictions
+    }
+    if observed_codes != expected_codes:
+        blockers.append(
+            "population_jurisdictions=" + ",".join(sorted(observed_codes))
+        )
+    if observed.adapter_id != CAMPAIGN_POPULATION_ADAPTER_ID:
+        blockers.append("population_adapter_id=" + observed.adapter_id)
+    if not observed.authenticity_verified:
+        blockers.append("population_adapter_authenticity=not_verified")
+    if not observed.campaign_ready:
+        blockers.append("population_adapter_campaign_ready=false")
+    if (
+        verification.evidence_bundle.bundle_id
+        != CAMPAIGN_POPULATION_EVIDENCE_BUNDLE_ID
+    ):
+        blockers.append(
+            "population_evidence_bundle_id="
+            + verification.evidence_bundle.bundle_id
+        )
+    if verification.bundle.design_id != CAMPAIGN_POPULATION_DESIGN_ID:
+        blockers.append("population_design_id=" + verification.bundle.design_id)
+    mapping = observed.mapping_bundle
+    if mapping.mapping_id != CAMPAIGN_POPULATION_RUNTIME_MAPPING_ID:
+        blockers.append("population_runtime_mapping_id=" + mapping.mapping_id)
+    evidence_sources_by_jurisdiction: dict[str, set[str]] = {}
+    for binding in verification.evidence_bundle.bindings:
+        evidence_sources_by_jurisdiction.setdefault(
+            binding.jurisdiction_code,
+            set(),
+        ).update(binding.source_ids)
+    unbound_mapping_sources = sorted(
+        {
+            (
+                entry.jurisdiction_code,
+                entry.income_model.source_id
+                if entry.income_model is not None
+                else "missing-income-model",
+            )
+            for entry in mapping.entries
+            if entry.income_model is None
+            or entry.income_model.source_id
+            not in evidence_sources_by_jurisdiction.get(
+                entry.jurisdiction_code,
+                set(),
+            )
+        }
+    )
+    if unbound_mapping_sources:
+        blockers.append(
+            "population_runtime_mapping_sources_unbound="
+            + ",".join(
+                f"{code}:{source_id}"
+                for code, source_id in unbound_mapping_sources
+            )
+        )
+    if mapping.schema_version != POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2:
+        blockers.append(
+            "population_runtime_mapping_schema_version="
+            + str(mapping.schema_version)
+        )
+    if observed.schema_version != POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2:
+        blockers.append(
+            "population_adapter_schema_version=" + str(observed.schema_version)
+        )
+    if not mapping.entries:
+        blockers.append("population_runtime_mapping_empty")
+    if observed.apportionment_plan.player_count <= 0:
+        blockers.append("population_projected_cohort_empty")
+    if blockers:
+        raise PopulationExecutionValidationError(
+            "campaign population preflight failed before treatment: "
+            + " | ".join(blockers)
+        )
+    return observed
 
 
 def population_execution_input_snapshot(
@@ -762,6 +881,10 @@ def _canonical_sha256(payload: object) -> str:
 
 
 __all__ = [
+    "CAMPAIGN_POPULATION_ADAPTER_ID",
+    "CAMPAIGN_POPULATION_DESIGN_ID",
+    "CAMPAIGN_POPULATION_EVIDENCE_BUNDLE_ID",
+    "CAMPAIGN_POPULATION_RUNTIME_MAPPING_ID",
     "POPULATION_EXECUTION_INPUT_SCHEMA_VERSION",
     "POPULATION_EXECUTION_LINEAGE_SCHEMA_VERSION",
     "PopulationExecutionLineage",
@@ -773,4 +896,5 @@ __all__ = [
     "population_execution_input_snapshot",
     "population_policy_pretreatment_sha256",
     "resolve_population_projection_adapter",
+    "validate_population_campaign_preflight",
 ]
