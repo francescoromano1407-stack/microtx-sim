@@ -17,6 +17,7 @@ claims and should be read before interpreting any simulation output.
 | [Causal design](causal_design.md) | Estimand, paired worlds, common random numbers, interventions, assumptions, and future campaign design. |
 | [Prospective analysis plan](analysis_plan.md) | Concrete opt-in plan, pre-run validation, exact run binding, plan-level Monte Carlo aggregate, and fail-closed campaign scope. |
 | [Full campaign contract](campaign_contract.md) | Successor-plan binding, uncertainty and convergence, execution attestation, layer boundaries, and fail-closed readiness states. |
+| [Exploratory synthetic campaign](exploratory_synthetic_campaign.md) | Separate non-empirical run purpose, dual plan binding, interpretation limits, and validation-only review gate. |
 
 ## Running and extending the project
 
@@ -50,6 +51,12 @@ convergence contracts, projected population and monetary inputs, a persistent
 ledger, and execution attestation. It remains deliberately blocked and was not
 executed. Its hashes establish identity only, and its unavailable scientific
 inputs cannot be replaced by zero-variance assumptions or readiness labels.
+
+`configs/policy_exploratory_synthetic.toml` is a third, explicitly exploratory
+configuration. It preserves the scientific parent estimand while binding a
+separate non-empirical sidecar plan and isolated output namespace. It does not
+alter the production configuration or inherit production authority. It has
+not been executed and remains `campaign_ready=false`.
 
 Population evidence/design, an optional exact runtime mapping/adapter, per-seed
 projection and pre-treatment balance lineage, and a separate two-file target-

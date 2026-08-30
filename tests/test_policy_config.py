@@ -8,6 +8,15 @@ from unittest.mock import patch
 from microtx_sim.cli import _policy_batch
 from microtx_sim.policy_config import (
     AnalysisPlanSelection,
+    EXPLORATORY_ARTIFACT_NAMESPACE,
+    EXPLORATORY_ESTIMAND_INTERPRETATION,
+    EXPLORATORY_EXECUTION_KIND,
+    EXPLORATORY_INTERNAL_MONETARY_UNIT,
+    EXPLORATORY_MONETARY_AMOUNT_SEMANTICS,
+    EXPLORATORY_PLAN_ID,
+    EXPLORATORY_POPULATION_BASIS,
+    EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE,
+    EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE,
     PolicyConfigurationError,
     PolicyRunPurpose,
     PolicySimulationLayer,
@@ -20,6 +29,92 @@ from microtx_sim.config import PopulationExecutionMode
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "policy_prototype.toml"
 CAMPAIGN_CONFIG = ROOT / "configs" / "policy_campaign.toml"
+EXPLORATORY_CONFIG = ROOT / "configs" / "policy_exploratory_synthetic.toml"
+
+
+def _without_toml_tables(text: str, *table_names: str) -> str:
+    omitted = set(table_names)
+    output: list[str] = []
+    skipping = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            skipping = stripped[1:-1] in omitted
+        if not skipping:
+            output.append(line)
+    return "\n".join(output).rstrip() + "\n"
+
+
+def _toml_table(text: str, table_name: str) -> str:
+    output: list[str] = []
+    copying = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current = stripped[1:-1]
+            if copying and current != table_name:
+                break
+            copying = current == table_name
+        if copying:
+            output.append(line)
+    if not output:
+        raise AssertionError(f"missing TOML table {table_name}")
+    return "\n".join(output) + "\n"
+
+
+def _exploratory_config_text() -> str:
+    original = CAMPAIGN_CONFIG.read_text("utf-8")
+    selected = _without_toml_tables(
+        original,
+        "campaign",
+        "output_contract",
+        "execution_receipt",
+    )
+    selected = selected.replace(
+        'run_purpose = "campaign"\nfull_campaign_config = true',
+        (
+            'run_purpose = "exploratory"\n'
+            "full_campaign_config = false\n"
+            "full_exploratory_config = true"
+        ),
+        1,
+    )
+    selected = selected.replace(
+        'output_dir = "artifacts/policy_campaign_BLOCKED"',
+        'output_dir = "artifacts/policy_exploratory_synthetic"',
+        1,
+    ).replace(
+        "../artifacts/policy_campaign_BLOCKED/campaign-ledger.sqlite3",
+        (
+            "../artifacts/policy_exploratory_synthetic/"
+            "exploratory-ledger.sqlite3"
+        ),
+        1,
+    )
+    return selected + """
+[exploratory]
+exploratory_plan_path = "../inputs/exploratory-synthetic-analysis-plan-v1.json"
+exploratory_plan_id = "illustrative.exploratory.synthetic.composite-harm.baseline-vs-safe.v1"
+exploratory_plan_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+artifact_namespace = "policy_exploratory_synthetic"
+execution_kind = "COMPUTATIONAL_SIMULATION"
+population_basis = "ILLUSTRATIVE_NON_EMPIRICAL"
+estimand_interpretation = "CONDITIONAL_ON_MODEL_ASSUMPTIONS"
+monetary_amount_semantics = "SYNTHETIC_MODEL_EQUIVALENT_NOT_OBSERVED_SPENDING"
+unweighted_output_role = "DIAGNOSTIC_ONLY"
+internal_monetary_unit = "simulation_cents"
+raw_internal_unit_output_role = "DIAGNOSTIC_ONLY_NOT_A_CROSS_COUNTRY_MONETARY_RESULT"
+allow_synthetic = true
+campaign_ready = false
+production_campaign = false
+empirical_claims = false
+population_inference_claims = false
+causal_claims = false
+generalisation_claims = false
+identical_pretreatment_cohorts = true
+identical_population_weights_across_scenarios = true
+primary_estimand_id = "primary.composite-harm.baseline-vs-safe.v1"
+"""
 
 
 class PolicyConfigTests(unittest.TestCase):
@@ -91,6 +186,208 @@ class PolicyConfigTests(unittest.TestCase):
         self.assertFalse(config.ledger.temporary)
         assert config.execution_receipt is not None
         self.assertTrue(config.execution_receipt.require_clean_working_tree)
+        self.assertFalse(config.full_exploratory_config)
+        self.assertIsNone(config.exploratory)
+
+    def test_full_exploratory_contract_is_explicit_and_non_production(self) -> None:
+        config = load_policy_config(EXPLORATORY_CONFIG)
+
+        self.assertIs(config.run_purpose, PolicyRunPurpose.EXPLORATORY)
+        self.assertTrue(config.full_exploratory_config)
+        self.assertFalse(config.full_campaign_config)
+        self.assertIsNone(config.campaign)
+        self.assertIsNone(config.output_contract)
+        self.assertIsNone(config.execution_receipt)
+        exploratory = config.exploratory
+        assert exploratory is not None
+        self.assertEqual(exploratory.exploratory_plan_id, EXPLORATORY_PLAN_ID)
+        self.assertEqual(
+            exploratory.exploratory_plan_sha256,
+            "5915bc42752dd77b984a67bdab5a79a040d99fc84f381de2d3aeb4c813bc2414",
+        )
+        self.assertEqual(
+            exploratory.artifact_namespace,
+            EXPLORATORY_ARTIFACT_NAMESPACE,
+        )
+        self.assertEqual(exploratory.execution_kind, EXPLORATORY_EXECUTION_KIND)
+        self.assertEqual(
+            exploratory.population_basis,
+            EXPLORATORY_POPULATION_BASIS,
+        )
+        self.assertEqual(
+            exploratory.estimand_interpretation,
+            EXPLORATORY_ESTIMAND_INTERPRETATION,
+        )
+        self.assertEqual(
+            exploratory.monetary_amount_semantics,
+            EXPLORATORY_MONETARY_AMOUNT_SEMANTICS,
+        )
+        self.assertEqual(
+            exploratory.unweighted_output_role,
+            EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE,
+        )
+        self.assertEqual(
+            exploratory.internal_monetary_unit,
+            EXPLORATORY_INTERNAL_MONETARY_UNIT,
+        )
+        self.assertEqual(
+            exploratory.raw_internal_unit_output_role,
+            EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE,
+        )
+        self.assertTrue(exploratory.allow_synthetic)
+        for name in (
+            "campaign_ready",
+            "production_campaign",
+            "empirical_claims",
+            "population_inference_claims",
+            "causal_claims",
+            "generalisation_claims",
+        ):
+            self.assertFalse(getattr(exploratory, name), name)
+        self.assertTrue(exploratory.identical_pretreatment_cohorts)
+        self.assertTrue(
+            exploratory.identical_population_weights_across_scenarios
+        )
+        self.assertEqual(
+            config.output.output_dir,
+            Path("artifacts/policy_exploratory_synthetic"),
+        )
+        assert config.ledger is not None
+        self.assertEqual(
+            config.ledger.path.parent.name,
+            EXPLORATORY_ARTIFACT_NAMESPACE,
+        )
+        assert config.analysis_plan is not None
+        self.assertEqual(
+            config.analysis_plan.expected_plan_id,
+            "illustrative.prospective.composite-harm.baseline-vs-safe.v3",
+        )
+        self.assertEqual(
+            config.analysis_plan.parent_plan_id,
+            "illustrative.prospective.composite-harm.baseline-vs-safe.v2",
+        )
+
+    def test_full_exploratory_claims_labels_and_paths_fail_closed(self) -> None:
+        original = _exploratory_config_text()
+        mutations = (
+            (
+                'exploratory_plan_id = "illustrative.exploratory.synthetic.composite-harm.baseline-vs-safe.v1"',
+                'exploratory_plan_id = "illustrative.exploratory.synthetic.other.v1"',
+                "must select the versioned synthetic exploratory sidecar",
+            ),
+            (
+                'exploratory_plan_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"',
+                'exploratory_plan_sha256 = "BLOCKED_PENDING_EXPLORATORY_PLAN"',
+                "must be a resolved lowercase SHA-256",
+            ),
+            ("allow_synthetic = true", "allow_synthetic = false", "must be true"),
+            ("campaign_ready = false", "campaign_ready = true", "must be false"),
+            (
+                "production_campaign = false",
+                "production_campaign = true",
+                "must be false",
+            ),
+            ("empirical_claims = false", "empirical_claims = true", "must be false"),
+            (
+                "population_inference_claims = false",
+                "population_inference_claims = true",
+                "must be false",
+            ),
+            ("causal_claims = false", "causal_claims = true", "must be false"),
+            (
+                "generalisation_claims = false",
+                "generalisation_claims = true",
+                "must be false",
+            ),
+            (
+                'execution_kind = "COMPUTATIONAL_SIMULATION"',
+                'execution_kind = "PRODUCTION"',
+                "COMPUTATIONAL_SIMULATION",
+            ),
+            (
+                'internal_monetary_unit = "simulation_cents"',
+                'internal_monetary_unit = "EUR"',
+                "simulation_cents",
+            ),
+            (
+                'output_dir = "artifacts/policy_exploratory_synthetic"',
+                'output_dir = "artifacts/policy_campaign_BLOCKED"',
+                "output_dir must be isolated",
+            ),
+            (
+                "../artifacts/policy_exploratory_synthetic/exploratory-ledger.sqlite3",
+                "../artifacts/policy_campaign_BLOCKED/campaign-ledger.sqlite3",
+                "ledger path must be the isolated",
+            ),
+            (
+                'expected_plan_sha256 = "1f27f290179cb054da10d97fce877ca9b17582f82f7d18e76788575afb18a023"',
+                'expected_plan_sha256 = "BLOCKED_PENDING_PARENT_PLAN"',
+                "identities must use resolved lowercase SHA-256",
+            ),
+            (
+                'expected_plan_id = "illustrative.prospective.composite-harm.baseline-vs-safe.v3"',
+                'expected_plan_id = "illustrative.prospective.composite-harm.baseline-vs-safe.v4"',
+                "must retain the production-v3 scientific analysis plan binding",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, (old, new, message) in enumerate(mutations):
+                with self.subTest(new=new):
+                    path = root / f"unsafe-exploratory-{index}.toml"
+                    path.write_text(original.replace(old, new, 1), "utf-8")
+                    with self.assertRaisesRegex(
+                        PolicyConfigurationError,
+                        message,
+                    ):
+                        load_policy_config(path)
+
+    def test_full_exploratory_forbids_production_sections_and_unknown_keys(
+        self,
+    ) -> None:
+        original_campaign = CAMPAIGN_CONFIG.read_text("utf-8")
+        exploratory = _exploratory_config_text()
+        cases = (
+            (
+                "campaign",
+                exploratory + "\n" + _toml_table(original_campaign, "campaign"),
+                r"forbids \[campaign\]",
+            ),
+            (
+                "output_contract",
+                exploratory
+                + "\n"
+                + _toml_table(original_campaign, "output_contract"),
+                r"forbids production \[output_contract\]",
+            ),
+            (
+                "execution_receipt",
+                exploratory
+                + "\n"
+                + _toml_table(original_campaign, "execution_receipt"),
+                r"forbids production \[execution_receipt\]",
+            ),
+            (
+                "unknown_key",
+                exploratory.replace(
+                    'execution_kind = "COMPUTATIONAL_SIMULATION"',
+                    'execution_kind = "COMPUTATIONAL_SIMULATION"\nunknown = true',
+                    1,
+                ),
+                "exploratory keys differ",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, text, message in cases:
+                with self.subTest(name=name):
+                    path = root / f"forbidden-{name}.toml"
+                    path.write_text(text, "utf-8")
+                    with self.assertRaisesRegex(
+                        PolicyConfigurationError,
+                        message,
+                    ):
+                        load_policy_config(path)
 
     def test_full_campaign_sections_are_collectively_required(self) -> None:
         original = CAMPAIGN_CONFIG.read_text("utf-8")

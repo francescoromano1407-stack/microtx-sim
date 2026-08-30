@@ -25,8 +25,9 @@ from ..execution_attestation import (
     ExecutionReceipt,
     ExecutionReceiptVerification,
 )
-from ..policy_config import PolicyPrototypeConfig
+from ..policy_config import PolicyPrototypeConfig, PolicyRunPurpose
 from .manifest import build_run_manifest, require_campaign_export_attestation
+from .exploratory import require_exploratory_manifest_metadata
 from .monetary import (
     PRODUCTION_MONETARY_ARTIFACT_FILENAMES,
     write_production_monetary_outputs,
@@ -72,6 +73,7 @@ def export_policy_batch(
     analysis_binding: RunAnalysisBinding | None = None,
     execution_receipt: ExecutionReceipt | None = None,
     execution_verification: ExecutionReceiptVerification | None = None,
+    exploratory_validation_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, Path]:
     """Persist a complete, self-describing synthetic result bundle."""
 
@@ -84,6 +86,34 @@ def export_policy_batch(
         execution_receipt=execution_receipt,
         execution_verification=execution_verification,
     )
+    exploratory_validation_metadata = require_exploratory_manifest_metadata(
+        exploratory_requested=(config.run_purpose.value == "exploratory"),
+        metadata=exploratory_validation_metadata,
+    )
+    destination = (
+        Path(output_dir)
+        if output_dir is not None
+        else config.output.output_dir
+    )
+    if config.run_purpose is PolicyRunPurpose.EXPLORATORY:
+        repository = Path(repository_root).resolve()
+        configured_destination = config.output.output_dir
+        expected_destination = (
+            configured_destination.resolve()
+            if configured_destination.is_absolute()
+            else (repository / configured_destination).resolve()
+        )
+        observed_destination = (
+            destination.resolve()
+            if destination.is_absolute()
+            else (repository / destination).resolve()
+        )
+        if observed_destination != expected_destination:
+            raise ValueError(
+                "exploratory export destination must remain fixed at "
+                f"{expected_destination.as_posix()}"
+            )
+        destination = expected_destination
     if sensitivity is not None and not isinstance(sensitivity, SensitivityResult):
         raise TypeError("sensitivity must be SensitivityResult or None")
     batch_lineage = batch.profile_input_lineage
@@ -139,11 +169,6 @@ def export_policy_batch(
                 raise ValueError(
                     "batch and sensitivity used different population executions"
                 )
-    destination = (
-        Path(output_dir)
-        if output_dir is not None
-        else config.output.output_dir
-    )
     manifest = build_run_manifest(
         config,
         batch,
@@ -155,6 +180,7 @@ def export_policy_batch(
         analysis_binding=analysis_binding,
         execution_receipt=execution_receipt,
         execution_verification=execution_verification,
+        exploratory_validation_metadata=exploratory_validation_metadata,
     )
     sensitivity_snapshot = (
         sensitivity.execution_snapshot() if sensitivity is not None else None

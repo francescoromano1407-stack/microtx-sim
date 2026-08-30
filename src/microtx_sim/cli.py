@@ -68,6 +68,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     policy_validate.add_argument("config", type=Path)
 
+    exploratory_validate = commands.add_parser(
+        "exploratory-validate",
+        help=(
+            "validate the fixed exploratory synthetic campaign contract "
+            "without initializing or running any simulation"
+        ),
+    )
+    exploratory_validate.add_argument("config", type=Path)
+
     campaign_preflight = commands.add_parser(
         "campaign-preflight",
         help=(
@@ -161,6 +170,8 @@ def _smoke(config_path: Path) -> dict[str, object]:
 
 def _policy_validate(config_path: Path) -> dict[str, object]:
     config = load_policy_config(config_path)
+    if config.run_purpose is PolicyRunPurpose.EXPLORATORY:
+        return _exploratory_validate(config_path)
     campaign = config.run_purpose is PolicyRunPurpose.CAMPAIGN
     population_adapter = None
     profile_input_lineage = None
@@ -220,6 +231,463 @@ def _policy_validate(config_path: Path) -> dict[str, object]:
             else {}
         ),
     }
+
+
+def _exploratory_validate(config_path: Path) -> dict[str, object]:
+    """Resolve the fixed exploratory design without initializing a cohort."""
+
+    from .analysis.uncertainty import (
+        ConvergenceRule,
+        canonical_sha256,
+        load_parameter_uncertainty_design,
+        verify_loaded_parameter_uncertainty_design,
+    )
+    from .causal.analysis_plan import (
+        load_exploratory_analysis_plan,
+        verify_exploratory_analysis_plan_parent,
+        verify_loaded_exploratory_analysis_plan,
+    )
+    from .data.population_execution import population_execution_input_sha256
+    from .data.rate_evidence import load_and_verify_rate_evidence_bundle
+    from .outputs.exploratory import (
+        EXPLORATORY_ARTIFACT_NAMESPACE,
+        EXPLORATORY_ESTIMAND_INTERPRETATION,
+        EXPLORATORY_EXECUTION_KIND,
+        EXPLORATORY_INTERNAL_MONETARY_UNIT,
+        EXPLORATORY_MONETARY_AMOUNT_SEMANTICS,
+        EXPLORATORY_POPULATION_BASIS,
+        EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE,
+        EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE,
+        build_exploratory_validation_metadata,
+    )
+
+    repository_root = Path(__file__).resolve().parents[2]
+    config_path = config_path.resolve(strict=True)
+    expected_config_path = (
+        repository_root / "configs" / "policy_exploratory_synthetic.toml"
+    ).resolve(strict=True)
+    if config_path != expected_config_path:
+        raise PolicyConfigurationError(
+            "exploratory-validate is bound to "
+            "configs/policy_exploratory_synthetic.toml"
+        )
+    production_paths = {
+        "configuration": repository_root / "configs" / "policy_campaign.toml",
+        "scientific_parent": (
+            repository_root
+            / "inputs"
+            / "prospective-analysis-plan-amendment-v3.json"
+        ),
+    }
+    production_before = {
+        name: sha256(path.read_bytes()).hexdigest()
+        for name, path in production_paths.items()
+    }
+
+    config = load_policy_config(config_path)
+    if config.run_purpose is not PolicyRunPurpose.EXPLORATORY:
+        raise PolicyConfigurationError(
+            "exploratory-validate requires run_purpose = 'exploratory'"
+        )
+    if not config.full_exploratory_config or config.exploratory is None:
+        raise PolicyConfigurationError(
+            "exploratory-validate requires the complete [exploratory] contract"
+        )
+    control = config.exploratory
+    fixed_control = {
+        "artifact_namespace": EXPLORATORY_ARTIFACT_NAMESPACE,
+        "execution_kind": EXPLORATORY_EXECUTION_KIND,
+        "population_basis": EXPLORATORY_POPULATION_BASIS,
+        "estimand_interpretation": EXPLORATORY_ESTIMAND_INTERPRETATION,
+        "monetary_amount_semantics": EXPLORATORY_MONETARY_AMOUNT_SEMANTICS,
+        "unweighted_output_role": EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE,
+        "internal_monetary_unit": EXPLORATORY_INTERNAL_MONETARY_UNIT,
+        "raw_internal_unit_output_role": (
+            EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE
+        ),
+        "allow_synthetic": True,
+        "campaign_ready": False,
+        "production_campaign": False,
+        "empirical_claims": False,
+        "population_inference_claims": False,
+        "causal_claims": False,
+        "generalisation_claims": False,
+        "identical_pretreatment_cohorts": True,
+        "identical_population_weights_across_scenarios": True,
+    }
+    control_snapshot = control.snapshot()
+    if any(control_snapshot.get(key) != value for key, value in fixed_control.items()):
+        raise PolicyConfigurationError(
+            "exploratory control differs from the fixed non-empirical contract"
+        )
+    if config.monetary_contract is None:
+        raise PolicyConfigurationError(
+            "exploratory validation requires an explicit monetary contract"
+        )
+
+    profiles = _load_policy_profiles(config)
+    profile_input_lineage = build_profile_input_lineage(
+        profiles.country_profiles,
+        profile_bundle=profiles,
+    )
+    if config.population is None:
+        raise PolicyConfigurationError(
+            "exploratory validation requires projected population mode"
+        )
+    population_adapter = resolve_population_projection_adapter(
+        config.population,
+        profiles,
+        player_count=config.batch.player_count,
+        campaign=False,
+    )
+    scientific_parent = _resolve_configured_analysis_plan(
+        config,
+        population_adapter=population_adapter,
+        profile_input_lineage=profile_input_lineage,
+    )
+    if scientific_parent is None:
+        raise PolicyConfigurationError(
+            "exploratory validation requires the scientific parent plan"
+        )
+    selection = config.analysis_plan
+    if (
+        selection is None
+        or selection.expected_plan_id is None
+        or selection.expected_plan_sha256 is None
+        or selection.parent_plan_path is None
+        or selection.parent_plan_id is None
+        or selection.parent_plan_sha256 is None
+    ):
+        raise PolicyConfigurationError(
+            "exploratory scientific-parent selection identities are incomplete"
+        )
+    if (
+        scientific_parent.plan.plan_id != selection.expected_plan_id
+        or scientific_parent.plan.plan_sha256
+        != selection.expected_plan_sha256
+    ):
+        raise PolicyConfigurationError(
+            "re-attested v3 scientific parent differs from [analysis_plan]"
+        )
+    scientific_grandparent = verify_loaded_prospective_analysis_plan(
+        load_prospective_analysis_plan(selection.parent_plan_path)
+    )
+    if (
+        scientific_grandparent.plan.plan_id != selection.parent_plan_id
+        or scientific_grandparent.plan.plan_sha256
+        != selection.parent_plan_sha256
+    ):
+        raise PolicyConfigurationError(
+            "re-attested v2 parent differs from [analysis_plan]"
+        )
+    amendment = scientific_parent.plan.amendment
+    parent_binding = (
+        amendment.get("parent_plan")
+        if isinstance(amendment, dict)
+        else None
+    )
+    if (
+        not isinstance(parent_binding, dict)
+        or parent_binding.get("plan_id")
+        != scientific_grandparent.plan.plan_id
+        or parent_binding.get("plan_sha256")
+        != scientific_grandparent.plan.plan_sha256
+        or parent_binding.get("file_sha256")
+        != scientific_grandparent.file_sha256
+    ):
+        raise PolicyConfigurationError(
+            "v3 scientific plan amendment differs from its exact v2 parent"
+        )
+    exploratory_plan = verify_loaded_exploratory_analysis_plan(
+        load_exploratory_analysis_plan(control.exploratory_plan_path)
+    )
+    verify_exploratory_analysis_plan_parent(
+        exploratory_plan.plan,
+        scientific_parent,
+    )
+    if (
+        exploratory_plan.plan.plan_id != control.exploratory_plan_id
+        or exploratory_plan.plan.plan_sha256 != control.exploratory_plan_sha256
+    ):
+        raise PolicyConfigurationError(
+            "exploratory sidecar plan differs from its configured identity"
+        )
+    if (
+        exploratory_plan.plan.primary_estimand.estimand_id
+        != control.primary_estimand_id
+        or scientific_parent.plan.primary_estimand.estimand_id
+        != control.primary_estimand_id
+    ):
+        raise PolicyConfigurationError(
+            "exploratory and scientific-parent primary estimands differ"
+        )
+    if exploratory_plan.plan.stopping_rule.seeds != config.batch.seeds:
+        raise PolicyConfigurationError(
+            "exploratory sidecar fixed seeds differ from the configuration"
+        )
+    uncertainty_design = exploratory_plan.plan.identity_payload.get(
+        "uncertainty_design"
+    )
+    convergence_rule = exploratory_plan.plan.identity_payload.get(
+        "convergence_rule"
+    )
+    if not isinstance(uncertainty_design, dict) or not isinstance(
+        convergence_rule, dict
+    ):
+        raise PolicyConfigurationError(
+            "exploratory sidecar uncertainty/convergence declarations are malformed"
+        )
+    if config.uncertainty is None or config.convergence is None:
+        raise PolicyConfigurationError(
+            "exploratory validation requires uncertainty and convergence contracts"
+        )
+    uncertainty = config.uncertainty
+    convergence = config.convergence
+    parameter_design = verify_loaded_parameter_uncertainty_design(
+        load_parameter_uncertainty_design(uncertainty.parameter_design_path)
+    )
+    config_convergence_snapshot = ConvergenceRule(
+        block_size=convergence.block_size,
+        minimum_retained_seeds=convergence.minimum_retained_seeds,
+        maximum_mcse=convergence.maximum_mcse,
+        maximum_interval_width=convergence.maximum_interval_width,
+        maximum_absolute_change=convergence.maximum_absolute_change,
+        maximum_relative_change=convergence.maximum_relative_change,
+        maximum_invalid_rate=convergence.maximum_invalid_rate,
+        consecutive_passing_checkpoints=(
+            convergence.consecutive_passing_checkpoints
+        ),
+    ).snapshot()
+    if config_convergence_snapshot != convergence_rule:
+        raise PolicyConfigurationError(
+            "exploratory sidecar convergence rule differs from configuration"
+        )
+    seed_uncertainty = uncertainty_design.get("seed_uncertainty")
+    parameter_uncertainty = uncertainty_design.get("parameter_uncertainty")
+    rate_uncertainty = uncertainty_design.get("monetary_rate_uncertainty")
+    population_uncertainty = uncertainty_design.get("population_uncertainty")
+    combined_uncertainty = uncertainty_design.get("combined_uncertainty")
+    if not all(
+        isinstance(item, dict)
+        for item in (
+            seed_uncertainty,
+            parameter_uncertainty,
+            rate_uncertainty,
+            population_uncertainty,
+            combined_uncertainty,
+        )
+    ):
+        raise PolicyConfigurationError(
+            "exploratory sidecar uncertainty components are incomplete"
+        )
+    if config.population_contract is None:
+        raise PolicyConfigurationError(
+            "exploratory validation requires the exact population contract"
+        )
+    expected_seed_uncertainty = {
+        "common_random_numbers": uncertainty.common_random_numbers,
+        "fixed_seed_count": len(config.batch.seeds),
+        "identical_pretreatment_cohorts": (
+            uncertainty.identical_pretreatment_cohorts
+        ),
+        "outcome_dependent_seed_exclusion_allowed": (
+            uncertainty.outcome_dependent_seed_exclusion
+        ),
+        "population_weights_applied_within_seed": (
+            uncertainty.population_weights_within_seed
+        ),
+        "status": "QUANTIFIED_WHEN_COMPLETE",
+    }
+    expected_parameter_uncertainty = {
+        "design_id": parameter_design.design.design_id,
+        "design_sha256": parameter_design.design.design_sha256,
+        "method": parameter_design.design.method,
+        "probability_interpretation": "NONE",
+        "status": "ILLUSTRATIVE_DESIGN_ONLY",
+    }
+    expected_rate_uncertainty = {
+        "point_observation_is_distribution": False,
+        "rate_basis_sha256": config.monetary_contract.conversion_basis_sha256,
+        "status": "UNQUANTIFIED",
+    }
+    expected_population_uncertainty = {
+        "exact_weighting_is_empirical_validation": False,
+        "status": "UNQUANTIFIED",
+        "uncertainty_design_id": (
+            config.population_contract.uncertainty_design_id
+        ),
+    }
+    expected_combined_uncertainty = {
+        "double_counting_control": (
+            "one complete seed-parameter-population-rate Cartesian identity"
+        ),
+        "status": "UNAVAILABLE_UNTIL_ALL_REQUIRED_COMPONENTS_EXIST",
+        "variance_decomposition_method": (
+            uncertainty.variance_decomposition_method
+        ),
+    }
+    if (
+        uncertainty.seed_design != "FIXED_ASCENDING"
+        or uncertainty.minimum_retained_seeds != 100
+        or len(config.batch.seeds) != 150
+        or uncertainty.oat_role != "DIAGNOSTIC_ONLY"
+        or uncertainty_design.get("schema_version") != "1.0"
+        or uncertainty_design.get("oat_role") != uncertainty.oat_role
+        or parameter_design.design.design_id != uncertainty.parameter_design_id
+        or parameter_design.design.design_sha256
+        != uncertainty.parameter_design_sha256
+        or parameter_design.design.calibrated_probability_design
+        or seed_uncertainty != expected_seed_uncertainty
+        or parameter_uncertainty != expected_parameter_uncertainty
+        or rate_uncertainty != expected_rate_uncertainty
+        or population_uncertainty != expected_population_uncertainty
+        or combined_uncertainty != expected_combined_uncertainty
+        or uncertainty.parameter_uncertainty.value != "UNQUANTIFIED"
+        or uncertainty.monetary_rate_uncertainty.value != "UNQUANTIFIED"
+        or uncertainty.population_uncertainty.value != "UNQUANTIFIED"
+        or not uncertainty.combined_uncertainty_required
+        or config.monetary_contract.rate_uncertainty_status.value
+        != "UNQUANTIFIED"
+        or config.population_contract.uncertainty_status.value
+        != "UNQUANTIFIED"
+    ):
+        raise PolicyConfigurationError(
+            "exploratory sidecar uncertainty identities differ from configuration"
+        )
+
+    monetary = config.monetary_contract
+    sidecar_monetary = exploratory_plan.plan.identity_payload.get(
+        "monetary_semantics"
+    )
+    expected_sidecar_monetary = {
+        "conversion_basis_sha256": monetary.conversion_basis_sha256,
+        "conversion_before_population_weighting": True,
+        "empirical_monetary_interpretation_allowed": False,
+        "exact_rational_conversion_required": True,
+        "missing_date_policy": monetary.missing_date_policy,
+        "observed_real_world_spending_claimed": False,
+        "price_period_end": monetary.target_price_period_end,
+        "price_period_start": monetary.target_price_period_start,
+        "quote_convention": monetary.quote_convention,
+        "rate_period_end": monetary.rate_period_end,
+        "rate_period_start": monetary.rate_period_start,
+        "rate_uncertainty_status": monetary.rate_uncertainty_status.value,
+        "raw_cross_currency_pooling_allowed": False,
+        "rounding_boundary": monetary.rounding_scope,
+        "rounding_rule": monetary.rounding_method,
+        "scale_convention": monetary.scale_convention,
+        "semantic_label": (
+            "SIMULATED_MODEL_EQUIVALENT_TARGET_CURRENCY_VALUES"
+        ),
+        "simulation_bridge_status": monetary.simulation_bridge_status,
+        "source_bundle_id": monetary.bundle_id,
+        "source_bundle_semantic_sha256": monetary.rate_evidence_sha256,
+        "source_bundle_signature_status": (
+            monetary.source_bundle_signature_status
+        ),
+        "target_currency": monetary.target_currency,
+    }
+    if sidecar_monetary != expected_sidecar_monetary:
+        raise PolicyConfigurationError(
+            "exploratory sidecar monetary semantics differ from configuration"
+        )
+    rate_bundle, rate_results = load_and_verify_rate_evidence_bundle(
+        monetary.source_bundle_path,
+        required_source_registry_sha256=profiles.source_registry_sha256,
+    )
+    rate_evidence_sha256 = canonical_sha256(
+        [result.snapshot() for result in rate_results]
+    )
+    if (
+        rate_bundle.bundle_sha256 != monetary.source_bundle_sha256
+        or rate_evidence_sha256 != monetary.rate_evidence_sha256
+        or sha256(monetary.source_artifact_path.read_bytes()).hexdigest()
+        != monetary.source_artifact_sha256
+        or sha256(monetary.conversion_table_path.read_bytes()).hexdigest()
+        != monetary.conversion_table_sha256
+    ):
+        raise PolicyConfigurationError(
+            "exploratory monetary identities differ from re-attested evidence"
+        )
+
+    batch_snapshot = config.batch.snapshot()
+    scenarios = batch_snapshot.get("scenarios")
+    if not isinstance(scenarios, list):
+        raise PolicyConfigurationError(
+            "exploratory scenario snapshot is malformed"
+        )
+    production_after = {
+        name: sha256(path.read_bytes()).hexdigest()
+        for name, path in production_paths.items()
+    }
+    if production_before != production_after:
+        raise PolicyConfigurationError(
+            "production campaign inputs changed during exploratory validation"
+        )
+
+    return build_exploratory_validation_metadata(
+        configuration_path=config_path.relative_to(repository_root).as_posix(),
+        configuration_sha256=sha256(config_path.read_bytes()).hexdigest(),
+        exploratory_plan_path=(
+            exploratory_plan.plan_path.relative_to(repository_root).as_posix()
+        ),
+        exploratory_plan_id=exploratory_plan.plan.plan_id,
+        exploratory_plan_sha256=exploratory_plan.plan.plan_sha256,
+        exploratory_plan_file_sha256=exploratory_plan.file_sha256,
+        scientific_parent_plan_path=(
+            scientific_parent.plan_path.relative_to(repository_root).as_posix()
+        ),
+        scientific_parent_plan_id=scientific_parent.plan.plan_id,
+        scientific_parent_plan_sha256=scientific_parent.plan.plan_sha256,
+        scientific_parent_plan_file_sha256=scientific_parent.file_sha256,
+        scientific_parent_registration_status=(
+            scientific_parent.plan.registration_status.value
+        ),
+        primary_estimand_id=control.primary_estimand_id,
+        population_adapter_id=population_adapter.adapter_id,
+        population_adapter_sha256=population_adapter.adapter_sha256,
+        population_execution_input_sha256=(
+            population_execution_input_sha256(population_adapter)
+        ),
+        scenario_snapshots=scenarios,
+        target_currency=monetary.target_currency,
+        target_minor_unit_name=monetary.target_minor_unit_name,
+        quote_convention=monetary.quote_convention,
+        scale_convention=monetary.scale_convention,
+        rate_period_start=monetary.rate_period_start,
+        rate_period_end=monetary.rate_period_end,
+        target_price_period_start=monetary.target_price_period_start,
+        target_price_period_end=monetary.target_price_period_end,
+        missing_date_policy=monetary.missing_date_policy,
+        identity_missing_date_policy=monetary.identity_missing_date_policy,
+        rounding_method=monetary.rounding_method,
+        rounding_scope=monetary.rounding_scope,
+        point_rate_status=monetary.point_rate_status,
+        rate_uncertainty_status=monetary.rate_uncertainty_status.value,
+        source_bundle_signature_status=(
+            monetary.source_bundle_signature_status
+        ),
+        simulation_bridge_status=monetary.simulation_bridge_status,
+        observed_real_world_spending=monetary.observed_real_world_spending,
+        raw_cross_currency_pooling=monetary.raw_cross_currency_pooling,
+        monetary_source_bundle_sha256=monetary.source_bundle_sha256,
+        monetary_source_artifact_sha256=monetary.source_artifact_sha256,
+        monetary_conversion_table_sha256=monetary.conversion_table_sha256,
+        monetary_conversion_basis_sha256=monetary.conversion_basis_sha256,
+        monetary_rate_evidence_sha256=rate_evidence_sha256,
+        profile_input_lineage_sha256=(
+            profile_input_lineage.fingerprint_sha256
+        ),
+        uncertainty_design=uncertainty_design,
+        convergence_rule=convergence_rule,
+        fixed_seed_count=len(config.batch.seeds),
+        parameter_design_path=(
+            parameter_design.design_path.relative_to(repository_root).as_posix()
+        ),
+        parameter_design_file_sha256=parameter_design.file_sha256,
+        production_configuration_sha256=production_before["configuration"],
+        production_plan_sha256=production_before["scientific_parent"],
+    )
 
 
 def _campaign_preflight(
@@ -316,6 +784,47 @@ def _policy_batch(
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
     campaign = config.run_purpose is PolicyRunPurpose.CAMPAIGN
+    exploratory = config.run_purpose is PolicyRunPurpose.EXPLORATORY
+    exploratory_validation_metadata = None
+    if exploratory:
+        from .outputs.exploratory import EXPLORATORY_LAUNCH_COMMAND
+
+        repository_root = Path(__file__).resolve().parents[2]
+        expected_config = (
+            repository_root / "configs" / "policy_exploratory_synthetic.toml"
+        ).resolve(strict=True)
+        observed_config = config_path.resolve(strict=True)
+        if observed_config != expected_config:
+            raise CampaignExecutionRejectedError(
+                "exploratory policy-batch is bound to "
+                "configs/policy_exploratory_synthetic.toml"
+            )
+        if (
+            len(command) != 3
+            or tuple(command[:2]) != EXPLORATORY_LAUNCH_COMMAND[:2]
+            or Path(command[2]).resolve(strict=True) != expected_config
+        ):
+            raise CampaignExecutionRejectedError(
+                "exploratory model work may only use the reviewed "
+                "microtx-sim policy-batch command"
+            )
+        if output is not None:
+            raise CampaignExecutionRejectedError(
+                "exploratory --output overrides are prohibited; the reviewed "
+                "isolated artifact directory is fixed by configuration"
+            )
+        if run_sensitivity is not None:
+            raise CampaignExecutionRejectedError(
+                "exploratory sensitivity overrides are prohibited; retained "
+                "sensitivity is fixed by configuration"
+            )
+        exploratory_validation_metadata = _exploratory_validate(config_path)
+        raise CampaignExecutionRejectedError(
+            "exploratory pre-execution validation passed, but exploratory "
+            "model execution is not enabled in this pre-campaign task; no "
+            "cohort, scenario, sensitivity, export, or reproduce work was "
+            "dispatched"
+        )
     execution_receipt_spec = None
     execution_receipt = None
     execution_pre_verification = None
@@ -429,6 +938,7 @@ def _policy_batch(
         analysis_binding=analysis_binding,
         execution_receipt=execution_receipt,
         execution_verification=execution_verification,
+        exploratory_validation_metadata=exploratory_validation_metadata,
     )
     return {
         "status": "ok",
@@ -533,6 +1043,11 @@ def _policy_sensitivity(
             "standalone policy-sensitivity is not an attested campaign command; "
             "campaign sensitivity may only run inside the configured full "
             "campaign execution after its receipt gate opens"
+        )
+    if config.run_purpose is PolicyRunPurpose.EXPLORATORY:
+        raise CampaignExecutionRejectedError(
+            "standalone policy-sensitivity is outside the reviewed "
+            "exploratory policy-batch command; no model work was dispatched"
         )
     profiles = _load_policy_profiles(config)
     profile_input_lineage = build_profile_input_lineage(
@@ -749,6 +1264,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = _smoke(args.config)
         elif args.command == "policy-validate":
             payload = _policy_validate(args.config)
+        elif args.command == "exploratory-validate":
+            payload = _exploratory_validate(args.config)
         elif args.command == "campaign-preflight":
             payload = _campaign_preflight(args.config, output=args.output)
         elif args.command == "policy-sensitivity":

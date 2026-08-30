@@ -11,7 +11,7 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -47,6 +47,7 @@ from ..data.profiles import (
 from ..metrics.population_estimands import TARGET_POPULATION_OUTPUT_PROFILE
 from ..policy_config import PolicyPrototypeConfig, PolicyRunPurpose
 from .metric_contracts import build_metric_contract_manifest_payload
+from .exploratory import require_exploratory_manifest_metadata
 from .monetary import monetary_lineage_payload
 
 
@@ -63,6 +64,7 @@ def build_run_manifest(
     execution_receipt: ExecutionReceipt | None = None,
     execution_verification: ExecutionReceiptVerification | None = None,
     execution_receipt_relative_path: str = "execution-receipt.json",
+    exploratory_validation_metadata: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Build a self-contained run manifest without claiming empirical validity."""
 
@@ -71,9 +73,24 @@ def build_run_manifest(
         execution_receipt=execution_receipt,
         execution_verification=execution_verification,
     )
+    exploratory_pre_execution_validation = (
+        require_exploratory_manifest_metadata(
+            exploratory_requested=(
+                config.run_purpose is PolicyRunPurpose.EXPLORATORY
+            ),
+            metadata=exploratory_validation_metadata,
+        )
+    )
 
     config_file = Path(config_path).resolve()
     repository = Path(repository_root).resolve()
+    if exploratory_pre_execution_validation is not None:
+        _validate_exploratory_metadata_matches_config(
+            exploratory_pre_execution_validation,
+            config=config,
+            config_file=config_file,
+            repository=repository,
+        )
     configured_run_inputs = resolve_policy_run_inputs(
         harm_parameters=config.harm_parameters,
         harm_weights=config.harm_weights,
@@ -396,6 +413,41 @@ def build_run_manifest(
             manifest["prospective_monetary_output_execution"] = (
                 monetary_lineage_payload(analysis_binding)
             )
+    if exploratory_pre_execution_validation is not None:
+        monetary_review = exploratory_pre_execution_validation[
+            "monetary_contract"
+        ]
+        interpretation_review = exploratory_pre_execution_validation[
+            "output_interpretation"
+        ]
+        assert isinstance(monetary_review, dict)
+        assert isinstance(interpretation_review, dict)
+        manifest["campaign_ready"] = False
+        manifest["exploratory_pre_execution_validation"] = (
+            exploratory_pre_execution_validation
+        )
+        manifest["exploratory_output_interpretation"] = {
+            "interpretation_wording": (
+                exploratory_pre_execution_validation[
+                    "interpretation_wording"
+                ]
+            ),
+            "claims": exploratory_pre_execution_validation["claims"],
+            "estimand_interpretation": interpretation_review[
+                "estimand_interpretation"
+            ],
+            "unweighted_output_role": interpretation_review[
+                "unweighted_output_role"
+            ],
+            "monetary_amount_semantics": monetary_review[
+                "monetary_amount_semantics"
+            ],
+            "raw_internal_unit_output_role": monetary_review[
+                "raw_internal_unit_output_role"
+            ],
+            "observed_real_world_spending": False,
+            "production_campaign_authority": "NONE",
+        }
     if (execution_receipt is None) != (execution_verification is None):
         raise ValueError(
             "execution receipt and verification must be supplied together"
@@ -409,6 +461,118 @@ def build_run_manifest(
             receipt_relative_path=execution_receipt_relative_path,
         )
     return manifest
+
+
+def _validate_exploratory_metadata_matches_config(
+    metadata: Mapping[str, object],
+    *,
+    config: PolicyPrototypeConfig,
+    config_file: Path,
+    repository: Path,
+) -> None:
+    """Reject a valid-but-stale review payload from a different configuration."""
+
+    control = config.exploratory
+    selection = config.analysis_plan
+    monetary = config.monetary_contract
+    population = config.population_contract
+    if control is None or selection is None or monetary is None or population is None:
+        raise ValueError(
+            "exploratory export requires complete plan, population, and monetary contracts"
+        )
+    try:
+        relative_config = config_file.relative_to(repository).as_posix()
+    except ValueError as exc:
+        raise ValueError(
+            "exploratory configuration must be inside the repository"
+        ) from exc
+    configuration = metadata["configuration"]
+    exploratory_plan = metadata["exploratory_analysis_plan"]
+    scientific_parent = metadata["scientific_parent_plan"]
+    identity = metadata["population_scenario_identity"]
+    monetary_review = metadata["monetary_contract"]
+    if not all(
+        isinstance(item, dict)
+        for item in (
+            configuration,
+            exploratory_plan,
+            scientific_parent,
+            identity,
+            monetary_review,
+        )
+    ):
+        raise ValueError("exploratory validation metadata is malformed")
+    if configuration != {
+        "path": relative_config,
+        "sha256": _file_digest(config_file),
+        "run_purpose": "exploratory",
+        "full_exploratory_config": True,
+    }:
+        raise ValueError(
+            "exploratory pre-execution validation is stale for the configuration"
+        )
+    if (
+        exploratory_plan.get("plan_id") != control.exploratory_plan_id
+        or exploratory_plan.get("plan_sha256")
+        != control.exploratory_plan_sha256
+        or exploratory_plan.get("primary_estimand_id")
+        != control.primary_estimand_id
+        or scientific_parent.get("plan_id") != selection.expected_plan_id
+        or scientific_parent.get("plan_sha256")
+        != selection.expected_plan_sha256
+        or scientific_parent.get("primary_estimand_id")
+        != control.primary_estimand_id
+    ):
+        raise ValueError(
+            "exploratory pre-execution validation has stale plan identities"
+        )
+    configured_scenarios = config.batch.snapshot()["scenarios"]
+    scenario_set = identity.get("scenario_set")
+    if (
+        identity.get("population_adapter_id") != population.adapter_id
+        or identity.get("population_adapter_sha256")
+        != population.adapter_sha256
+        or identity.get("population_execution_input_sha256")
+        != population.execution_input_sha256
+        or not isinstance(scenario_set, dict)
+        or scenario_set.get("scenarios") != configured_scenarios
+    ):
+        raise ValueError(
+            "exploratory pre-execution validation has stale population/scenario identities"
+        )
+    expected_monetary = {
+        "target_currency": monetary.target_currency,
+        "target_minor_unit_name": monetary.target_minor_unit_name,
+        "quote_convention": monetary.quote_convention,
+        "scale_convention": monetary.scale_convention,
+        "rate_period_start": monetary.rate_period_start,
+        "rate_period_end": monetary.rate_period_end,
+        "target_price_period_start": monetary.target_price_period_start,
+        "target_price_period_end": monetary.target_price_period_end,
+        "missing_date_policy": monetary.missing_date_policy,
+        "identity_missing_date_policy": monetary.identity_missing_date_policy,
+        "rounding_method": monetary.rounding_method,
+        "rounding_scope": monetary.rounding_scope,
+        "point_rate_status": monetary.point_rate_status,
+        "rate_uncertainty_status": monetary.rate_uncertainty_status.value,
+        "source_bundle_signature_status": (
+            monetary.source_bundle_signature_status
+        ),
+        "simulation_bridge_status": monetary.simulation_bridge_status,
+        "source_bundle_sha256": monetary.source_bundle_sha256,
+        "source_artifact_sha256": monetary.source_artifact_sha256,
+        "conversion_table_sha256": monetary.conversion_table_sha256,
+        "conversion_basis_sha256": monetary.conversion_basis_sha256,
+        "rate_evidence_sha256": monetary.rate_evidence_sha256,
+        "raw_cross_currency_pooling": monetary.raw_cross_currency_pooling,
+    }
+    if any(
+        monetary_review.get(key) != value
+        for key, value in expected_monetary.items()
+    ):
+        raise ValueError(
+            "exploratory pre-execution validation has stale monetary identities"
+        )
 
 
 def require_campaign_export_attestation(

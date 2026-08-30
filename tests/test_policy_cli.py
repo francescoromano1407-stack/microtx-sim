@@ -50,9 +50,190 @@ from microtx_sim.policy_config import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = ROOT / "configs" / "policy_prototype.toml"
 CAMPAIGN_CONFIG = ROOT / "configs" / "policy_campaign.toml"
+EXPLORATORY_CONFIG = ROOT / "configs" / "policy_exploratory_synthetic.toml"
 
 
 class PolicyCliTests(unittest.TestCase):
+    def test_exploratory_validate_dispatches_validation_only(self) -> None:
+        payload = {
+            "validation_status": "VALIDATED_NOT_EXECUTED",
+            "campaign_ready": False,
+        }
+        stdout = io.StringIO()
+        with (
+            patch(
+                "microtx_sim.cli._exploratory_validate",
+                return_value=payload,
+            ) as validate,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            patch("microtx_sim.cli._policy_batch") as reproduce,
+            redirect_stdout(stdout),
+        ):
+            code = main(("exploratory-validate", str(EXPLORATORY_CONFIG)))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), payload)
+        validate.assert_called_once_with(EXPLORATORY_CONFIG)
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+        reproduce.assert_not_called()
+
+    def test_exploratory_validate_rejects_production_config_before_dispatch(
+        self,
+    ) -> None:
+        stderr = io.StringIO()
+        with (
+            patch("microtx_sim.cli.load_policy_config") as load,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            redirect_stderr(stderr),
+        ):
+            code = main(("exploratory-validate", str(CAMPAIGN_CONFIG)))
+
+        self.assertEqual(code, 2)
+        self.assertIn("is bound to", stderr.getvalue())
+        load.assert_not_called()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+
+    def test_policy_validate_delegates_exploratory_to_full_validator(self) -> None:
+        payload = {
+            "validation_status": "VALIDATED_NOT_EXECUTED",
+            "campaign_ready": False,
+        }
+        stdout = io.StringIO()
+        with (
+            patch(
+                "microtx_sim.cli._exploratory_validate",
+                return_value=payload,
+            ) as validate,
+            patch("microtx_sim.cli._load_policy_profiles") as profiles,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            patch("microtx_sim.cli.export_policy_batch") as export,
+            redirect_stdout(stdout),
+        ):
+            code = main(("policy-validate", str(EXPLORATORY_CONFIG)))
+
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue()), payload)
+        validate.assert_called_once_with(EXPLORATORY_CONFIG)
+        profiles.assert_not_called()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+        export.assert_not_called()
+
+    def test_exploratory_batch_preflight_rejects_before_any_model_work(
+        self,
+    ) -> None:
+        stderr = io.StringIO()
+        review = {
+            "validation_status": "VALIDATED_NOT_EXECUTED",
+            "campaign_ready": False,
+        }
+        with (
+            patch(
+                "microtx_sim.cli._exploratory_validate",
+                return_value=review,
+            ) as preflight,
+            patch("microtx_sim.cli._load_policy_profiles") as profiles,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            patch("microtx_sim.cli.export_policy_batch") as export,
+            redirect_stderr(stderr),
+        ):
+            code = main(("policy-batch", str(EXPLORATORY_CONFIG)))
+
+        self.assertEqual(code, 2)
+        self.assertIn("pre-execution validation passed", stderr.getvalue())
+        preflight.assert_called_once_with(EXPLORATORY_CONFIG)
+        profiles.assert_not_called()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+        export.assert_not_called()
+
+    def test_exploratory_batch_preflight_failure_never_dispatches(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch(
+                "microtx_sim.cli._exploratory_validate",
+                side_effect=ValueError("stale exploratory sidecar"),
+            ) as preflight,
+            patch("microtx_sim.cli._load_policy_profiles") as profiles,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            patch("microtx_sim.cli.export_policy_batch") as export,
+            redirect_stderr(stderr),
+        ):
+            code = main(("policy-batch", str(EXPLORATORY_CONFIG)))
+
+        self.assertEqual(code, 2)
+        self.assertIn("stale exploratory sidecar", stderr.getvalue())
+        preflight.assert_called_once_with(EXPLORATORY_CONFIG)
+        profiles.assert_not_called()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+        export.assert_not_called()
+
+    def test_exploratory_command_overrides_and_reproduce_are_rejected(self) -> None:
+        invocations = (
+            (
+                "policy-batch",
+                str(EXPLORATORY_CONFIG),
+                "--skip-sensitivity",
+            ),
+            (
+                "policy-batch",
+                str(EXPLORATORY_CONFIG),
+                "--output",
+                str(ROOT / "artifacts" / "policy_exploratory_synthetic"),
+            ),
+            ("reproduce", str(EXPLORATORY_CONFIG)),
+        )
+        for invocation in invocations:
+            with self.subTest(invocation=invocation):
+                stderr = io.StringIO()
+                with (
+                    patch("microtx_sim.cli._exploratory_validate") as preflight,
+                    patch("microtx_sim.cli._load_policy_profiles") as profiles,
+                    patch("microtx_sim.cli.run_policy_batch") as run_batch,
+                    patch(
+                        "microtx_sim.cli.run_sensitivity_analysis"
+                    ) as sensitivity,
+                    patch("microtx_sim.cli.export_policy_batch") as export,
+                    redirect_stderr(stderr),
+                ):
+                    code = main(invocation)
+
+                self.assertEqual(code, 2)
+                self.assertIn("reviewed", stderr.getvalue())
+                preflight.assert_not_called()
+                profiles.assert_not_called()
+                run_batch.assert_not_called()
+                sensitivity.assert_not_called()
+                export.assert_not_called()
+
+    def test_standalone_exploratory_sensitivity_is_rejected_before_work(
+        self,
+    ) -> None:
+        stderr = io.StringIO()
+        with (
+            patch("microtx_sim.cli._load_policy_profiles") as profiles,
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            patch("microtx_sim.cli.export_policy_batch") as export,
+            redirect_stderr(stderr),
+        ):
+            code = main(("policy-sensitivity", str(EXPLORATORY_CONFIG)))
+
+        self.assertEqual(code, 2)
+        self.assertIn("outside the reviewed", stderr.getvalue())
+        profiles.assert_not_called()
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+        export.assert_not_called()
+
     def test_standalone_campaign_sensitivity_rejects_before_model_work(self) -> None:
         stderr = io.StringIO()
         with (

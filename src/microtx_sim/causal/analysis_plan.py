@@ -49,12 +49,16 @@ from ..metrics.population_estimands import (
     PopulationPeriodSemantics,
 )
 from ..rng import validate_seed
-from .scenarios import ScenarioId
+from .scenarios import ScenarioId, required_scenarios
 
 
 ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "1.0"
 PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "2.0"
 CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "3.0"
+EXPLORATORY_ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "1.0"
+EXPLORATORY_ANALYSIS_PLAN_KIND: Final[str] = (
+    "EXPLORATORY_SYNTHETIC_NON_EMPIRICAL"
+)
 MAX_ANALYSIS_PLAN_BYTES: Final[int] = 1024 * 1024
 ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID: Final[str] = (
     "runtime.personal.monthly.income.all"
@@ -89,6 +93,18 @@ _V3_CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
     "analysis_plan.monetary_rate_uncertainty=unquantified",
     "analysis_plan.parameter_distributions=uncalibrated",
     "analysis_plan.execution_attestation=unverified",
+)
+_EXPLORATORY_PLAN_BLOCKERS: Final[tuple[str, ...]] = (
+    "exploratory_plan.empirical_interpretation=prohibited",
+    "exploratory_plan.external_registration=unregistered",
+    "exploratory_plan.monetary_values=model_equivalent_not_observed",
+    "exploratory_plan.monetary_rate_uncertainty=unquantified",
+    "exploratory_plan.parameter_distributions=uncalibrated",
+    "exploratory_plan.population_empirical_validation=missing",
+    "exploratory_plan.population_generalization=prohibited",
+    "exploratory_plan.population_uncertainty=unquantified",
+    "exploratory_plan.production_campaign_authority=none",
+    "exploratory_plan.real_world_causal_claims=prohibited",
 )
 _CANONICAL_INCLUSION_FIELDS: Final[tuple[PopulationInclusionField, ...]] = tuple(
     sorted(PopulationInclusionField, key=lambda item: item.value)
@@ -1166,6 +1182,152 @@ class LoadedProspectiveAnalysisPlan:
         return self.snapshot()
 
 
+@dataclass(frozen=True, slots=True)
+class ExploratoryAnalysisPlan:
+    """Strict, content-addressed plan for non-empirical model exploration.
+
+    This is deliberately a separate artifact type rather than a campaign-plan
+    status.  Its schema permanently prohibits preregistration, empirical or
+    real-world causal interpretation, population generalization, observed-
+    spending labels, and production-campaign authorization.
+    """
+
+    identity_payload_json: str
+    plan_sha256: str
+
+    def __post_init__(self) -> None:
+        if type(self.identity_payload_json) is not str:
+            raise TypeError("exploratory identity_payload_json must be text")
+        try:
+            payload = json.loads(self.identity_payload_json)
+        except (TypeError, ValueError) as exc:
+            raise AnalysisPlanValidationError(
+                "exploratory plan identity is not valid JSON"
+            ) from exc
+        if type(payload) is not dict:
+            raise AnalysisPlanValidationError(
+                "exploratory plan identity must be a JSON object"
+            )
+        canonical = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if canonical != self.identity_payload_json:
+            raise AnalysisPlanValidationError(
+                "exploratory identity payload must use canonical JSON"
+            )
+        _validate_exploratory_plan_payload(payload)
+        _sha256_digest(self.plan_sha256, name="exploratory plan_sha256")
+        if self.plan_sha256 != _canonical_sha256(payload):
+            raise AnalysisPlanValidationError(
+                "exploratory plan_sha256 differs from its canonical identity"
+            )
+
+    @property
+    def identity_payload(self) -> dict[str, object]:
+        return json.loads(self.identity_payload_json)
+
+    @property
+    def schema_version(self) -> str:
+        return EXPLORATORY_ANALYSIS_PLAN_SCHEMA_VERSION
+
+    @property
+    def plan_id(self) -> str:
+        return str(self.identity_payload["plan_id"])
+
+    @property
+    def primary_estimand(self) -> PlannedPopulationEstimand:
+        scientific = _required_mapping(
+            self.identity_payload,
+            "scientific_estimand",
+        )
+        return _estimand_from_snapshot(
+            _required_mapping(scientific, "estimand")
+        )
+
+    @property
+    def stopping_rule(self) -> FixedSeedStoppingRule:
+        return _stopping_from_snapshot(
+            _required_mapping(self.identity_payload, "stopping_rule")
+        )
+
+    @property
+    def preregistered(self) -> bool:
+        return False
+
+    @property
+    def campaign_ready(self) -> bool:
+        return False
+
+    @property
+    def campaign_blockers(self) -> tuple[str, ...]:
+        return _EXPLORATORY_PLAN_BLOCKERS
+
+    def snapshot(self) -> dict[str, object]:
+        return {**self.identity_payload, "plan_sha256": self.plan_sha256}
+
+    def validate_for_campaign(self) -> None:
+        raise AnalysisPlanCampaignError(self.campaign_blockers)
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedExploratoryAnalysisPlan:
+    """Exact file-byte and semantic identity for an exploratory plan."""
+
+    plan_path: Path
+    byte_length: int
+    file_sha256: str
+    semantic_sha256: str
+    plan: ExploratoryAnalysisPlan
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plan_path, Path) or not self.plan_path.is_absolute():
+            raise TypeError("exploratory plan_path must be an absolute Path")
+        _strict_int(
+            self.byte_length,
+            name="exploratory plan byte_length",
+            minimum=1,
+            maximum=MAX_ANALYSIS_PLAN_BYTES,
+        )
+        _sha256_digest(self.file_sha256, name="exploratory plan file_sha256")
+        _sha256_digest(
+            self.semantic_sha256,
+            name="exploratory plan semantic_sha256",
+        )
+        if type(self.plan) is not ExploratoryAnalysisPlan:
+            raise TypeError("plan must be ExploratoryAnalysisPlan")
+        ExploratoryAnalysisPlan.__post_init__(self.plan)
+        if self.semantic_sha256 != self.plan.plan_sha256:
+            raise AnalysisPlanValidationError(
+                "loaded exploratory semantic digest differs from the plan"
+            )
+        observed = _read_regular_file(self.plan_path)
+        if (
+            len(observed) != self.byte_length
+            or sha256(observed).hexdigest() != self.file_sha256
+        ):
+            raise AnalysisPlanVerificationError(
+                "exploratory plan file changed after loading"
+            )
+        if _exploratory_plan_from_snapshot(_parse_json_object(observed)) != self.plan:
+            raise AnalysisPlanVerificationError(
+                "exploratory plan differs from its exact file declaration"
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "schema_version": self.plan.schema_version,
+            "plan_path": str(self.plan_path),
+            "byte_length": self.byte_length,
+            "file_sha256": self.file_sha256,
+            "semantic_sha256": self.semantic_sha256,
+            "plan": self.plan.snapshot(),
+        }
+
+
 def analysis_plan_harm_weights_sha256(weights: WelfareHarmWeights) -> str:
     """Hash the exact versioned harm-weight payload expected by a plan."""
 
@@ -1394,6 +1556,326 @@ def verify_loaded_prospective_analysis_plan(
     return observed
 
 
+def build_exploratory_analysis_plan(
+    parent_loaded: LoadedProspectiveAnalysisPlan,
+    *,
+    plan_id: str = (
+        "illustrative.exploratory.synthetic.composite-harm.baseline-vs-safe.v1"
+    ),
+) -> ExploratoryAnalysisPlan:
+    """Derive a non-empirical exploratory plan from the exact campaign plan.
+
+    The primary estimand, directed scenario contrast, population predicate,
+    harm weights, aggregate rule, fixed seeds, and declared technical inputs
+    are copied without reinterpretation.  This builder cannot enable empirical
+    claims or campaign execution.
+    """
+
+    verified = verify_loaded_prospective_analysis_plan(parent_loaded)
+    parent = verified.plan
+    if parent.schema_version != CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+        raise AnalysisPlanValidationError(
+            "exploratory plan requires the exact schema-v3 campaign parent"
+        )
+    if len(parent.stopping_rule.seeds) != 150:
+        raise AnalysisPlanValidationError(
+            "exploratory plan requires the declared 150-seed parent set"
+        )
+    if (
+        parent.declared_harm_weights is None
+        or parent.primary_aggregate_rule is None
+        or parent.amendment is None
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory parent lacks aggregate or amendment declarations"
+        )
+    amendment = parent.amendment
+    scientific_change = _required_mapping(amendment, "scientific_change")
+    if (
+        _required_bool(scientific_change, "primary_estimand_changed")
+        or _required_string(scientific_change, "current_estimand_id")
+        != parent.primary_estimand.estimand_id
+        or _required_string(scientific_change, "current_specification_sha256")
+        != parent.primary_estimand.specification_sha256
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory parent does not preserve the declared primary estimand"
+        )
+    population = _required_mapping(amendment, "population_contract")
+    monetary = _required_mapping(amendment, "monetary_contract")
+    uncertainty = _required_mapping(amendment, "uncertainty_design")
+    convergence = _required_mapping(amendment, "convergence_rule")
+    primary = parent.primary_estimand
+    aggregate = parent.primary_aggregate_rule.snapshot()
+    scenario_definitions = _canonical_exploratory_scenario_definitions()
+    payload: dict[str, object] = {
+        "schema_version": EXPLORATORY_ANALYSIS_PLAN_SCHEMA_VERSION,
+        "plan_kind": EXPLORATORY_ANALYSIS_PLAN_KIND,
+        "plan_id": plan_id,
+        "parent_plan": {
+            "schema_version": parent.schema_version,
+            "plan_id": parent.plan_id,
+            "plan_sha256": parent.plan_sha256,
+            "file_sha256": verified.file_sha256,
+            "byte_length": verified.byte_length,
+            "relationship": "EXPLORATORY_DERIVATIVE_NO_SCIENTIFIC_CHANGE",
+        },
+        "purpose": {
+            "purpose_id": "MODEL_INTERNAL_EXPLORATORY_ENGINEERING_V1",
+            "description": (
+                "Explore synthetic simulator behavior under the preserved "
+                "directed policy contrast; no empirical estimation or "
+                "real-world policy inference is permitted."
+            ),
+            "synthetic_model_exploration": True,
+            "empirical_analysis": False,
+            "confirmatory_analysis": False,
+            "production_campaign": False,
+        },
+        "scenario_definitions": scenario_definitions,
+        "ordered_scenario_set_sha256": _exploratory_scenario_set_sha256(
+            scenario_definitions
+        ),
+        "scientific_estimand": {
+            "derived_without_change": True,
+            "estimand_id": primary.estimand_id,
+            "specification_sha256": primary.specification_sha256,
+            "reference_scenario_id": primary.reference_scenario_id.value,
+            "comparison_scenario_id": primary.comparison_scenario_id.value,
+            "contrast_direction": primary.contrast_direction,
+            "metric_contract_id": primary.metric_contract_id,
+            "population_predicate_sha256": (
+                primary.inclusion_predicate.predicate_sha256
+            ),
+            "estimand": primary.snapshot(),
+        },
+        "declared_harm_weights": _harm_weights_snapshot(
+            parent.declared_harm_weights
+        ),
+        "expected_harm_weights_sha256": parent.expected_harm_weights_sha256,
+        "stopping_rule": parent.stopping_rule.snapshot(),
+        "population_weighting": {
+            "mode": _required_string(population, "mode"),
+            "design_id": _required_string(population, "design_id"),
+            "design_sha256": _required_string(population, "design_sha256"),
+            "runtime_mapping_id": _required_string(
+                population,
+                "runtime_mapping_id",
+            ),
+            "runtime_mapping_sha256": _required_string(
+                population,
+                "runtime_mapping_sha256",
+            ),
+            "adapter_id": _required_string(population, "adapter_id"),
+            "adapter_sha256": _required_string(population, "adapter_sha256"),
+            "population_input_sha256": _required_string(
+                population,
+                "population_input_sha256",
+            ),
+            "population_predicate_sha256": (
+                primary.inclusion_predicate.predicate_sha256
+            ),
+            "weight_representation": "EXACT_RATIONAL",
+            "application": aggregate["population_weight_application"],
+            "applied_within_seed_before_cross_seed_aggregation": True,
+            "identical_across_paired_scenarios": True,
+            "structural_balance_is_empirical_validation": False,
+            "empirical_validation_claimed": False,
+            "target_population_generalization_allowed": False,
+            "uncertainty_status": _required_string(
+                population,
+                "uncertainty_status",
+            ),
+        },
+        "monetary_semantics": {
+            "semantic_label": (
+                "SIMULATED_MODEL_EQUIVALENT_TARGET_CURRENCY_VALUES"
+            ),
+            "target_currency": _required_string(monetary, "target_currency"),
+            "quote_convention": _required_string(
+                monetary,
+                "quote_convention",
+            ),
+            "scale_convention": _required_string(
+                monetary,
+                "scale_convention",
+            ),
+            "rate_period_start": _required_string(
+                monetary,
+                "rate_period_start",
+            ),
+            "rate_period_end": _required_string(monetary, "rate_period_end"),
+            "price_period_start": _required_string(
+                monetary,
+                "price_period_start",
+            ),
+            "price_period_end": _required_string(
+                monetary,
+                "price_period_end",
+            ),
+            "missing_date_policy": _required_string(
+                monetary,
+                "missing_date_policy",
+            ),
+            "rounding_rule": _required_string(monetary, "rounding_rule"),
+            "rounding_boundary": _required_string(
+                monetary,
+                "rounding_boundary",
+            ),
+            "conversion_basis_sha256": _required_string(
+                monetary,
+                "conversion_basis_sha256",
+            ),
+            "source_bundle_id": _required_string(
+                monetary,
+                "source_bundle_id",
+            ),
+            "source_bundle_semantic_sha256": _required_string(
+                monetary,
+                "source_bundle_semantic_sha256",
+            ),
+            "source_bundle_signature_status": _required_string(
+                monetary,
+                "source_bundle_signature_status",
+            ),
+            "simulation_bridge_status": _required_string(
+                monetary,
+                "simulation_bridge_status",
+            ),
+            "rate_uncertainty_status": _required_string(
+                monetary,
+                "rate_uncertainty_status",
+            ),
+            "exact_rational_conversion_required": True,
+            "conversion_before_population_weighting": True,
+            "raw_cross_currency_pooling_allowed": False,
+            "observed_real_world_spending_claimed": False,
+            "empirical_monetary_interpretation_allowed": False,
+        },
+        "uncertainty_design": json.loads(
+            json.dumps(
+                uncertainty,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        ),
+        "convergence_rule": json.loads(
+            json.dumps(
+                convergence,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        ),
+        "interpretation_limits": {
+            "model_internal_results_only": True,
+            "empirical_estimate_claimed": False,
+            "external_validity_claimed": False,
+            "target_population_generalization_allowed": False,
+            "real_world_causal_claims_allowed": False,
+            "observed_spending_claims_allowed": False,
+            "preregistration_claimed": False,
+            "production_campaign_authorized": False,
+            "allowed_result_label": "EXPLORATORY_SYNTHETIC_MODEL_RESULT",
+        },
+        "registration_status": AnalysisPlanRegistrationStatus.UNREGISTERED.value,
+        "preregistered": False,
+        "campaign_ready": False,
+        "execution_status": "NOT_EXECUTED",
+        "simulation_execution_performed": False,
+        "blockers": list(_EXPLORATORY_PLAN_BLOCKERS),
+    }
+    canonical = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return ExploratoryAnalysisPlan(
+        identity_payload_json=canonical,
+        plan_sha256=_canonical_sha256(payload),
+    )
+
+
+def load_exploratory_analysis_plan(
+    path: str | Path,
+) -> LoadedExploratoryAnalysisPlan:
+    """Securely load and re-attest one exploratory analysis-plan file."""
+
+    candidate = _absolute_path(path)
+    observed = _read_regular_file(candidate)
+    plan = _exploratory_plan_from_snapshot(_parse_json_object(observed))
+    return LoadedExploratoryAnalysisPlan(
+        plan_path=candidate,
+        byte_length=len(observed),
+        file_sha256=sha256(observed).hexdigest(),
+        semantic_sha256=plan.plan_sha256,
+        plan=plan,
+    )
+
+
+def verify_loaded_exploratory_analysis_plan(
+    loaded: LoadedExploratoryAnalysisPlan,
+) -> LoadedExploratoryAnalysisPlan:
+    """Reopen an exploratory plan and reject any file or semantic drift."""
+
+    if type(loaded) is not LoadedExploratoryAnalysisPlan:
+        raise TypeError("loaded must be LoadedExploratoryAnalysisPlan")
+    LoadedExploratoryAnalysisPlan.__post_init__(loaded)
+    observed = load_exploratory_analysis_plan(loaded.plan_path)
+    if observed != loaded:
+        raise AnalysisPlanVerificationError(
+            "exploratory plan changed after it was loaded"
+        )
+    return observed
+
+
+def verify_exploratory_analysis_plan_parent(
+    plan: ExploratoryAnalysisPlan,
+    parent_loaded: LoadedProspectiveAnalysisPlan,
+) -> ExploratoryAnalysisPlan:
+    """Verify the exact parent file and unchanged primary scientific identity."""
+
+    if type(plan) is not ExploratoryAnalysisPlan:
+        raise TypeError("plan must be ExploratoryAnalysisPlan")
+    ExploratoryAnalysisPlan.__post_init__(plan)
+    parent = verify_loaded_prospective_analysis_plan(parent_loaded)
+    declared_parent = _required_mapping(plan.identity_payload, "parent_plan")
+    scientific = _required_mapping(plan.identity_payload, "scientific_estimand")
+    mismatches: list[str] = []
+    if declared_parent.get("plan_id") != parent.plan.plan_id:
+        mismatches.append("parent_plan_id")
+    if declared_parent.get("plan_sha256") != parent.plan.plan_sha256:
+        mismatches.append("parent_plan_sha256")
+    if declared_parent.get("file_sha256") != parent.file_sha256:
+        mismatches.append("parent_file_sha256")
+    if scientific.get("estimand_id") != parent.plan.primary_estimand.estimand_id:
+        mismatches.append("primary_estimand_id")
+    if (
+        scientific.get("specification_sha256")
+        != parent.plan.primary_estimand.specification_sha256
+    ):
+        mismatches.append("primary_estimand_specification_sha256")
+    if mismatches:
+        raise AnalysisPlanVerificationError(
+            "exploratory plan differs from its exact parent: "
+            + ", ".join(mismatches)
+        )
+    rebuilt = build_exploratory_analysis_plan(
+        parent,
+        plan_id=plan.plan_id,
+    )
+    if rebuilt != plan:
+        raise AnalysisPlanVerificationError(
+            "exploratory plan is not the canonical derivative of its exact parent"
+        )
+    return plan
+
+
 def _plan_attestation_payload(
     *,
     schema_version: str = ANALYSIS_PLAN_SCHEMA_VERSION,
@@ -1492,6 +1974,35 @@ _PLAN_KEYS_V2 = frozenset(
     )
 )
 _PLAN_KEYS_V3 = frozenset(set(_PLAN_KEYS_V2).union({"amendment"}))
+_EXPLORATORY_IDENTITY_KEYS = frozenset(
+    {
+        "schema_version",
+        "plan_kind",
+        "plan_id",
+        "parent_plan",
+        "purpose",
+        "scenario_definitions",
+        "ordered_scenario_set_sha256",
+        "scientific_estimand",
+        "declared_harm_weights",
+        "expected_harm_weights_sha256",
+        "stopping_rule",
+        "population_weighting",
+        "monetary_semantics",
+        "uncertainty_design",
+        "convergence_rule",
+        "interpretation_limits",
+        "registration_status",
+        "preregistered",
+        "campaign_ready",
+        "execution_status",
+        "simulation_execution_performed",
+        "blockers",
+    }
+)
+_EXPLORATORY_PLAN_KEYS = frozenset(
+    set(_EXPLORATORY_IDENTITY_KEYS).union({"plan_sha256"})
+)
 _STOPPING_KEYS = frozenset(
     {
         "rule_id",
@@ -1732,6 +2243,29 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
             "analysis plan JSON is not the canonical schema-v1 snapshot"
         )
     return plan
+
+
+def _exploratory_plan_from_snapshot(
+    row: Mapping[str, object],
+) -> ExploratoryAnalysisPlan:
+    if type(row) is not dict:
+        raise AnalysisPlanValidationError(
+            "exploratory analysis plan must be a JSON object"
+        )
+    _exact_keys(row, _EXPLORATORY_PLAN_KEYS, name="exploratory analysis plan")
+    payload = {key: row[key] for key in _EXPLORATORY_IDENTITY_KEYS}
+    _validate_exploratory_plan_payload(payload)
+    canonical = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return ExploratoryAnalysisPlan(
+        identity_payload_json=canonical,
+        plan_sha256=_required_string(row, "plan_sha256"),
+    )
 
 
 def _stopping_from_snapshot(row: Mapping[str, object]) -> FixedSeedStoppingRule:
@@ -2352,6 +2886,586 @@ def _harm_weights_snapshot(weights: WelfareHarmWeights) -> dict[str, float]:
     }
 
 
+def _canonical_exploratory_scenario_definitions() -> list[dict[str, object]]:
+    """Return the full seven-scenario catalogue in stable enum order."""
+
+    scenarios = required_scenarios()
+    if tuple(item.scenario_id for item in scenarios) != tuple(ScenarioId):
+        raise AnalysisPlanValidationError(
+            "required scenario catalogue differs from ScenarioId order"
+        )
+    return [
+        {
+            "ordinal": ordinal,
+            "scenario_id": scenario.scenario_id.value,
+            "label": scenario.label,
+            "description": scenario.description,
+            "mechanics": {
+                field_name: getattr(scenario.mechanics, field_name)
+                for field_name in scenario.mechanics.__dataclass_fields__
+            },
+            "fixed_access_price_cents": scenario.fixed_access_price_cents,
+            "subscription_price_cents": scenario.subscription_price_cents,
+            "epgc_enabled": scenario.epgc_enabled,
+        }
+        for ordinal, scenario in enumerate(scenarios)
+    ]
+
+
+def _exploratory_scenario_set_sha256(
+    definitions: Sequence[Mapping[str, object]],
+) -> str:
+    return _canonical_sha256(
+        {
+            "schema_version": EXPLORATORY_ANALYSIS_PLAN_SCHEMA_VERSION,
+            "ordering": "SCENARIO_ID_ENUM_DECLARATION_ORDER",
+            "scenario_definitions": list(definitions),
+        }
+    )
+
+
+def _validate_exploratory_plan_payload(row: Mapping[str, object]) -> None:
+    """Validate the fixed non-empirical interpretation boundary."""
+
+    if type(row) is not dict:
+        raise AnalysisPlanValidationError(
+            "exploratory plan payload must be a JSON object"
+        )
+    _exact_keys(row, _EXPLORATORY_IDENTITY_KEYS, name="exploratory plan identity")
+    if _required_string(row, "schema_version") != EXPLORATORY_ANALYSIS_PLAN_SCHEMA_VERSION:
+        raise AnalysisPlanValidationError(
+            "unsupported exploratory analysis-plan schema version"
+        )
+    if _required_string(row, "plan_kind") != EXPLORATORY_ANALYSIS_PLAN_KIND:
+        raise AnalysisPlanValidationError("exploratory plan_kind is fixed")
+    _identifier(_required_string(row, "plan_id"), name="exploratory plan_id")
+
+    parent = _required_mapping(row, "parent_plan")
+    _exact_keys(
+        parent,
+        frozenset(
+            {
+                "schema_version",
+                "plan_id",
+                "plan_sha256",
+                "file_sha256",
+                "byte_length",
+                "relationship",
+            }
+        ),
+        name="exploratory parent_plan",
+    )
+    if _required_string(parent, "schema_version") != CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION:
+        raise AnalysisPlanValidationError(
+            "exploratory parent must be the schema-v3 campaign plan"
+        )
+    _identifier(_required_string(parent, "plan_id"), name="parent plan_id")
+    _sha256_digest(_required_string(parent, "plan_sha256"), name="parent plan_sha256")
+    _sha256_digest(_required_string(parent, "file_sha256"), name="parent file_sha256")
+    if _required_int(parent, "byte_length") <= 0:
+        raise AnalysisPlanValidationError("parent byte_length must be positive")
+    if _required_string(
+        parent,
+        "relationship",
+    ) != "EXPLORATORY_DERIVATIVE_NO_SCIENTIFIC_CHANGE":
+        raise AnalysisPlanValidationError(
+            "exploratory parent relationship cannot claim a scientific change"
+        )
+
+    purpose = _required_mapping(row, "purpose")
+    _exact_keys(
+        purpose,
+        frozenset(
+            {
+                "purpose_id",
+                "description",
+                "synthetic_model_exploration",
+                "empirical_analysis",
+                "confirmatory_analysis",
+                "production_campaign",
+            }
+        ),
+        name="exploratory purpose",
+    )
+    if _required_string(
+        purpose,
+        "purpose_id",
+    ) != "MODEL_INTERNAL_EXPLORATORY_ENGINEERING_V1":
+        raise AnalysisPlanValidationError("exploratory purpose_id is fixed")
+    _nonempty_text(_required_string(purpose, "description"), name="purpose description")
+    if not _required_bool(purpose, "synthetic_model_exploration"):
+        raise AnalysisPlanValidationError(
+            "exploratory plan must identify synthetic model exploration"
+        )
+    for field_name in (
+        "empirical_analysis",
+        "confirmatory_analysis",
+        "production_campaign",
+    ):
+        if _required_bool(purpose, field_name):
+            raise AnalysisPlanValidationError(
+                f"exploratory purpose requires {field_name}=false"
+            )
+
+    scenario_definitions = _required_list(row, "scenario_definitions")
+    canonical_scenarios = _canonical_exploratory_scenario_definitions()
+    if scenario_definitions != canonical_scenarios:
+        raise AnalysisPlanValidationError(
+            "exploratory scenario definitions differ from the complete ordered "
+            "seven-scenario catalogue"
+        )
+    scenario_set_sha256 = _required_string(
+        row,
+        "ordered_scenario_set_sha256",
+    )
+    _sha256_digest(
+        scenario_set_sha256,
+        name="exploratory ordered scenario set",
+    )
+    if scenario_set_sha256 != _exploratory_scenario_set_sha256(
+        canonical_scenarios
+    ):
+        raise AnalysisPlanValidationError(
+            "ordered_scenario_set_sha256 differs from the scenario definitions"
+        )
+
+    scientific = _required_mapping(row, "scientific_estimand")
+    _exact_keys(
+        scientific,
+        frozenset(
+            {
+                "derived_without_change",
+                "estimand_id",
+                "specification_sha256",
+                "reference_scenario_id",
+                "comparison_scenario_id",
+                "contrast_direction",
+                "metric_contract_id",
+                "population_predicate_sha256",
+                "estimand",
+            }
+        ),
+        name="exploratory scientific_estimand",
+    )
+    if not _required_bool(scientific, "derived_without_change"):
+        raise AnalysisPlanValidationError(
+            "exploratory estimand must be derived without scientific change"
+        )
+    estimand = _estimand_from_snapshot(_required_mapping(scientific, "estimand"))
+    if estimand.role is not AnalysisEstimandRole.PRIMARY:
+        raise AnalysisPlanValidationError(
+            "exploratory scientific estimand must remain PRIMARY"
+        )
+    if (
+        _required_string(scientific, "estimand_id") != estimand.estimand_id
+        or _required_string(scientific, "specification_sha256")
+        != estimand.specification_sha256
+        or _required_string(scientific, "reference_scenario_id")
+        != estimand.reference_scenario_id.value
+        or _required_string(scientific, "comparison_scenario_id")
+        != estimand.comparison_scenario_id.value
+        or _required_string(scientific, "contrast_direction")
+        != estimand.contrast_direction
+        or _required_string(scientific, "metric_contract_id")
+        != estimand.metric_contract_id
+        or _required_string(scientific, "population_predicate_sha256")
+        != estimand.inclusion_predicate.predicate_sha256
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory explicit contrast differs from its estimand"
+        )
+
+    harm_weights = _harm_weights_from_snapshot(
+        _required_mapping(row, "declared_harm_weights")
+    )
+    expected_harm_sha = _required_string(row, "expected_harm_weights_sha256")
+    _sha256_digest(expected_harm_sha, name="exploratory harm weights")
+    if analysis_plan_harm_weights_sha256(harm_weights) != expected_harm_sha:
+        raise AnalysisPlanValidationError(
+            "exploratory harm weights differ from their declared identity"
+        )
+
+    stopping = _stopping_from_snapshot(_required_mapping(row, "stopping_rule"))
+    if len(stopping.seeds) != 150:
+        raise AnalysisPlanValidationError(
+            "exploratory analysis requires exactly 150 fixed seeds"
+        )
+
+    population = _required_mapping(row, "population_weighting")
+    _exact_keys(
+        population,
+        frozenset(
+            {
+                "mode",
+                "design_id",
+                "design_sha256",
+                "runtime_mapping_id",
+                "runtime_mapping_sha256",
+                "adapter_id",
+                "adapter_sha256",
+                "population_input_sha256",
+                "population_predicate_sha256",
+                "weight_representation",
+                "application",
+                "applied_within_seed_before_cross_seed_aggregation",
+                "identical_across_paired_scenarios",
+                "structural_balance_is_empirical_validation",
+                "empirical_validation_claimed",
+                "target_population_generalization_allowed",
+                "uncertainty_status",
+            }
+        ),
+        name="exploratory population_weighting",
+    )
+    for field_name in (
+        "design_id",
+        "runtime_mapping_id",
+        "adapter_id",
+    ):
+        _identifier(_required_string(population, field_name), name=field_name)
+    for field_name in (
+        "design_sha256",
+        "runtime_mapping_sha256",
+        "adapter_sha256",
+        "population_input_sha256",
+        "population_predicate_sha256",
+    ):
+        _sha256_digest(_required_string(population, field_name), name=field_name)
+    if _required_string(population, "mode") != "projected_v1":
+        raise AnalysisPlanValidationError("exploratory population mode must be projected_v1")
+    if _required_string(population, "weight_representation") != "EXACT_RATIONAL":
+        raise AnalysisPlanValidationError("population weights must remain exact rational")
+    if _required_string(
+        population,
+        "application",
+    ) != "WITHIN_EACH_SEED_BEFORE_CROSS_SEED_AGGREGATION":
+        raise AnalysisPlanValidationError(
+            "population weights must be applied within each seed"
+        )
+    for field_name in (
+        "applied_within_seed_before_cross_seed_aggregation",
+        "identical_across_paired_scenarios",
+    ):
+        if not _required_bool(population, field_name):
+            raise AnalysisPlanValidationError(
+                f"population weighting requires {field_name}=true"
+            )
+    for field_name in (
+        "structural_balance_is_empirical_validation",
+        "empirical_validation_claimed",
+        "target_population_generalization_allowed",
+    ):
+        if _required_bool(population, field_name):
+            raise AnalysisPlanValidationError(
+                f"exploratory population requires {field_name}=false"
+            )
+    if _required_string(population, "uncertainty_status") != "UNQUANTIFIED":
+        raise AnalysisPlanValidationError(
+            "exploratory population uncertainty must remain unquantified"
+        )
+    if (
+        _required_string(population, "population_predicate_sha256")
+        != estimand.inclusion_predicate.predicate_sha256
+    ):
+        raise AnalysisPlanValidationError(
+            "population weighting predicate differs from the estimand"
+        )
+
+    monetary = _required_mapping(row, "monetary_semantics")
+    _exact_keys(
+        monetary,
+        frozenset(
+            {
+                "semantic_label",
+                "target_currency",
+                "quote_convention",
+                "scale_convention",
+                "rate_period_start",
+                "rate_period_end",
+                "price_period_start",
+                "price_period_end",
+                "missing_date_policy",
+                "rounding_rule",
+                "rounding_boundary",
+                "conversion_basis_sha256",
+                "source_bundle_id",
+                "source_bundle_semantic_sha256",
+                "source_bundle_signature_status",
+                "simulation_bridge_status",
+                "rate_uncertainty_status",
+                "exact_rational_conversion_required",
+                "conversion_before_population_weighting",
+                "raw_cross_currency_pooling_allowed",
+                "observed_real_world_spending_claimed",
+                "empirical_monetary_interpretation_allowed",
+            }
+        ),
+        name="exploratory monetary_semantics",
+    )
+    if _required_string(
+        monetary,
+        "semantic_label",
+    ) != "SIMULATED_MODEL_EQUIVALENT_TARGET_CURRENCY_VALUES":
+        raise AnalysisPlanValidationError(
+            "exploratory monetary values must remain model-equivalent"
+        )
+    for field_name in (
+        "target_currency",
+        "quote_convention",
+        "scale_convention",
+        "rate_period_start",
+        "rate_period_end",
+        "price_period_start",
+        "price_period_end",
+        "missing_date_policy",
+        "rounding_rule",
+        "rounding_boundary",
+        "source_bundle_id",
+    ):
+        _nonempty_text(_required_string(monetary, field_name), name=field_name)
+    for field_name in (
+        "conversion_basis_sha256",
+        "source_bundle_semantic_sha256",
+    ):
+        _sha256_digest(_required_string(monetary, field_name), name=field_name)
+    if _required_string(monetary, "source_bundle_signature_status") != "MISSING":
+        raise AnalysisPlanValidationError(
+            "current exploratory monetary source signature remains missing"
+        )
+    if _required_string(monetary, "simulation_bridge_status") != "ILLUSTRATIVE":
+        raise AnalysisPlanValidationError(
+            "current exploratory monetary bridge remains illustrative"
+        )
+    if _required_string(monetary, "rate_uncertainty_status") != "UNQUANTIFIED":
+        raise AnalysisPlanValidationError(
+            "exploratory monetary-rate uncertainty must remain unquantified"
+        )
+    for field_name in (
+        "exact_rational_conversion_required",
+        "conversion_before_population_weighting",
+    ):
+        if not _required_bool(monetary, field_name):
+            raise AnalysisPlanValidationError(
+                f"monetary semantics require {field_name}=true"
+            )
+    for field_name in (
+        "raw_cross_currency_pooling_allowed",
+        "observed_real_world_spending_claimed",
+        "empirical_monetary_interpretation_allowed",
+    ):
+        if _required_bool(monetary, field_name):
+            raise AnalysisPlanValidationError(
+                f"exploratory monetary semantics require {field_name}=false"
+            )
+
+    uncertainty = _required_mapping(row, "uncertainty_design")
+    if _required_string(uncertainty, "schema_version") != "1.0":
+        raise AnalysisPlanValidationError("unsupported exploratory uncertainty schema")
+    if _required_string(uncertainty, "oat_role") != "DIAGNOSTIC_ONLY":
+        raise AnalysisPlanValidationError("exploratory OAT must remain diagnostic")
+    seed_uncertainty = _required_mapping(uncertainty, "seed_uncertainty")
+    if (
+        _required_string(seed_uncertainty, "status")
+        != "QUANTIFIED_WHEN_COMPLETE"
+        or _required_int(seed_uncertainty, "fixed_seed_count") != 150
+        or not _required_bool(seed_uncertainty, "common_random_numbers")
+        or not _required_bool(
+            seed_uncertainty,
+            "identical_pretreatment_cohorts",
+        )
+        or not _required_bool(
+            seed_uncertainty,
+            "population_weights_applied_within_seed",
+        )
+        or _required_bool(
+            seed_uncertainty,
+            "outcome_dependent_seed_exclusion_allowed",
+        )
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory seed-uncertainty declaration is not fail closed"
+        )
+    parameter_uncertainty = _required_mapping(
+        uncertainty,
+        "parameter_uncertainty",
+    )
+    if (
+        _required_string(parameter_uncertainty, "status")
+        != "ILLUSTRATIVE_DESIGN_ONLY"
+        or _required_string(parameter_uncertainty, "probability_interpretation")
+        != "NONE"
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory parameter uncertainty cannot claim calibration"
+        )
+    _sha256_digest(
+        _required_string(parameter_uncertainty, "design_sha256"),
+        name="exploratory parameter design",
+    )
+    monetary_uncertainty = _required_mapping(
+        uncertainty,
+        "monetary_rate_uncertainty",
+    )
+    population_uncertainty = _required_mapping(
+        uncertainty,
+        "population_uncertainty",
+    )
+    combined_uncertainty = _required_mapping(
+        uncertainty,
+        "combined_uncertainty",
+    )
+    if (
+        _required_string(monetary_uncertainty, "status") != "UNQUANTIFIED"
+        or _required_string(population_uncertainty, "status") != "UNQUANTIFIED"
+        or _required_string(combined_uncertainty, "status")
+        != "UNAVAILABLE_UNTIL_ALL_REQUIRED_COMPONENTS_EXIST"
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory required uncertainty components remain unavailable"
+        )
+
+    convergence = _required_mapping(row, "convergence_rule")
+    required_convergence = frozenset(
+        {
+            "schema_version",
+            "block_size",
+            "minimum_retained_seeds",
+            "maximum_mcse",
+            "maximum_interval_width",
+            "maximum_absolute_change",
+            "maximum_relative_change",
+            "maximum_invalid_rate",
+            "consecutive_passing_checkpoints",
+            "sensitivity_instability_allowed",
+            "outcome_dependent_seed_exclusion_allowed",
+            "required_uncertainty_component_handling",
+        }
+    )
+    _exact_keys(convergence, required_convergence, name="exploratory convergence_rule")
+    if _required_string(convergence, "schema_version") != "1.0":
+        raise AnalysisPlanValidationError("unsupported exploratory convergence schema")
+    for field_name in (
+        "block_size",
+        "minimum_retained_seeds",
+        "consecutive_passing_checkpoints",
+    ):
+        if _required_int(convergence, field_name) <= 0:
+            raise AnalysisPlanValidationError(
+                f"exploratory convergence {field_name} must be positive"
+            )
+    if _required_int(convergence, "minimum_retained_seeds") < 100:
+        raise AnalysisPlanValidationError(
+            "exploratory convergence requires at least 100 retained seeds"
+        )
+    for field_name in (
+        "maximum_mcse",
+        "maximum_interval_width",
+        "maximum_absolute_change",
+        "maximum_relative_change",
+    ):
+        value = convergence.get(field_name)
+        if (
+            type(value) not in {int, float}
+            or isinstance(value, bool)
+            or not np.isfinite(float(value))
+            or float(value) <= 0.0
+        ):
+            raise AnalysisPlanValidationError(
+                f"exploratory convergence {field_name} must be positive"
+            )
+    invalid_rate = convergence.get("maximum_invalid_rate")
+    if (
+        type(invalid_rate) not in {int, float}
+        or isinstance(invalid_rate, bool)
+        or not np.isfinite(float(invalid_rate))
+        or not 0.0 <= float(invalid_rate) < 1.0
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory maximum_invalid_rate must be in [0, 1)"
+        )
+    if (
+        _required_bool(convergence, "sensitivity_instability_allowed")
+        or _required_bool(
+            convergence,
+            "outcome_dependent_seed_exclusion_allowed",
+        )
+        or _required_string(
+            convergence,
+            "required_uncertainty_component_handling",
+        )
+        != "FAIL_CLOSED"
+    ):
+        raise AnalysisPlanValidationError(
+            "exploratory convergence must fail closed"
+        )
+
+    limits = _required_mapping(row, "interpretation_limits")
+    _exact_keys(
+        limits,
+        frozenset(
+            {
+                "model_internal_results_only",
+                "empirical_estimate_claimed",
+                "external_validity_claimed",
+                "target_population_generalization_allowed",
+                "real_world_causal_claims_allowed",
+                "observed_spending_claims_allowed",
+                "preregistration_claimed",
+                "production_campaign_authorized",
+                "allowed_result_label",
+            }
+        ),
+        name="exploratory interpretation_limits",
+    )
+    if not _required_bool(limits, "model_internal_results_only"):
+        raise AnalysisPlanValidationError(
+            "exploratory results must be labelled model-internal"
+        )
+    for field_name in (
+        "empirical_estimate_claimed",
+        "external_validity_claimed",
+        "target_population_generalization_allowed",
+        "real_world_causal_claims_allowed",
+        "observed_spending_claims_allowed",
+        "preregistration_claimed",
+        "production_campaign_authorized",
+    ):
+        if _required_bool(limits, field_name):
+            raise AnalysisPlanValidationError(
+                f"exploratory interpretation requires {field_name}=false"
+            )
+    if _required_string(
+        limits,
+        "allowed_result_label",
+    ) != "EXPLORATORY_SYNTHETIC_MODEL_RESULT":
+        raise AnalysisPlanValidationError("exploratory result label is fixed")
+
+    if _required_string(row, "registration_status") != "UNREGISTERED":
+        raise AnalysisPlanValidationError(
+            "exploratory plan cannot claim external registration"
+        )
+    if _required_bool(row, "preregistered") or _required_bool(row, "campaign_ready"):
+        raise AnalysisPlanValidationError(
+            "exploratory plan cannot be preregistered or campaign-ready"
+        )
+    if _required_string(row, "execution_status") != "NOT_EXECUTED":
+        raise AnalysisPlanValidationError(
+            "the generated exploratory plan must remain not executed"
+        )
+    if _required_bool(row, "simulation_execution_performed"):
+        raise AnalysisPlanValidationError(
+            "plan generation cannot claim a simulation execution"
+        )
+    blockers = tuple(
+        _strict_json_string(value, name=f"blockers[{index}]")
+        for index, value in enumerate(_required_list(row, "blockers"))
+    )
+    if blockers != _EXPLORATORY_PLAN_BLOCKERS:
+        raise AnalysisPlanValidationError(
+            "exploratory blockers differ from the fixed schema set"
+        )
+
+
 _AMENDMENT_KEYS: Final[frozenset[str]] = frozenset(
     {
         "amendment_schema_version",
@@ -2931,6 +4045,8 @@ __all__ = [
     "ALL_HOUSEHOLD_TYPES_ID",
     "ALL_MONTHLY_DISPOSABLE_INCOME_BANDS_ID",
     "CAMPAIGN_ANALYSIS_PLAN_SCHEMA_VERSION",
+    "EXPLORATORY_ANALYSIS_PLAN_KIND",
+    "EXPLORATORY_ANALYSIS_PLAN_SCHEMA_VERSION",
     "PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION",
     "MAX_ANALYSIS_PLAN_BYTES",
     "AnalysisEstimandRole",
@@ -2940,6 +4056,8 @@ __all__ = [
     "AnalysisPlanVerificationError",
     "CanonicalPopulationInclusionPredicate",
     "FixedSeedStoppingRule",
+    "ExploratoryAnalysisPlan",
+    "LoadedExploratoryAnalysisPlan",
     "LoadedProspectiveAnalysisPlan",
     "PlannedPopulationEstimand",
     "PopulationMinorFilter",
@@ -2948,10 +4066,14 @@ __all__ = [
     "PrimaryAggregateRule",
     "ProspectiveAnalysisPlan",
     "analysis_plan_harm_weights_sha256",
+    "build_exploratory_analysis_plan",
     "build_prospective_analysis_plan",
     "evaluate_population_inclusion",
     "load_prospective_analysis_plan",
+    "load_exploratory_analysis_plan",
     "population_outcome_semantics",
     "verify_loaded_prospective_analysis_plan",
+    "verify_loaded_exploratory_analysis_plan",
+    "verify_exploratory_analysis_plan_parent",
     "verify_prospective_analysis_plan_bindings",
 ]

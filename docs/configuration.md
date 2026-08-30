@@ -14,7 +14,7 @@ checks. Development policy runs require `provenance_status = "synthetic"`;
 campaign-shaped files can declare another recognized status, but execution
 still requires calibrated provenance and all independent campaign gates.
 
-Five run configurations are supplied:
+Six run configurations are supplied:
 
 | File | Purpose | Scale | Status |
 | --- | --- | --- | --- |
@@ -22,6 +22,7 @@ Five run configurations are supplied:
 | `configs/policy_prototype.toml` | Reproducible seven-scenario policy prototype | 1,000 players, 14 days, 3 seeds, 7 scenarios | Strictly `synthetic`; tested but not empirically calibrated |
 | `configs/policy_prospective.toml` | Opt-in prospective-plan validation fixture | 16 designed test players, 14 days, 3 fixed seeds, 7 scenarios | `UNREGISTERED`, illustrative/test population provenance, and explicitly not campaign-ready |
 | `configs/policy_campaign.toml` | Complete fail-closed full-campaign configuration | 50,000 projected players, 14 days, 150 fixed seeds, 7 scenarios | Schema-valid pre-campaign candidate; illustrative population and money bridge, unquantified required uncertainty, and `campaign_ready=false`; not executed |
+| `configs/policy_exploratory_synthetic.toml` | Explicit non-empirical computational experiment | 50,000 illustrative projected players, 14 days, 150 fixed seeds, 7 scenarios | Separate exploratory sidecar plan and artifact namespace; conditional model results only, `campaign_ready=false`, and not executed |
 | `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles; final-only history and SQLite ledger | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
 
 The campaign-shaped file is a binding contract, not permission to execute.
@@ -324,7 +325,14 @@ underlying parameters describe any observed game or jurisdiction.
 | --- | --- | --- |
 | `name` | non-empty string | Run name stored in CLI output and `manifest.json`. |
 | `provenance_status` | string | Development runs require `synthetic`; campaign candidates retain an explicit status and execution separately requires `calibrated`. |
-| `run_purpose` | optional `development` or `campaign` | Defaults to `development`; `campaign` activates projected-population, plan, retained-player, and no-fallback gates. |
+| `run_purpose` | optional `development`, `exploratory`, or `campaign` | Defaults to `development`; `exploratory` requires the complete non-empirical `[exploratory]` contract, while `campaign` activates production-shaped projected-population, plan, retained-player, and no-fallback gates. |
+| `full_exploratory_config` | optional boolean | Must be true for `run_purpose = "exploratory"`; mutually exclusive with `full_campaign_config`. |
+
+The strict exploratory schema requires projected population, scientific-parent
+and sidecar-plan identities, uncertainty and convergence rules, monetary and
+population contracts, an isolated output directory, and a persistent isolated
+ledger. It forbids `[campaign]`, the production `[output_contract]`, and
+`[execution_receipt]`. See [Exploratory synthetic campaign](exploratory_synthetic_campaign.md).
 | `notes` | string | Interpretation warning retained in the manifest. |
 
 ### `[policy_run]`

@@ -27,15 +27,46 @@ from .types import LedgerBackend
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BLOCKED_IDENTITY = re.compile(r"BLOCKED_PENDING_[A-Z0-9_]+\Z")
 
+EXPLORATORY_ARTIFACT_NAMESPACE = "policy_exploratory_synthetic"
+EXPLORATORY_EXECUTION_KIND = "COMPUTATIONAL_SIMULATION"
+EXPLORATORY_POPULATION_BASIS = "ILLUSTRATIVE_NON_EMPIRICAL"
+EXPLORATORY_ESTIMAND_INTERPRETATION = "CONDITIONAL_ON_MODEL_ASSUMPTIONS"
+EXPLORATORY_MONETARY_AMOUNT_SEMANTICS = (
+    "SYNTHETIC_MODEL_EQUIVALENT_NOT_OBSERVED_SPENDING"
+)
+EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE = "DIAGNOSTIC_ONLY"
+EXPLORATORY_INTERNAL_MONETARY_UNIT = "simulation_cents"
+EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE = (
+    "DIAGNOSTIC_ONLY_NOT_A_CROSS_COUNTRY_MONETARY_RESULT"
+)
+EXPLORATORY_PLAN_FILENAME = (
+    "exploratory-synthetic-analysis-plan-v1.json"
+)
+EXPLORATORY_PLAN_ID = (
+    "illustrative.exploratory.synthetic.composite-harm.baseline-vs-safe.v1"
+)
+EXPLORATORY_PARENT_PLAN_ID = (
+    "illustrative.prospective.composite-harm.baseline-vs-safe.v3"
+)
+EXPLORATORY_PARENT_PLAN_FILENAME = "prospective-analysis-plan-amendment-v3.json"
+EXPLORATORY_SCIENTIFIC_PARENT_PLAN_ID = (
+    "illustrative.prospective.composite-harm.baseline-vs-safe.v2"
+)
+EXPLORATORY_SCIENTIFIC_PARENT_PLAN_FILENAME = "prospective-analysis-plan.json"
+EXPLORATORY_PRIMARY_ESTIMAND_ID = (
+    "primary.composite-harm.baseline-vs-safe.v1"
+)
+
 
 class PolicyConfigurationError(ValueError):
     """Raised when the policy-prototype configuration is ambiguous or unsafe."""
 
 
 class PolicyRunPurpose(str, Enum):
-    """Whether a policy configuration is developmental or campaign-intended."""
+    """The declared scientific/operational purpose of a policy configuration."""
 
     DEVELOPMENT = "development"
+    EXPLORATORY = "exploratory"
     CAMPAIGN = "campaign"
 
 
@@ -168,6 +199,136 @@ class CampaignControlConfig:
         if type(self.campaign_ready) is not bool:
             raise TypeError("campaign campaign_ready must be boolean")
         _nonempty_text(self.primary_estimand_id, name="campaign primary_estimand_id")
+
+
+@dataclass(frozen=True, slots=True)
+class ExploratoryControlConfig:
+    """Fixed non-production semantics for a synthetic computational run."""
+
+    exploratory_plan_path: Path
+    exploratory_plan_id: str
+    exploratory_plan_sha256: str
+    artifact_namespace: str
+    execution_kind: str
+    population_basis: str
+    estimand_interpretation: str
+    monetary_amount_semantics: str
+    unweighted_output_role: str
+    internal_monetary_unit: str
+    raw_internal_unit_output_role: str
+    allow_synthetic: bool
+    campaign_ready: bool
+    production_campaign: bool
+    empirical_claims: bool
+    population_inference_claims: bool
+    causal_claims: bool
+    generalisation_claims: bool
+    identical_pretreatment_cohorts: bool
+    identical_population_weights_across_scenarios: bool
+    primary_estimand_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.exploratory_plan_path, Path) or not str(
+            self.exploratory_plan_path
+        ):
+            raise TypeError("exploratory_plan_path must be a Path")
+        if self.exploratory_plan_path.name != EXPLORATORY_PLAN_FILENAME:
+            raise ValueError(
+                "exploratory_plan_path must select the versioned exploratory "
+                "sidecar plan"
+            )
+        _identity_text_or_placeholder(
+            self.exploratory_plan_id,
+            name="exploratory exploratory_plan_id",
+        )
+        if self.exploratory_plan_id != EXPLORATORY_PLAN_ID:
+            raise ValueError(
+                "exploratory_plan_id must select the versioned synthetic "
+                "exploratory sidecar"
+            )
+        _identity_sha256_or_placeholder(
+            self.exploratory_plan_sha256,
+            name="exploratory exploratory_plan_sha256",
+        )
+        if not _SHA256.fullmatch(self.exploratory_plan_sha256):
+            raise ValueError(
+                "exploratory exploratory_plan_sha256 must be a resolved "
+                "lowercase SHA-256"
+            )
+        fixed_labels = {
+            "artifact_namespace": EXPLORATORY_ARTIFACT_NAMESPACE,
+            "execution_kind": EXPLORATORY_EXECUTION_KIND,
+            "population_basis": EXPLORATORY_POPULATION_BASIS,
+            "estimand_interpretation": EXPLORATORY_ESTIMAND_INTERPRETATION,
+            "monetary_amount_semantics": (
+                EXPLORATORY_MONETARY_AMOUNT_SEMANTICS
+            ),
+            "unweighted_output_role": EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE,
+            "internal_monetary_unit": EXPLORATORY_INTERNAL_MONETARY_UNIT,
+            "raw_internal_unit_output_role": (
+                EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE
+            ),
+        }
+        for name, expected in fixed_labels.items():
+            if getattr(self, name) != expected:
+                raise ValueError(
+                    f"exploratory {name} must be {expected!r}"
+                )
+        if type(self.allow_synthetic) is not bool or not self.allow_synthetic:
+            raise ValueError("exploratory allow_synthetic must be true")
+        required_false = (
+            "campaign_ready",
+            "production_campaign",
+            "empirical_claims",
+            "population_inference_claims",
+            "causal_claims",
+            "generalisation_claims",
+        )
+        for name in required_false:
+            if type(getattr(self, name)) is not bool or getattr(self, name):
+                raise ValueError(f"exploratory {name} must be false")
+        required_true = (
+            "identical_pretreatment_cohorts",
+            "identical_population_weights_across_scenarios",
+        )
+        for name in required_true:
+            if type(getattr(self, name)) is not bool or not getattr(self, name):
+                raise ValueError(f"exploratory {name} must be true")
+        _nonempty_text(
+            self.primary_estimand_id,
+            name="exploratory primary_estimand_id",
+        )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "exploratory_plan_path": str(self.exploratory_plan_path),
+            "exploratory_plan_id": self.exploratory_plan_id,
+            "exploratory_plan_sha256": self.exploratory_plan_sha256,
+            "artifact_namespace": self.artifact_namespace,
+            "execution_kind": self.execution_kind,
+            "population_basis": self.population_basis,
+            "estimand_interpretation": self.estimand_interpretation,
+            "monetary_amount_semantics": self.monetary_amount_semantics,
+            "unweighted_output_role": self.unweighted_output_role,
+            "internal_monetary_unit": self.internal_monetary_unit,
+            "raw_internal_unit_output_role": (
+                self.raw_internal_unit_output_role
+            ),
+            "allow_synthetic": self.allow_synthetic,
+            "campaign_ready": self.campaign_ready,
+            "production_campaign": self.production_campaign,
+            "empirical_claims": self.empirical_claims,
+            "population_inference_claims": self.population_inference_claims,
+            "causal_claims": self.causal_claims,
+            "generalisation_claims": self.generalisation_claims,
+            "identical_pretreatment_cohorts": (
+                self.identical_pretreatment_cohorts
+            ),
+            "identical_population_weights_across_scenarios": (
+                self.identical_population_weights_across_scenarios
+            ),
+            "primary_estimand_id": self.primary_estimand_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,7 +781,9 @@ class PolicyPrototypeConfig:
     analysis_plan: AnalysisPlanSelection | None = None
     run_purpose: PolicyRunPurpose = PolicyRunPurpose.DEVELOPMENT
     full_campaign_config: bool = False
+    full_exploratory_config: bool = False
     campaign: CampaignControlConfig | None = None
+    exploratory: ExploratoryControlConfig | None = None
     uncertainty: CampaignUncertaintyConfig | None = None
     convergence: CampaignConvergenceConfig | None = None
     population_contract: PopulationContractConfig | None = None
@@ -636,6 +799,13 @@ class PolicyPrototypeConfig:
             raise TypeError("run_purpose must be PolicyRunPurpose")
         if type(self.full_campaign_config) is not bool:
             raise TypeError("full_campaign_config must be boolean")
+        if type(self.full_exploratory_config) is not bool:
+            raise TypeError("full_exploratory_config must be boolean")
+        if self.full_campaign_config and self.full_exploratory_config:
+            raise ValueError(
+                "full_campaign_config and full_exploratory_config are "
+                "mutually exclusive"
+            )
         allowed_provenance = {
             "synthetic",
             "illustrative",
@@ -663,7 +833,17 @@ class PolicyPrototypeConfig:
             raise TypeError(
                 "analysis_plan must be AnalysisPlanSelection or None"
             )
+        if self.exploratory is not None and type(
+            self.exploratory
+        ) is not ExploratoryControlConfig:
+            raise TypeError(
+                "exploratory must be ExploratoryControlConfig or None"
+            )
         if self.run_purpose is PolicyRunPurpose.CAMPAIGN:
+            if self.exploratory is not None or self.full_exploratory_config:
+                raise ValueError(
+                    "campaign policy runs cannot declare exploratory semantics"
+                )
             if self.population is None:
                 raise ValueError(
                     "campaign policy runs require [population] with "
@@ -685,6 +865,20 @@ class PolicyPrototypeConfig:
                 raise ValueError(
                     "campaign policy runs require output.include_player_rows = true"
                 )
+        if self.run_purpose is PolicyRunPurpose.EXPLORATORY:
+            if not self.full_exploratory_config:
+                raise ValueError(
+                    "exploratory policy runs require "
+                    "meta.full_exploratory_config = true"
+                )
+            if self.exploratory is None:
+                raise ValueError(
+                    "exploratory policy runs require an [exploratory] table"
+                )
+        elif self.full_exploratory_config or self.exploratory is not None:
+            raise ValueError(
+                "exploratory semantics require run_purpose = 'exploratory'"
+            )
         if self.analysis_plan is not None and self.population is None:
             raise ValueError(
                 "analysis_plan requires projected population execution"
@@ -802,6 +996,154 @@ class PolicyPrototypeConfig:
                     "uncertainty, authentication, or population validation are "
                     "unavailable"
                 )
+        if self.full_exploratory_config:
+            _validate_full_exploratory_config(self)
+
+
+def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
+    """Enforce a complete, isolated, explicitly non-inferential run contract."""
+
+    if config.run_purpose is not PolicyRunPurpose.EXPLORATORY:
+        raise ValueError(
+            "meta.full_exploratory_config = true requires "
+            "run_purpose = 'exploratory'"
+        )
+    if config.provenance_status not in {"synthetic", "illustrative"}:
+        raise ValueError(
+            "exploratory policy runs require synthetic or illustrative provenance"
+        )
+    if config.campaign is not None:
+        raise ValueError("full exploratory configuration forbids [campaign]")
+    if config.output_contract is not None:
+        raise ValueError(
+            "full exploratory configuration forbids production [output_contract]"
+        )
+    if config.execution_receipt is not None:
+        raise ValueError(
+            "full exploratory configuration forbids production [execution_receipt]"
+        )
+    required = {
+        "exploratory": config.exploratory,
+        "population": config.population,
+        "analysis_plan": config.analysis_plan,
+        "uncertainty": config.uncertainty,
+        "convergence": config.convergence,
+        "population_contract": config.population_contract,
+        "monetary_contract": config.monetary_contract,
+        "ledger": config.ledger,
+    }
+    missing = sorted(name for name, value in required.items() if value is None)
+    if missing:
+        raise ValueError(
+            "full exploratory configuration is missing required sections: "
+            + ", ".join(missing)
+        )
+    exploratory = config.exploratory
+    population = config.population
+    analysis = config.analysis_plan
+    uncertainty = config.uncertainty
+    convergence = config.convergence
+    population_contract = config.population_contract
+    monetary = config.monetary_contract
+    ledger = config.ledger
+    assert exploratory is not None
+    assert population is not None
+    assert analysis is not None
+    assert uncertainty is not None
+    assert convergence is not None
+    assert population_contract is not None
+    assert monetary is not None
+    assert ledger is not None
+
+    if population.mode.value != "projected_v1":
+        raise ValueError(
+            "full exploratory configuration requires population.mode = "
+            "'projected_v1'"
+        )
+    if population.adapter_id != population_contract.adapter_id:
+        raise ValueError(
+            "exploratory population adapter_id conflicts with population_contract"
+        )
+    if population_contract.empirical_validation_status != "UNAVAILABLE":
+        raise ValueError(
+            "exploratory population must remain explicitly non-empirical"
+        )
+    if analysis.expected_plan_id is None:
+        raise ValueError(
+            "full exploratory analysis_plan requires expected and parent identities"
+        )
+    assert analysis.parent_plan_path is not None
+    assert analysis.parent_plan_id is not None
+    assert analysis.expected_plan_sha256 is not None
+    assert analysis.parent_plan_sha256 is not None
+    if not _SHA256.fullmatch(analysis.expected_plan_sha256) or not _SHA256.fullmatch(
+        analysis.parent_plan_sha256
+    ):
+        raise ValueError(
+            "full exploratory analysis_plan identities must use resolved "
+            "lowercase SHA-256 values"
+        )
+    if (
+        analysis.plan_path.name != EXPLORATORY_PARENT_PLAN_FILENAME
+        or analysis.expected_plan_id != EXPLORATORY_PARENT_PLAN_ID
+    ):
+        raise ValueError(
+            "full exploratory configuration must retain the production-v3 "
+            "scientific analysis plan binding"
+        )
+    if (
+        analysis.parent_plan_path.name
+        != EXPLORATORY_SCIENTIFIC_PARENT_PLAN_FILENAME
+        or analysis.parent_plan_id != EXPLORATORY_SCIENTIFIC_PARENT_PLAN_ID
+    ):
+        raise ValueError(
+            "exploratory scientific analysis selection must retain the "
+            "production-v3 plan's v2 parent identity"
+        )
+    if exploratory.primary_estimand_id != EXPLORATORY_PRIMARY_ESTIMAND_ID:
+        raise ValueError(
+            "exploratory primary_estimand_id must preserve the declared primary"
+        )
+    if len(config.batch.seeds) < uncertainty.minimum_retained_seeds:
+        raise ValueError(
+            "exploratory fixed seed set is smaller than minimum_retained_seeds"
+        )
+    if convergence.minimum_retained_seeds != uncertainty.minimum_retained_seeds:
+        raise ValueError(
+            "exploratory uncertainty and convergence minimum seed counts must match"
+        )
+    if not uncertainty.identical_pretreatment_cohorts:
+        raise ValueError(
+            "exploratory paired scenarios require identical pre-treatment cohorts"
+        )
+    if not population_contract.identical_weights_across_scenarios:
+        raise ValueError(
+            "exploratory paired scenarios require identical population weights"
+        )
+    if not config.output.include_player_rows:
+        raise ValueError(
+            "exploratory analysis requires output.include_player_rows = true"
+        )
+    expected_output = Path("artifacts") / exploratory.artifact_namespace
+    if config.output.output_dir != expected_output:
+        raise ValueError(
+            "exploratory output_dir must be isolated at "
+            f"{expected_output.as_posix()!r}"
+        )
+    if (
+        ledger.path.parent.name != exploratory.artifact_namespace
+        or ledger.path.parent.parent.name != "artifacts"
+        or ledger.path.name != "exploratory-ledger.sqlite3"
+    ):
+        raise ValueError(
+            "exploratory ledger path must be the isolated persistent SQLite "
+            "artifact at artifacts/policy_exploratory_synthetic/"
+            "exploratory-ledger.sqlite3"
+        )
+    if monetary.observed_real_world_spending:
+        raise ValueError(
+            "exploratory monetary amounts cannot claim observed spending"
+        )
 
 
 def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
@@ -825,6 +1167,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             meta.get("full_campaign_config", False),
             name="meta.full_campaign_config",
         )
+        full_exploratory_config = _optional_boolean(
+            meta.get("full_exploratory_config", False),
+            name="meta.full_exploratory_config",
+        )
         population = _population_projection_config(
             raw.get("population"),
             config_path=config_path,
@@ -834,6 +1180,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             config_path=config_path,
         )
         campaign = _campaign_control(raw.get("campaign"))
+        exploratory = _exploratory_control(
+            raw.get("exploratory"),
+            config_path=config_path,
+        )
         uncertainty = _campaign_uncertainty(
             raw.get("uncertainty"),
             config_path=config_path,
@@ -858,12 +1208,18 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
         _required_and_optional_keys(
             meta,
             {"name", "provenance_status", "notes"},
-            {"run_purpose", "full_campaign_config"},
+            {
+                "run_purpose",
+                "full_campaign_config",
+                "full_exploratory_config",
+            },
             "meta",
         )
         _exact_keys(run, {"seeds", "days", "player_count"}, "policy_run")
         if full_campaign_config:
             _validate_full_campaign_seeds(run["seeds"])
+        if full_exploratory_config:
+            _validate_full_exploratory_seeds(run["seeds"])
         _exact_keys(
             decision,
             {
@@ -980,7 +1336,9 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             analysis_plan=analysis_plan,
             run_purpose=_policy_run_purpose(meta.get("run_purpose")),
             full_campaign_config=full_campaign_config,
+            full_exploratory_config=full_exploratory_config,
             campaign=campaign,
+            exploratory=exploratory,
             uncertainty=uncertainty,
             convergence=convergence,
             population_contract=population_contract,
@@ -1016,6 +1374,7 @@ def _strict_top_level(raw: Mapping[str, object]) -> None:
         actual.remove("analysis_plan")
     for optional in (
         "campaign",
+        "exploratory",
         "uncertainty",
         "convergence",
         "population_contract",
@@ -1128,6 +1487,50 @@ def _campaign_control(value: object) -> CampaignControlConfig | None:
         simulation_layer=layer,
         campaign_ready=values["campaign_ready"],
         primary_estimand_id=values["primary_estimand_id"],
+    )
+
+
+def _exploratory_control(
+    value: object,
+    *,
+    config_path: Path,
+) -> ExploratoryControlConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="exploratory")
+    expected = {
+        "exploratory_plan_path",
+        "exploratory_plan_id",
+        "exploratory_plan_sha256",
+        "artifact_namespace",
+        "execution_kind",
+        "population_basis",
+        "estimand_interpretation",
+        "monetary_amount_semantics",
+        "unweighted_output_role",
+        "internal_monetary_unit",
+        "raw_internal_unit_output_role",
+        "allow_synthetic",
+        "campaign_ready",
+        "production_campaign",
+        "empirical_claims",
+        "population_inference_claims",
+        "causal_claims",
+        "generalisation_claims",
+        "identical_pretreatment_cohorts",
+        "identical_population_weights_across_scenarios",
+        "primary_estimand_id",
+    }
+    _exact_keys(values, expected, "exploratory")
+    return ExploratoryControlConfig(
+        **{
+            **values,
+            "exploratory_plan_path": _resolved_config_path(
+                values["exploratory_plan_path"],
+                config_path=config_path,
+                name="exploratory exploratory_plan_path",
+            ),
+        }
     )
 
 
@@ -1520,6 +1923,21 @@ def _validate_full_campaign_seeds(value: object) -> None:
         )
 
 
+def _validate_full_exploratory_seeds(value: object) -> None:
+    if type(value) is not list:
+        raise ValueError("full exploratory seeds must be a TOML array")
+    if len(value) < 100:
+        raise ValueError(
+            "full exploratory fixed seed set requires at least 100 seeds"
+        )
+    if any(type(seed) is not int or isinstance(seed, bool) for seed in value):
+        raise ValueError("full exploratory seeds must be integers")
+    if value != sorted(value) or len(value) != len(set(value)):
+        raise ValueError(
+            "full exploratory fixed seeds must be unique and strictly ascending"
+        )
+
+
 def _contains_blocked_placeholder(value: object) -> bool:
     return "BLOCKED_PENDING_" in repr(value)
 
@@ -1531,7 +1949,7 @@ def _policy_run_purpose(value: object) -> PolicyRunPurpose:
         return PolicyRunPurpose(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "meta.run_purpose must be 'development' or 'campaign'"
+            "meta.run_purpose must be 'development', 'exploratory', or 'campaign'"
         ) from exc
 
 
@@ -1570,6 +1988,17 @@ __all__ = [
     "CampaignOutputContractConfig",
     "CampaignUncertaintyConfig",
     "ExecutionReceiptPolicyConfig",
+    "EXPLORATORY_ARTIFACT_NAMESPACE",
+    "EXPLORATORY_ESTIMAND_INTERPRETATION",
+    "EXPLORATORY_EXECUTION_KIND",
+    "EXPLORATORY_INTERNAL_MONETARY_UNIT",
+    "EXPLORATORY_MONETARY_AMOUNT_SEMANTICS",
+    "EXPLORATORY_PLAN_FILENAME",
+    "EXPLORATORY_PLAN_ID",
+    "EXPLORATORY_POPULATION_BASIS",
+    "EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE",
+    "EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE",
+    "ExploratoryControlConfig",
     "MonetaryContractConfig",
     "PolicyConfigurationError",
     "PolicyOutputConfig",

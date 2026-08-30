@@ -40,6 +40,14 @@ from .metric_contracts import (
     metric_contract_registry_sha256,
 )
 from .export import export_policy_batch, render_human_summary
+from .exploratory import (
+    EXPLORATORY_INTERPRETATION_WORDING,
+    EXPLORATORY_INTERNAL_UNIT_WORDING,
+    ExploratoryValidationMetadataError,
+    build_exploratory_validation_metadata,
+    require_exploratory_manifest_metadata,
+    validate_exploratory_validation_metadata,
+)
 from .manifest import build_run_manifest
 from .monetary import (
     PRODUCTION_MONETARY_ARTIFACT_FILENAMES,
@@ -60,6 +68,9 @@ __all__ = [
     "MANIFEST_SCHEMA_SHA256",
     "MANIFEST_SCHEMA_VERSION",
     "OUTPUT_SCHEMA_VERSION",
+    "EXPLORATORY_INTERPRETATION_WORDING",
+    "EXPLORATORY_INTERNAL_UNIT_WORDING",
+    "ExploratoryValidationMetadataError",
     "PRODUCTION_MONETARY_ARTIFACT_FILENAMES",
     "PRODUCTION_MONETARY_COLUMNS",
     "PRODUCTION_MONETARY_SCHEMA_VERSION",
@@ -74,6 +85,8 @@ __all__ = [
     "TARGET_POPULATION_OUTPUT_PROFILE",
     "OUTPUT_METRIC_CONTRACTS",
     "build_run_manifest",
+    "build_exploratory_validation_metadata",
+    "require_exploratory_manifest_metadata",
     "campaign_analysis_schema_descriptor",
     "export_policy_batch",
     "render_epgc_subsidy_requirement_svg",
@@ -88,6 +101,7 @@ __all__ = [
     "stamp_standalone_sensitivity_schema",
     "stamp_target_population_estimand_schema",
     "target_population_estimand_schema_descriptor",
+    "validate_exploratory_validation_metadata",
     "write_batch_artifacts",
     "write_csv_atomic",
     "write_epgc_subsidy_requirement_svg",
