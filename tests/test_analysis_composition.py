@@ -36,6 +36,7 @@ from microtx_sim.causal.analysis_plan import (  # noqa: E402
     PlannedPopulationEstimand,
     PopulationMinorFilter,
     PopulationOutcomeMetric,
+    PrimaryAggregateRule,
     analysis_plan_harm_weights_sha256,
     build_prospective_analysis_plan,
     load_prospective_analysis_plan,
@@ -76,6 +77,8 @@ from microtx_sim.outputs.metric_contracts import (  # noqa: E402
 )
 from microtx_sim.outputs.schema import (  # noqa: E402
     POLICY_ARTIFACT_FILENAMES,
+    PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES,
+    PROSPECTIVE_ANALYSIS_SCHEMA_SHA256,
     TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES,
     TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256,
 )
@@ -127,6 +130,7 @@ def _build_plan(
     metric_contract_id: str = "player_outcomes.csv:composite_harm",
     currency=None,
     profile_input_sha256: str | None = None,
+    with_primary_aggregate: bool = False,
 ):
     estimand = PlannedPopulationEstimand(
         estimand_id="primary.composite-harm.v1",
@@ -169,10 +173,23 @@ def _build_plan(
             run_inputs.harm_weights
         ),
         expected_output_profile_sha256=(
-            TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
+            PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
+            if with_primary_aggregate
+            else TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
         ),
         stopping_rule=FixedSeedStoppingRule(seeds=spec.seeds),
         estimands=(estimand,),
+        declared_harm_weights=(
+            run_inputs.harm_weights if with_primary_aggregate else None
+        ),
+        primary_aggregate_rule=(
+            PrimaryAggregateRule(
+                positive_result_interpretation="comparison has more simulated harm",
+                negative_result_interpretation="comparison has less simulated harm",
+            )
+            if with_primary_aggregate
+            else None
+        ),
     )
 
 
@@ -204,7 +221,7 @@ def _canonical_sha256(value: object) -> str:
 
 
 class AnalysisCompositionTests(unittest.TestCase):
-    def _fixture(self, root: Path):
+    def _fixture(self, root: Path, *, with_primary_aggregate: bool = False):
         _verification, _design, mapping_path, _mapping, adapter = (
             _complete_adapter(root)
         )
@@ -222,7 +239,12 @@ class AnalysisCompositionTests(unittest.TestCase):
             producer_assumptions=base.producer_assumptions,
             epgc_policy=base.epgc_policy,
         )
-        plan = _build_plan(spec, run_inputs, adapter)
+        plan = _build_plan(
+            spec,
+            run_inputs,
+            adapter,
+            with_primary_aggregate=with_primary_aggregate,
+        )
         plan_path = root / "analysis-plan.json"
         _write_plan(plan_path, plan)
         loaded = load_prospective_analysis_plan(plan_path)
@@ -396,6 +418,107 @@ class AnalysisCompositionTests(unittest.TestCase):
                     / "target_population_estimands.csv"
                 ).is_file()
             )
+
+    def test_schema_v2_export_links_primary_aggregate_and_preserves_output_v3(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, run_inputs, adapter, loaded = self._fixture(
+                root,
+                with_primary_aggregate=True,
+            )
+            validate_analysis_plan_inputs(
+                loaded.plan,
+                batch_spec=config.batch,
+                run_inputs=run_inputs,
+                population_adapter=adapter,
+                profile_input_lineage=_CUSTOM_PROFILE_INPUT_LINEAGE,
+            )
+            batch = run_policy_batch(
+                config.batch,
+                country_profiles=_CUSTOM_PROFILES,
+                harm_parameters=config.harm_parameters,
+                harm_weights=config.harm_weights,
+                opportunity_valuation=config.opportunity_valuation,
+                producer_assumptions=config.producer_assumptions,
+                epgc_policy=config.epgc_policy,
+                population_adapter=adapter,
+            )
+            binding = resolve_run_analysis_binding(loaded.plan, batch)
+            paths = export_policy_batch(
+                config,
+                batch,
+                None,
+                config_path=CONFIG_PATH,
+                repository_root=ROOT,
+                output_dir=config.output.output_dir,
+                created_utc="2026-08-30T00:00:00+00:00",
+                analysis_plan=loaded,
+                analysis_binding=binding,
+            )
+            self.assertEqual(
+                {path.name for path in paths.values()},
+                set(POLICY_ARTIFACT_FILENAMES).union(
+                    PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES
+                ),
+            )
+            aggregate_path = (
+                config.output.output_dir
+                / "prospective_analysis"
+                / "primary_aggregate.csv"
+            )
+            metadata_path = aggregate_path.with_name(
+                "primary_aggregate_metadata.json"
+            )
+            with aggregate_path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["retained_seed_count"], "1")
+            self.assertEqual(rows[0]["exclusion_count"], "0")
+            self.assertEqual(float(rows[0]["monte_carlo_standard_error"]), 0.0)
+            self.assertEqual(
+                float(rows[0]["interval_lower"]),
+                float(rows[0]["point_estimate"]),
+            )
+            self.assertEqual(
+                float(rows[0]["interval_upper"]),
+                float(rows[0]["point_estimate"]),
+            )
+            metadata = json.loads(metadata_path.read_text("utf-8"))
+            self.assertIn("Monte Carlo variability", metadata["interval_scope"])
+            self.assertIn("not a confidence interval", metadata["interval_scope"])
+            self.assertFalse(metadata["legacy_root_output_v3_changed"])
+            self.assertFalse(metadata["raw_simulation_cents_relabelled"])
+
+            manifest = json.loads(
+                (config.output.output_dir / "manifest.json").read_text("utf-8")
+            )
+            self.assertEqual(
+                manifest["artifact_files"],
+                list(POLICY_ARTIFACT_FILENAMES),
+            )
+            profile = manifest["analysis_output_profile"]
+            self.assertEqual(
+                profile["artifact_files"],
+                list(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES),
+            )
+            self.assertEqual(
+                profile["output_profile_schema_sha256"],
+                PROSPECTIVE_ANALYSIS_SCHEMA_SHA256,
+            )
+            self.assertEqual(
+                profile["primary_aggregate_sha256"],
+                rows[0]["aggregate_sha256"],
+            )
+            for name, identity in profile["artifacts"].items():
+                artifact = config.output.output_dir / identity["relative_path"]
+                self.assertEqual(artifact.stat().st_size, identity["bytes"])
+                self.assertEqual(
+                    sha256(artifact.read_bytes()).hexdigest(),
+                    identity["sha256"],
+                    name,
+                )
 
     def test_monetary_export_is_nested_and_preserves_raw_root_semantics(
         self,

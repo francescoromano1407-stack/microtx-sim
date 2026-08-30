@@ -1,0 +1,135 @@
+{
+  "campaign_blockers": [
+    "analysis_plan.external_registration=unregistered",
+    "analysis_plan.schema_v2=campaign_ineligible",
+    "analysis_plan.execution_calendar_anchor=unbound",
+    "analysis_plan.model_implementation_environment_identity=unbound"
+  ],
+  "campaign_ready": false,
+  "declared_harm_weights": {
+    "education_work": 1.0,
+    "family_social": 1.0,
+    "monetary": 1.0,
+    "opportunity_cost": 1.0,
+    "sleep": 1.0,
+    "wellbeing": 1.0
+  },
+  "estimands": [
+    {
+      "algorithm": "EXACT_RATIONAL_PAIRED_WEIGHTED_MEAN_DIFFERENCE_V1",
+      "comparison_scenario_id": "baseline_f2p",
+      "contrast_direction": "COMPARISON_MINUS_REFERENCE",
+      "currency": null,
+      "estimand_id": "primary.composite-harm.baseline-vs-safe.v1",
+      "inclusion_predicate": {
+        "age_max_exclusive": 70,
+        "age_min_inclusive": 10,
+        "gaming_states": [],
+        "household_type_ids": [
+          "household.all"
+        ],
+        "jurisdiction_codes": [
+          "BE",
+          "JP",
+          "KR",
+          "UK"
+        ],
+        "minor_filter": "ANY",
+        "monthly_disposable_income_band_ids": [
+          "runtime.personal.monthly.income.all"
+        ],
+        "payer_history_states": [],
+        "rule": {
+          "description": "Include every player assigned to the attested illustrative projected population using pre-treatment fields only.",
+          "evidence_role": "CALIBRATION",
+          "rule_id": "all.illustrative.projected.players.v1",
+          "source_fields": [
+            "AGE_YEARS",
+            "HOUSEHOLD_INCOME_BAND",
+            "HOUSEHOLD_TYPE",
+            "JURISDICTION",
+            "PRETREATMENT_GAMING_STATE",
+            "PRETREATMENT_IS_MINOR",
+            "PRETREATMENT_PAYER_HISTORY_STATE"
+          ],
+          "timing": "PRETREATMENT"
+        }
+      },
+      "metric_contract_id": "player_outcomes.csv:composite_harm",
+      "normalization": "DIVIDE_BY_EXACT_DESIGN_WEIGHT_SUM",
+      "outcome": {
+        "component_index": null,
+        "metric": "composite_harm",
+        "metric_kind": "SCORE",
+        "metric_name": "composite_harm",
+        "metric_scale": "NONADDITIVE",
+        "result_path": "PolicyScenarioResult.composite_harm",
+        "storage_dtype": "float64",
+        "unit": "model_score"
+      },
+      "period": {
+        "description": "Fourteen-day illustrative simulator horizon; calendar anchor is declarative and not empirically bound.",
+        "period_end": "2026-01-14",
+        "period_start": "2026-01-01"
+      },
+      "reference_scenario_id": "safe_fixed_price_subscription",
+      "role": "PRIMARY"
+    }
+  ],
+  "expected_batch_spec_sha256": "2e5253da07706d4447e52f3fa6fc6decb8feac76870c532e09a7fdfe82e41a92",
+  "expected_causal_design_sha256": "347188a2c629b85ff444b0c21ad8ca3c1c918708db76b0699e4642d9f7861dd7",
+  "expected_harm_weights_sha256": "86479b285c39dc04497191725f55e31eb0162937181192d35521956172b0f6ed",
+  "expected_metric_contract_sha256": "1fc38d396d85cbd829bc60de0cb5d6f3c63a0996e40a74a60a431db28a32d966",
+  "expected_model_inputs_sha256": "12c4aa97e1ea85a4fc62d444efb4bbed0896d54f50358ddc685cd33df4eccfd1",
+  "expected_output_profile_sha256": "f030da5be86757cf65446418a9218a413ab51449d25911bf62ee02f8f5df9a2e",
+  "expected_population_input_sha256": "8bafac4390c6721a57ebcf90f5d122d748ed5350d1c0dd8775a45447d553983f",
+  "expected_profile_input_sha256": "2c0b451d62b328a1866bf6cb6cb40718de581931983fd324badfb15b6f2b98af",
+  "plan_id": "illustrative.prospective.composite-harm.baseline-vs-safe.v2",
+  "plan_sha256": "3e3f3a730dbbfffab97103b62caf01f0ad9d2a848fbafad4965bd86f8cc6a7dd",
+  "preregistered": false,
+  "primary_aggregate_rule": {
+    "analysis_unit": "INDEPENDENT_MONTE_CARLO_SEED",
+    "between_seed_standard_deviation": "SAMPLE_STANDARD_DEVIATION_DDOF_1_ZERO_IF_ONE_SEED",
+    "exclusion_criteria": [],
+    "interval_interpretation": "Monte Carlo variability of the configured simulator mean; not a confidence interval for a real-world population",
+    "interval_method": "NORMAL_95_MONTE_CARLO_MEAN_PLUS_MINUS_1.96_MCSE",
+    "invalid_or_missing_realization_handling": "FAIL_CLOSED",
+    "monte_carlo_standard_error": "BETWEEN_SEED_SD_DIVIDED_BY_SQRT_RETAINED_SEED_COUNT",
+    "negative_result_interpretation": "baseline_f2p has lower population-weighted composite simulated harm than safe_fixed_price_subscription",
+    "one_seed_interval": "ZERO_WIDTH_AT_POINT_ESTIMATE",
+    "outcome_dependent_exclusion_allowed": false,
+    "point_estimator": "ARITHMETIC_MEAN_OF_RETAINED_SEED_ESTIMANDS",
+    "population_weight_application": "WITHIN_EACH_SEED_BEFORE_CROSS_SEED_AGGREGATION",
+    "positive_result_interpretation": "baseline_f2p has greater population-weighted composite simulated harm than safe_fixed_price_subscription",
+    "primary_estimand_selection": "EXACTLY_ONE_DECLARED_PRIMARY",
+    "rule_id": "COMPLETE_FIXED_SEED_PRIMARY_PAIRS_V1",
+    "scenario_aggregation": "SINGLE_DIRECTED_CONTRAST",
+    "scenario_weights": [],
+    "seed_weighting": "EQUAL",
+    "valid_realization_criteria": [
+      "seed_is_in_fixed_stopping_rule",
+      "paired_reference_and_comparison_observations_are_present",
+      "predeclared_pretreatment_population_predicate_is_applied",
+      "population_weighted_primary_estimand_is_exact_and_finite"
+    ]
+  },
+  "registration_status": "UNREGISTERED",
+  "schema_version": "2.0",
+  "stopping_rule": {
+    "early_stopping_allowed": false,
+    "rule_id": "FIXED_SEED_SET_V1",
+    "seed_count": 3,
+    "seed_count_decimal": "3",
+    "seed_decimal_strings": [
+      "101",
+      "202",
+      "303"
+    ],
+    "seeds": [
+      101,
+      202,
+      303
+    ],
+    "treatment_result_interim_looks_allowed": false
+  }
+}

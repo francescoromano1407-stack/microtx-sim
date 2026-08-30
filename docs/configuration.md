@@ -18,6 +18,7 @@ Three run configurations are supplied:
 | --- | --- | --- | --- |
 | `configs/smoke.toml` | Short connectivity check | 384 players, 3 companies, 4 games, 3 one-day cycles; full history and memory ledger | `SYNTHETIC` and executable only as a non-campaign run |
 | `configs/policy_prototype.toml` | Reproducible seven-scenario policy prototype | 1,000 players, 14 days, 3 seeds, 7 scenarios | Strictly `synthetic`; tested but not empirically calibrated |
+| `configs/policy_prospective.toml` | Opt-in prospective-plan validation fixture | 16 designed test players, 14 days, 3 fixed seeds, 7 scenarios | `UNREGISTERED`, illustrative/test population provenance, and explicitly not campaign-ready |
 | `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles; final-only history and SQLite ledger | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
 
 Jurisdiction profiles and evidence contracts are stored separately in
@@ -146,6 +147,9 @@ mode = "projected_v1"
 design_bundle_path = "../data/provenance/population_design.toml"
 runtime_mapping_bundle_path = "../data/provenance/population_runtime_mapping.json"
 adapter_id = "reviewed.population.adapter.v1"
+# Optional paired override for non-default profile evidence:
+evidence_bundle_path = "../inputs/population-bundle.toml"
+source_registry_path = "../inputs/population-sources.toml"
 ```
 
 Relative paths are resolved from the configuration file. Unknown or missing
@@ -217,10 +221,13 @@ unless the policy configuration explicitly selects a prospective analysis plan.
 Existing output-v3 CSVs keep their frozen v2-compatible columns and unweighted
 aggregation semantics.
 
-This opt-in plumbing does not supply a checked-in target, mapping, external
-provenance, calibration, independently verified holdout, or output-readiness
-gate. `campaign_ready` and `public_population_comparability` remain false, and
-no full campaign is enabled or claimed by this milestone.
+The dedicated `configs/policy_prospective.toml` now supplies checked-in
+illustrative/test population files and a concrete plan so the plumbing can be
+validated end to end. Those inputs use test identities, lack authentic
+signatures and representative empirical evidence, and do not supply an
+independently verified holdout or output-readiness gate. `campaign_ready` and
+`public_population_comparability` remain false, and no full campaign is enabled
+or claimed.
 
 ### Optional prospective analysis plan
 
@@ -243,6 +250,11 @@ profile-input-lineage, metric-registry, output-profile, and fixed-seed
 identities before reporting success. Treatment-result identities are resolved
 only after a completed policy batch. See [Prospective analysis-plan
 composition](analysis_plan.md) for the strict JSON and output lifecycle.
+
+Schema-v2 plans also bind a four-file prospective output contract. In addition
+to the exact per-seed files, it writes `primary_aggregate.csv` and
+`primary_aggregate_metadata.json` using the predeclared equal-seed normal 95%
+Monte Carlo convention. The interval describes simulator variability only.
 
 A money-valued plan also requires an explicit opt-in prospective money execution
 and a complete coherent dated conversion basis; omission fails before treatment.

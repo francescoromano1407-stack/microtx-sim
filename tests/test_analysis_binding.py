@@ -33,8 +33,12 @@ from microtx_sim.causal.analysis_plan import (  # noqa: E402
     PlannedPopulationEstimand,
     PopulationMinorFilter,
     PopulationOutcomeMetric,
+    PrimaryAggregateRule,
     analysis_plan_harm_weights_sha256,
     build_prospective_analysis_plan,
+)
+from microtx_sim.causal.primary_aggregate import (  # noqa: E402
+    compute_plan_primary_aggregate,
 )
 from microtx_sim.causal.batch import (  # noqa: E402
     PolicyBatchResult,
@@ -78,6 +82,7 @@ from microtx_sim.outputs.population import (  # noqa: E402
     write_target_population_estimands,
 )
 from microtx_sim.outputs.schema import (  # noqa: E402
+    PROSPECTIVE_ANALYSIS_SCHEMA_SHA256,
     TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256,
 )
 
@@ -154,6 +159,7 @@ def _plan(
     estimands: tuple[PlannedPopulationEstimand, ...] | None = None,
     seeds: tuple[int, ...] | None = None,
     overrides: dict[str, str] | None = None,
+    with_primary_aggregate: bool = False,
 ):
     if estimand is not None and estimands is not None:
         raise ValueError("choose estimand or estimands, not both")
@@ -174,7 +180,9 @@ def _plan(
             run_inputs.harm_weights
         ),
         "expected_output_profile_sha256": (
-            TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
+            PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
+            if with_primary_aggregate
+            else TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
         ),
     }
     bindings.update(overrides or {})
@@ -187,6 +195,17 @@ def _plan(
             estimands
             if estimands is not None
             else (_planned_estimand() if estimand is None else estimand,)
+        ),
+        declared_harm_weights=(
+            run_inputs.harm_weights if with_primary_aggregate else None
+        ),
+        primary_aggregate_rule=(
+            PrimaryAggregateRule(
+                positive_result_interpretation="comparison has more simulated harm",
+                negative_result_interpretation="comparison has less simulated harm",
+            )
+            if with_primary_aggregate
+            else None
         ),
         **bindings,
     )
@@ -284,7 +303,6 @@ class AnalysisBindingTests(unittest.TestCase):
             "analysis_binding.external_registration=unregistered",
             "analysis_binding.schema_v2=campaign_ineligible",
             "analysis_binding.execution_calendar_anchor=unbound",
-            "analysis_binding.cross_seed_aggregation_uncertainty=unresolved",
             "analysis_binding.model_implementation_environment_identity=unbound",
         )
         self.assertEqual(binding.campaign_blockers, expected_campaign_blockers)
@@ -351,6 +369,41 @@ class AnalysisBindingTests(unittest.TestCase):
             )
             self.assertTrue(paths["estimands"].is_file())
             self.assertTrue(paths["metadata"].is_file())
+
+    def test_schema_v2_aggregate_uses_exact_weighted_primary_seed_results(self) -> None:
+        plan = _plan(
+            self.spec,
+            self.run_inputs,
+            self.adapter,
+            estimand=self.planned,
+            with_primary_aggregate=True,
+        )
+        binding = resolve_run_analysis_binding(plan, self.batch)
+        aggregate = compute_plan_primary_aggregate(binding)
+        primary_bindings = tuple(
+            item
+            for item in binding.seed_bindings
+            if item.planned_estimand.role is AnalysisEstimandRole.PRIMARY
+        )
+        self.assertEqual(
+            tuple(item.seed for item in primary_bindings),
+            binding.seeds,
+        )
+        self.assertEqual(
+            tuple(item.value_fraction for item in aggregate.realizations),
+            tuple(item.result.value_fraction for item in primary_bindings),
+        )
+        expected_mean = sum(
+            (item.result.value_fraction for item in primary_bindings),
+            Fraction(0, 1),
+        ) / len(primary_bindings)
+        self.assertEqual(aggregate.summary.point_estimate, float(expected_mean))
+        self.assertEqual(aggregate.summary.retained_seed_count, 2)
+        self.assertEqual(aggregate.summary.excluded_seed_count, 0)
+        self.assertEqual(
+            aggregate.binding.output_profile_schema_sha256,
+            PROSPECTIVE_ANALYSIS_SCHEMA_SHA256,
+        )
 
     def test_swapped_scenario_direction_is_exactly_negated_and_bound(self) -> None:
         forward = resolve_run_analysis_binding(self.plan, self.batch)

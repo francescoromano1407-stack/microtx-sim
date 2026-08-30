@@ -26,6 +26,41 @@ MANIFEST_SCHEMA_VERSION: Final[str] = "1.0"
 STANDALONE_SENSITIVITY_PROFILE: Final[str] = "standalone_sensitivity"
 STANDALONE_SENSITIVITY_SCHEMA_VERSION: Final[str] = "1.0"
 TARGET_POPULATION_ESTIMAND_SCHEMA_VERSION: Final[str] = "1.0"
+PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE: Final[str] = "prospective_analysis"
+PROSPECTIVE_ANALYSIS_SCHEMA_VERSION: Final[str] = "1.0"
+
+PRIMARY_AGGREGATE_COLUMNS: Final[tuple[str, ...]] = (
+    "plan_id",
+    "primary_estimand_id",
+    "reference_scenario",
+    "comparison_scenario",
+    "outcome_metric",
+    "outcome_unit",
+    "contrast_direction",
+    "point_estimate",
+    "between_seed_sample_standard_deviation",
+    "retained_seed_count",
+    "monte_carlo_standard_error",
+    "interval_method",
+    "interval_lower",
+    "interval_upper",
+    "exclusion_count",
+    "plan_sha256",
+    "binding_sha256",
+    "population_input_sha256",
+    "population_lineage_sha256",
+    "profile_input_sha256",
+    "metric_contract_registry_sha256",
+    "primary_metric_contract_sha256",
+    "harm_weights_sha256",
+    "analysis_population_predicate_sha256",
+    "aggregate_sha256",
+)
+
+PRIMARY_AGGREGATE_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
+    "primary_aggregate.csv",
+    "primary_aggregate_metadata.json",
+)
 
 TARGET_POPULATION_ESTIMAND_COLUMNS: Final[tuple[str, ...]] = (
     "estimand_id",
@@ -65,6 +100,11 @@ TARGET_POPULATION_ESTIMAND_COLUMNS: Final[tuple[str, ...]] = (
 TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
     "target_population_estimands.csv",
     "target_population_estimand_metadata.json",
+)
+
+PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES: Final[tuple[str, ...]] = (
+    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+    + PRIMARY_AGGREGATE_ARTIFACT_FILENAMES
 )
 
 TARGET_POPULATION_ESTIMAND_METADATA_FIELDS: Final[tuple[str, ...]] = (
@@ -587,6 +627,59 @@ TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256: Final[str] = (
 )
 
 
+def prospective_analysis_schema_descriptor() -> dict[str, object]:
+    """Return the four-file schema-v2 prospective analysis profile."""
+
+    return {
+        "output_profile": PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE,
+        "output_profile_schema_version": PROSPECTIVE_ANALYSIS_SCHEMA_VERSION,
+        "artifact_files": list(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES),
+        "per_seed_profile": {
+            "output_profile": TARGET_POPULATION_OUTPUT_PROFILE,
+            "output_profile_schema_sha256": (
+                TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
+            ),
+            "artifact_files": list(
+                TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+            ),
+        },
+        "primary_aggregate": {
+            "schema_version": "1.0",
+            "artifact_files": list(PRIMARY_AGGREGATE_ARTIFACT_FILENAMES),
+            "table_columns": {
+                "primary_aggregate.csv": list(PRIMARY_AGGREGATE_COLUMNS)
+            },
+            "metadata_filename": "primary_aggregate_metadata.json",
+            "interval_method": (
+                "NORMAL_95_MONTE_CARLO_MEAN_PLUS_MINUS_1.96_MCSE"
+            ),
+            "interval_scope": (
+                "Monte Carlo variability of the configured simulator mean; "
+                "not real-world population uncertainty"
+            ),
+        },
+        "legacy_root_output_v3_changed": False,
+        "synthetic_only": True,
+        "campaign_ready": False,
+    }
+
+
+def _prospective_analysis_schema_digest() -> str:
+    encoded = json.dumps(
+        prospective_analysis_schema_descriptor(),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+PROSPECTIVE_ANALYSIS_SCHEMA_SHA256: Final[str] = (
+    _prospective_analysis_schema_digest()
+)
+
+
 def stamp_target_population_estimand_schema(
     metadata: Mapping[str, object],
 ) -> dict[str, object]:
@@ -685,8 +778,14 @@ __all__ = [
     "MANIFEST_SCHEMA_VERSION",
     "OUTPUT_SCHEMA_VERSION",
     "OPPORTUNITY_DECOMPOSITION_COLUMNS",
+    "PRIMARY_AGGREGATE_ARTIFACT_FILENAMES",
+    "PRIMARY_AGGREGATE_COLUMNS",
     "PLAYER_OUTCOME_COLUMNS",
     "POLICY_ARTIFACT_FILENAMES",
+    "PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES",
+    "PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE",
+    "PROSPECTIVE_ANALYSIS_SCHEMA_SHA256",
+    "PROSPECTIVE_ANALYSIS_SCHEMA_VERSION",
     "REPEATED_SEED_METRIC_STEMS",
     "SCENARIO_SUMMARY_COLUMNS",
     "SCENARIO_SUMMARY_V1_PREFIX_COLUMNS",
@@ -706,6 +805,7 @@ __all__ = [
     "TARGET_POPULATION_OUTPUT_PROFILE",
     "TABLE_COLUMNS",
     "manifest_schema_descriptor",
+    "prospective_analysis_schema_descriptor",
     "standalone_sensitivity_schema_descriptor",
     "stamp_manifest_schema",
     "stamp_standalone_sensitivity_schema",

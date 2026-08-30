@@ -45,6 +45,8 @@ class PopulationProjectionConfig:
     design_bundle_path: Path
     runtime_mapping_bundle_path: Path
     adapter_id: str
+    evidence_bundle_path: Path | None = None
+    source_registry_path: Path | None = None
 
     def __post_init__(self) -> None:
         if type(self.mode) is not PopulationExecutionMode:
@@ -57,6 +59,21 @@ class PopulationProjectionConfig:
                 raise TypeError(f"population {name} must be a Path")
             if not str(value):
                 raise ValueError(f"population {name} cannot be empty")
+        optional_paths = (
+            self.evidence_bundle_path,
+            self.source_registry_path,
+        )
+        if (optional_paths[0] is None) != (optional_paths[1] is None):
+            raise ValueError(
+                "population evidence_bundle_path and source_registry_path "
+                "must be supplied together"
+            )
+        for name in ("evidence_bundle_path", "source_registry_path"):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, Path) or not str(value)
+            ):
+                raise TypeError(f"population {name} must be a Path or None")
         if type(self.adapter_id) is not str or not _POPULATION_ADAPTER_ID.fullmatch(
             self.adapter_id
         ):
@@ -67,7 +84,7 @@ class PopulationProjectionConfig:
     def snapshot(self) -> dict[str, str]:
         """Return the exact, non-verifying configuration selection."""
 
-        return {
+        payload = {
             "mode": self.mode.value,
             "design_bundle_path": str(self.design_bundle_path),
             "runtime_mapping_bundle_path": str(
@@ -75,6 +92,11 @@ class PopulationProjectionConfig:
             ),
             "adapter_id": self.adapter_id,
         }
+        if self.evidence_bundle_path is not None:
+            assert self.source_registry_path is not None
+            payload["evidence_bundle_path"] = str(self.evidence_bundle_path)
+            payload["source_registry_path"] = str(self.source_registry_path)
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,18 +341,26 @@ def _population_projection_config(
         return None
     if type(value) is not dict:
         raise ValueError("[population] must be a TOML table")
-    expected = {
+    required = {
         "mode",
         "design_bundle_path",
         "runtime_mapping_bundle_path",
         "adapter_id",
     }
+    optional = {"evidence_bundle_path", "source_registry_path"}
     actual = set(value)
-    if actual != expected:
+    if not required.issubset(actual) or not actual.issubset(required | optional):
         raise ValueError(
             "population keys differ: "
-            f"missing={sorted(expected - actual)}, "
-            f"unknown={sorted(actual - expected)}"
+            f"missing={sorted(required - actual)}, "
+            f"unknown={sorted(actual - required - optional)}"
+        )
+    if ("evidence_bundle_path" in actual) != (
+        "source_registry_path" in actual
+    ):
+        raise ValueError(
+            "population evidence_bundle_path and source_registry_path must be "
+            "supplied together"
         )
     try:
         mode = PopulationExecutionMode(value["mode"])
@@ -356,4 +386,14 @@ def _population_projection_config(
             "runtime_mapping_bundle_path"
         ),
         adapter_id=value["adapter_id"],
+        evidence_bundle_path=(
+            resolved_path("evidence_bundle_path")
+            if "evidence_bundle_path" in value
+            else None
+        ),
+        source_registry_path=(
+            resolved_path("source_registry_path")
+            if "source_registry_path" in value
+            else None
+        ),
     )

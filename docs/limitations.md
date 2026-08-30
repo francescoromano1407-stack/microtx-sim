@@ -118,16 +118,21 @@ not observed or calibrated money, and only the separate prospective profile
 receives them. Legacy root output-v3 artifacts remain unchanged in simulation
 cents.
 
-A `PRIMARY` label still identifies one estimand specification whose outputs
-remain separate per-seed realizations; the binding defines no cross-seed
-aggregate or Monte Carlo uncertainty semantics. Declared calendar dates are not
+A schema-v1 `PRIMARY` label identifies one estimand specification whose outputs
+remain separate per-seed realizations. The checked-in schema-v2 plan now defines
+an equal-seed primary mean, sample SD, Monte Carlo standard error, and normal
+95% Monte Carlo interval over complete exact paired realizations. This resolves
+the software aggregation contract, not empirical uncertainty or convergence.
+Declared calendar dates are not
 connected to a simulation clock: preflight checks only that their inclusive
 duration equals the executed horizon, treating a zero-day structural snapshot
 as one declared day. The plan also does not bind source-code, interpreter,
 dependency-lock, or build-environment identity. Exact conversion execution does
 not authenticate its sources, calibrate model money, establish a representative
-population or genuine holdout, or provide external preregistration. These gaps
-remain explicit campaign blockers and monetary comparability remains open.
+population or genuine holdout, or provide external preregistration. The
+checked-in population files are algebraic test fixtures with no authentic
+signature. These gaps remain explicit campaign blockers and monetary
+comparability remains open.
 
 ### Internal money is not observed purchasing power
 

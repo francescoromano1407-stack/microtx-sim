@@ -18,11 +18,13 @@ from ..causal.analysis_plan import (
     LoadedProspectiveAnalysisPlan,
     verify_loaded_prospective_analysis_plan,
 )
+from ..causal.primary_aggregate import compute_plan_primary_aggregate
 from ..causal.batch import PolicyBatchResult, resolve_policy_run_inputs
 from ..causal.scenarios import ScenarioId
 from ..policy_config import PolicyPrototypeConfig
 from .manifest import build_run_manifest
 from .population import write_target_population_estimands
+from .prospective import write_primary_aggregate
 from .plots import (
     write_epgc_subsidy_requirement_svg,
     write_harm_distribution_svg,
@@ -34,6 +36,8 @@ from .schema import (
     OPPORTUNITY_DECOMPOSITION_COLUMNS,
     PLAYER_OUTCOME_COLUMNS,
     POLICY_ARTIFACT_FILENAMES,
+    PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES,
+    PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE,
     TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES,
     stamp_manifest_schema,
 )
@@ -198,17 +202,45 @@ def export_policy_batch(
                     ),
                 },
             )
+            primary_aggregate = None
+            analysis_artifact_files = (
+                TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+            )
+            if analysis_plan.plan.primary_aggregate_rule is not None:
+                primary_aggregate = compute_plan_primary_aggregate(
+                    analysis_binding
+                )
+                staged_analysis_paths.update(
+                    write_primary_aggregate(
+                        analysis_stage,
+                        primary_aggregate,
+                    )
+                )
+                analysis_artifact_files = (
+                    PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES
+                )
             analysis_file_identities = {
                 path.name: (path.stat().st_size, _digest(path))
                 for path in staged_analysis_paths.values()
             }
             analysis_output_profile = {
                 "directory": "prospective_analysis",
-                "artifact_files": list(
-                    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+                "output_profile": (
+                    PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE
+                    if primary_aggregate is not None
+                    else "target_population_estimands"
                 ),
+                "output_profile_schema_sha256": (
+                    analysis_binding.output_profile_schema_sha256
+                ),
+                "artifact_files": list(analysis_artifact_files),
                 "record_count_decimal": str(len(analysis_binding.writer_pairs)),
                 "binding_sha256": analysis_binding.binding_sha256,
+                "primary_aggregate_sha256": (
+                    primary_aggregate.aggregate_sha256
+                    if primary_aggregate is not None
+                    else None
+                ),
                 "campaign_ready": False,
                 "artifacts": {
                     name: {
@@ -339,11 +371,21 @@ def export_policy_batch(
                 analysis_destination
                 / "target_population_estimand_metadata.json"
             )
+            if (
+                analysis_plan is not None
+                and analysis_plan.plan.primary_aggregate_rule is not None
+            ):
+                paths["analysis_primary_aggregate"] = (
+                    analysis_destination / "primary_aggregate.csv"
+                )
+                paths["analysis_primary_aggregate_metadata"] = (
+                    analysis_destination / "primary_aggregate_metadata.json"
+                )
 
         actual = {path.name for path in paths.values()}
         expected = set(POLICY_ARTIFACT_FILENAMES)
         if analysis_output_profile is not None:
-            expected.update(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES)
+            expected.update(analysis_output_profile["artifact_files"])
         if actual != expected:
             raise RuntimeError(
                 "exported artifact set differs: "
@@ -492,8 +534,12 @@ def _verify_staged_analysis_identities(
         raise RuntimeError(
             "refusing prospective-analysis publication outside its expected parent"
         )
-    expected_names = set(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES)
-    if set(expected_file_identities) != expected_names:
+    expected_names = set(expected_file_identities)
+    allowed_contracts = {
+        frozenset(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES),
+        frozenset(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES),
+    }
+    if frozenset(expected_names) not in allowed_contracts:
         raise RuntimeError(
             "staged prospective-analysis identities do not cover the exact "
             "artifact contract"
@@ -579,7 +625,16 @@ def _remove_owned_analysis_directory(
             "refusing prospective-analysis cleanup of a non-directory or link"
         )
 
-    expected_names = set(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES)
+    allowed_names = set(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES)
+    expected_names = (
+        set(expected_file_identities)
+        if expected_file_identities is not None
+        else allowed_names
+    )
+    if not expected_names.issubset(allowed_names):
+        raise RuntimeError(
+            "refusing prospective-analysis cleanup with an unknown artifact contract"
+        )
     children = sorted(path.iterdir(), key=lambda item: item.name)
     observed_names = {child.name for child in children}
     valid_names = (
