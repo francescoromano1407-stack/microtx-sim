@@ -9,8 +9,9 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from four_jurisdiction_population_fixture import (  # noqa: E402
@@ -124,34 +125,85 @@ class PolicyCliTests(unittest.TestCase):
         sensitivity.assert_not_called()
         export.assert_not_called()
 
-    def test_exploratory_batch_preflight_rejects_before_any_model_work(
+    def test_exploratory_batch_dispatches_only_reviewed_checkpointed_path(
         self,
     ) -> None:
-        stderr = io.StringIO()
+        stdout = io.StringIO()
         review = {
             "validation_status": "VALIDATED_NOT_EXECUTED",
             "campaign_ready": False,
         }
+        config = load_policy_config(EXPLORATORY_CONFIG)
+        profiles_value = SimpleNamespace(country_profiles=())
+        batch_value = SimpleNamespace(spec=config.batch)
+        plan_value = SimpleNamespace(
+            plan=SimpleNamespace(plan_sha256="a" * 64)
+        )
+        binding_value = SimpleNamespace(binding_sha256="b" * 64)
+        recorder = SimpleNamespace(
+            attempt_id="attempt-000001",
+            mark_model_batch_complete=Mock(),
+            mark_complete=Mock(),
+            mark_interrupted=Mock(),
+            mark_failed=Mock(),
+        )
         with (
             patch(
                 "microtx_sim.cli._exploratory_validate",
                 return_value=review,
             ) as preflight,
-            patch("microtx_sim.cli._load_policy_profiles") as profiles,
-            patch("microtx_sim.cli.run_policy_batch") as run_batch,
-            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
-            patch("microtx_sim.cli.export_policy_batch") as export,
-            redirect_stderr(stderr),
+            patch(
+                "microtx_sim.cli._load_policy_profiles",
+                return_value=profiles_value,
+            ),
+            patch("microtx_sim.cli.build_profile_input_lineage"),
+            patch("microtx_sim.cli.resolve_population_projection_adapter"),
+            patch(
+                "microtx_sim.cli._resolve_configured_analysis_plan",
+                return_value=plan_value,
+            ),
+            patch(
+                "microtx_sim.outputs.exploratory_results."
+                "preflight_exploratory_output"
+            ),
+            patch(
+                "microtx_sim.outputs.checkpoints."
+                "ExploratoryCheckpointRecorder.start",
+                return_value=recorder,
+            ) as start_checkpoint,
+            patch(
+                "microtx_sim.cli.run_policy_batch",
+                return_value=batch_value,
+            ) as run_batch,
+            patch(
+                "microtx_sim.cli.resolve_run_analysis_binding",
+                return_value=binding_value,
+            ),
+            patch(
+                "microtx_sim.cli._run_configured_sensitivity",
+                return_value=None,
+            ),
+            patch(
+                "microtx_sim.outputs.exploratory_results."
+                "export_exploratory_results",
+                return_value={"manifest": Path("manifest.json")},
+            ) as export,
+            redirect_stdout(stdout),
         ):
             code = main(("policy-batch", str(EXPLORATORY_CONFIG)))
 
-        self.assertEqual(code, 2)
-        self.assertIn("pre-execution validation passed", stderr.getvalue())
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["mode"], "exploratory_policy_batch")
+        self.assertFalse(payload["campaign_ready"])
         preflight.assert_called_once_with(EXPLORATORY_CONFIG)
-        profiles.assert_not_called()
-        run_batch.assert_not_called()
-        sensitivity.assert_not_called()
-        export.assert_not_called()
+        start_checkpoint.assert_called_once()
+        self.assertIs(
+            run_batch.call_args.kwargs["checkpoint_callback"], recorder
+        )
+        export.assert_called_once()
+        recorder.mark_model_batch_complete.assert_called_once_with()
+        recorder.mark_complete.assert_called_once_with()
 
     def test_exploratory_batch_preflight_failure_never_dispatches(self) -> None:
         stderr = io.StringIO()

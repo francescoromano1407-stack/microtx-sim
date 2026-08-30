@@ -56,9 +56,10 @@ design property, not evidence of population representativeness.
 
 ## Monetary interpretation
 
-`simulation_cents` remain internal synthetic model units. Root tables that
-contain them are diagnostic and are not real-currency or cross-country
-monetary results. Raw internal units cannot be pooled across countries.
+`simulation_cents` remain internal synthetic model units. The dedicated
+exploratory output profile does not publish them, and it does not calculate or
+publish cross-country raw-unit totals. Raw internal units cannot be pooled
+across countries.
 
 The monetary contract retains the official ECB point-rate evidence, exact
 rational conversion basis, EUR target, periods, quote and scale conventions,
@@ -103,26 +104,56 @@ The eventual launch command proposed for review is:
 microtx-sim policy-batch configs/policy_exploratory_synthetic.toml
 ```
 
-Do not run it without explicit approval. In this pre-execution revision the
-command is also held closed in code after successful validation, before profile
-loading, cohort construction, scenarios, sensitivity, export, or ledger work.
-Accordingly the expected output set at this review checkpoint is empty.
-`policy-sensitivity` and `reproduce` are rejected for this configuration as
-unreviewed execution paths.
+Do not run it without explicit approval. The command is now technically
+launchable, but this implementation change did not execute it.
+`policy-sensitivity`, `reproduce`, output-directory overrides, and sensitivity
+overrides remain rejected for this configuration as unreviewed paths.
 
-Opening the hold after approval requires a separate reviewed change that binds
-the exploratory executor to the declared blockwise convergence and Monte Carlo
-diagnostics, produces the dedicated uncertainty/convergence artifacts, and
-prevents the legacy raw `simulation_cents` aggregates from becoming
-cross-country monetary results. The generic policy exporter is not treated as
-that approval or implementation.
+The dedicated executor writes these final root artifacts only after the fixed
+seed set, weighted plan binding, and configured sensitivity diagnostic finish:
+
+- `weighted_primary_estimand.csv`;
+- `scenario_diagnostics.csv`;
+- `sensitivity_diagnostics.csv`;
+- `uncertainty_realizations.csv`;
+- `convergence_checkpoints.csv`;
+- `uncertainty_summary.json`;
+- `nonempirical_metadata.json`;
+- `summary.md`;
+- `manifest.json`.
+
+The final profile contains no raw `simulation_cents` fields. The generic
+production-shaped policy exporter is not used by this run purpose.
+
+## Intermediate results and interruption behavior
+
+Before the first cohort is initialized, each launch creates a new monotonically
+numbered directory under
+`artifacts/policy_exploratory_synthetic/progress/`, for example
+`attempt-000001/`. After every complete seed (all seven paired scenarios), the
+executor atomically replaces:
+
+- `seed_scenario_diagnostics.partial.csv`, containing cumulative non-monetary,
+  unweighted diagnostics only; and
+- `progress.json`, containing the completed seed prefix, hashes, status, and
+  the partial-file hash.
+
+If the process is stopped or fails, the last complete seed prefix remains on
+disk and the attempt is marked `INTERRUPTED` or `FAILED` when the process can
+handle the interruption. These files are not the weighted primary estimand and
+must not be used as a stopping-rule interim analysis.
+
+Resume is deliberately not implemented: a later launch starts again from the
+first seed and creates `attempt-000002/` (or the next available number), while
+preserving the earlier attempt. Restarting unchanged inputs does not require a
+new plan hash; changing the configuration, plan, model inputs, or scientific
+design does. A changed configuration always has a new configuration file hash.
 
 ## Current readiness
 
-The configuration is structurally valid but not executed. It is not a
-production campaign, and `campaign_ready` is permanently false for this
-exploratory purpose. The proposed launch command remains intentionally disabled
-pending explicit review and the dedicated output-path work described above.
+The configuration is structurally valid and technically launchable but has not
+been executed. It is not a production campaign, and `campaign_ready` is
+permanently false for this exploratory purpose.
 Remaining scientific limitations include the
 illustrative, non-empirical population; the illustrative internal-to-money
 bridge; a missing source-bundle signature; unquantified monetary-rate and

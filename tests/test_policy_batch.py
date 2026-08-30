@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_population_projection_adapter import _complete_adapter  # noqa: E402
 
 from microtx_sim.causal.batch import (
+    PolicyBatchCheckpoint,
     PolicyBatchResult,
     PolicyBatchSpec,
     PolicyRunInputs,
@@ -38,6 +39,7 @@ from microtx_sim.metrics.harm import (
     OpportunityCostValuation,
     WelfareHarmWeights,
 )
+from microtx_sim.outputs.checkpoints import ExploratoryCheckpointRecorder
 from microtx_sim.simulation.policy_orchestrator import (
     ProducerAssumptions,
     default_epgc_policy,
@@ -85,6 +87,65 @@ def _projection_bytes(batch: PolicyBatchResult) -> bytes:
 
 
 class PolicyBatchTests(unittest.TestCase):
+    def test_checkpoint_callback_receives_complete_seed_prefixes_only(self) -> None:
+        spec = PolicyBatchSpec(
+            seeds=(5, 6),
+            days=0,
+            player_count=4,
+            decision_parameters=DecisionParameters(step_minutes=240),
+        )
+        checkpoints: list[PolicyBatchCheckpoint] = []
+
+        run_policy_batch(
+            spec,
+            country_profiles=PROFILE,
+            checkpoint_callback=checkpoints.append,
+        )
+
+        self.assertEqual(
+            [item.completed_seeds for item in checkpoints],
+            [(5,), (5, 6)],
+        )
+        self.assertEqual(
+            [len(item.records) for item in checkpoints],
+            [len(spec.scenarios), 2 * len(spec.scenarios)],
+        )
+        rows = checkpoints[-1].nonmonetary_diagnostic_rows()
+        self.assertTrue(rows)
+        self.assertFalse(any("cents" in key for row in rows for key in row))
+        self.assertEqual(
+            {row["interpretation"] for row in rows},
+            {"UNWEIGHTED_DIAGNOSTIC_ONLY"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            progress = Path(directory) / "progress"
+            first = ExploratoryCheckpointRecorder.start(
+                progress,
+                expected_seeds=spec.seeds,
+                config_sha256="a" * 64,
+                exploratory_plan_id="exploratory.test.v1",
+                exploratory_plan_sha256="b" * 64,
+                launch_command=("microtx-sim", "policy-batch", "test.toml"),
+            )
+            first(checkpoints[0])
+            first.mark_interrupted()
+            first_payload = json.loads(first.progress_path.read_text("utf-8"))
+            self.assertEqual(first_payload["status"], "INTERRUPTED")
+            self.assertEqual(first_payload["retained_seed_count"], 1)
+            self.assertFalse(first_payload["resume_supported"])
+            self.assertTrue(first.partial_results_path.is_file())
+            second = ExploratoryCheckpointRecorder.start(
+                progress,
+                expected_seeds=spec.seeds,
+                config_sha256="a" * 64,
+                exploratory_plan_id="exploratory.test.v1",
+                exploratory_plan_sha256="b" * 64,
+                launch_command=("microtx-sim", "policy-batch", "test.toml"),
+            )
+            self.assertEqual(first.attempt_id, "attempt-000001")
+            self.assertEqual(second.attempt_id, "attempt-000002")
+            self.assertTrue(first.progress_path.is_file())
+
     def test_campaign_requires_attestation_before_any_initializer(self) -> None:
         spec = PolicyBatchSpec(seeds=(13,), days=0, player_count=12)
         with (

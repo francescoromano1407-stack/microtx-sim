@@ -7,7 +7,7 @@ from hashlib import sha256
 from json import dumps
 from math import sqrt
 from types import MappingProxyType
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -300,6 +300,103 @@ class SeedScenarioRecord:
     total_spending_effect_vs_safe_cents: int
     harmful_spending_effect_vs_safe_cents: int
     total_revenue_effect_vs_safe_cents: int
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyBatchCheckpoint:
+    """One complete-seed prefix safe to persist as intermediate diagnostics."""
+
+    spec: PolicyBatchSpec
+    completed_seeds: tuple[int, ...]
+    records: tuple[SeedScenarioRecord, ...]
+    cohort_digest_by_seed: Mapping[int, str]
+
+    def __post_init__(self) -> None:
+        if type(self.spec) is not PolicyBatchSpec:
+            raise TypeError("checkpoint spec must be PolicyBatchSpec")
+        completed = tuple(self.completed_seeds)
+        if not completed or completed != self.spec.seeds[: len(completed)]:
+            raise ValueError(
+                "checkpoint seeds must be a non-empty prefix of the batch"
+            )
+        expected_record_count = len(completed) * len(self.spec.scenarios)
+        if len(self.records) != expected_record_count:
+            raise ValueError(
+                "checkpoint must contain every scenario for each completed seed"
+            )
+        expected_keys = [
+            (seed, scenario.scenario_id)
+            for seed in completed
+            for scenario in self.spec.scenarios
+        ]
+        observed_keys = [
+            (record.result.seed, record.result.scenario.scenario_id)
+            for record in self.records
+        ]
+        if observed_keys != expected_keys:
+            raise ValueError(
+                "checkpoint records must preserve declared seed/scenario order"
+            )
+        digests = dict(self.cohort_digest_by_seed)
+        if tuple(digests) != completed:
+            raise ValueError(
+                "checkpoint cohort digests must match completed seeds in order"
+            )
+        if any(
+            record.cohort_digest != digests[record.result.seed]
+            for record in self.records
+        ):
+            raise ValueError("checkpoint cohort digest is inconsistent")
+        object.__setattr__(self, "completed_seeds", completed)
+        object.__setattr__(
+            self,
+            "cohort_digest_by_seed",
+            MappingProxyType(digests),
+        )
+
+    @property
+    def retained_seed_count(self) -> int:
+        return len(self.completed_seeds)
+
+    def nonmonetary_diagnostic_rows(self) -> list[dict[str, object]]:
+        """Return unweighted, non-monetary rows; never a primary estimand."""
+
+        output: list[dict[str, object]] = []
+        for record in self.records:
+            result = record.result
+            harm = result.harm.component_scores
+            output.append(
+                {
+                    "scenario_id": result.scenario.scenario_id.value,
+                    "scenario_label": result.scenario.label,
+                    "seed": result.seed,
+                    "cohort_digest": record.cohort_digest,
+                    "days": result.days,
+                    "player_count": len(result.player_ids),
+                    "mean_harm": _mean(result.composite_harm),
+                    "harm_variance_players": _variance(result.composite_harm),
+                    "harm_p10": _quantile(result.composite_harm, 0.10),
+                    "harm_p50": _quantile(result.composite_harm, 0.50),
+                    "harm_p90": _quantile(result.composite_harm, 0.90),
+                    "mean_opportunity_cost_score": _mean(
+                        harm[:, HarmComponent.OC]
+                    ),
+                    "mean_sleep_burden": _mean(harm[:, HarmComponent.S]),
+                    "mean_education_work_burden": _mean(
+                        harm[:, HarmComponent.E]
+                    ),
+                    "mean_social_burden": _mean(harm[:, HarmComponent.F]),
+                    "mean_wellbeing_burden": _mean(harm[:, HarmComponent.W]),
+                    "mean_enjoyment": _mean(result.enjoyment),
+                    "high_risk_count": int(np.count_nonzero(result.high_risk)),
+                    "high_risk_share": _mean(result.high_risk),
+                    "mean_harm_effect_vs_safe": (
+                        record.mean_harm_effect_vs_safe
+                    ),
+                    "interpretation": "UNWEIGHTED_DIAGNOSTIC_ONLY",
+                }
+            )
+        return output
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,6 +812,7 @@ def run_policy_batch(
     campaign: bool = False,
     campaign_receipt: ExecutionReceipt | None = None,
     campaign_verification: ExecutionReceiptVerification | None = None,
+    checkpoint_callback: Callable[[PolicyBatchCheckpoint], None] | None = None,
 ) -> PolicyBatchResult:
     """Run all scenarios on the same seeded cohort within each replication."""
 
@@ -740,6 +838,8 @@ def run_policy_batch(
         raise ValueError(
             "campaign receipt and verification are only valid when campaign=true"
         )
+    if checkpoint_callback is not None and not callable(checkpoint_callback):
+        raise TypeError("checkpoint_callback must be callable or None")
     if campaign and population_adapter is None:
         raise ValueError(
             "campaign policy execution requires a verified projected "
@@ -867,6 +967,15 @@ def run_policy_batch(
                     total_revenue_effect_vs_safe_cents=(
                         result.total_revenue_cents - reference.total_revenue_cents
                     ),
+                )
+            )
+        if checkpoint_callback is not None:
+            checkpoint_callback(
+                PolicyBatchCheckpoint(
+                    spec=spec,
+                    completed_seeds=spec.seeds[: len(digests)],
+                    records=tuple(records),
+                    cohort_digest_by_seed=digests,
                 )
             )
     population_lineage = (
@@ -1281,6 +1390,7 @@ def _snapshot_sha256(snapshot: dict[str, object]) -> str:
 
 
 __all__ = [
+    "PolicyBatchCheckpoint",
     "PolicyBatchResult",
     "PolicyBatchSpec",
     "PolicyRunInputs",

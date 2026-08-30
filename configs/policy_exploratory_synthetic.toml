@@ -100,6 +100,7 @@ monetary_amount_semantics = "SYNTHETIC_MODEL_EQUIVALENT_NOT_OBSERVED_SPENDING"
 unweighted_output_role = "DIAGNOSTIC_ONLY"
 internal_monetary_unit = "simulation_cents"
 raw_internal_unit_output_role = "DIAGNOSTIC_ONLY_NOT_A_CROSS_COUNTRY_MONETARY_RESULT"
+execution_enabled = true
 allow_synthetic = true
 campaign_ready = false
 production_campaign = false
@@ -110,6 +111,15 @@ generalisation_claims = false
 identical_pretreatment_cohorts = true
 identical_population_weights_across_scenarios = true
 primary_estimand_id = "primary.composite-harm.baseline-vs-safe.v1"
+
+[exploratory_checkpoint]
+enabled = true
+interval_seeds = 1
+directory = "../artifacts/policy_exploratory_synthetic/progress"
+atomic_writes = true
+preserve_prior_attempts = true
+resume_mode = "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT"
+partial_result_profile = "NONMONETARY_UNWEIGHTED_SEED_SCENARIO_DIAGNOSTICS_ONLY"
 
 [uncertainty]
 seed_design = "FIXED_ASCENDING"

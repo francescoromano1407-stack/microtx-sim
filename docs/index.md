@@ -56,7 +56,10 @@ inputs cannot be replaced by zero-variance assumptions or readiness labels.
 configuration. It preserves the scientific parent estimand while binding a
 separate non-empirical sidecar plan and isolated output namespace. It does not
 alter the production configuration or inherit production authority. It has
-not been executed and remains `campaign_ready=false`.
+not been executed and remains `campaign_ready=false`. Its reviewed command is
+technically launchable and writes atomic per-seed diagnostic checkpoints; an
+interrupted attempt is preserved, while a later attempt restarts from the first
+seed in a new attempt directory.
 
 Population evidence/design, an optional exact runtime mapping/adapter, per-seed
 projection and pre-treatment balance lineage, and a separate two-file target-

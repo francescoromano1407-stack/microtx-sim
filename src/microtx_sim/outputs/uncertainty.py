@@ -81,6 +81,9 @@ def write_joint_uncertainty_outputs(
     rejected_count: int = 0,
     excluded_count: int = 0,
     sensitivity_instability: bool | Mapping[int, bool] = False,
+    output_profile: str = CAMPAIGN_ANALYSIS_OUTPUT_PROFILE,
+    output_profile_schema_version: str = CAMPAIGN_ANALYSIS_SCHEMA_VERSION,
+    output_profile_schema_sha256: str = CAMPAIGN_ANALYSIS_SCHEMA_SHA256,
 ) -> dict[str, Path]:
     """Write mutually consistent uncertainty artifacts without readiness promotion.
 
@@ -263,18 +266,28 @@ def write_joint_uncertainty_outputs(
     for name, value in (
         ("plan_sha256", plan_sha256),
         ("config_sha256", config_sha256),
+        ("output_profile_schema_sha256", output_profile_schema_sha256),
     ):
         if type(value) is not str or len(value) != 64 or any(
             character not in "0123456789abcdef" for character in value
         ):
             raise ValueError(f"{name} must be lowercase SHA-256 hex")
+    if type(output_profile) is not str or not output_profile.strip():
+        raise ValueError("output_profile must be non-empty text")
+    if (
+        type(output_profile_schema_version) is not str
+        or not output_profile_schema_version.strip()
+    ):
+        raise ValueError(
+            "output_profile_schema_version must be non-empty text"
+        )
     destination = Path(output_dir)
     realization_rows = [_realization_row(item) for item in joint_rows]
     checkpoint_rows = [_checkpoint_row(item) for item in observed_checkpoints]
     summary = {
-        "output_profile": CAMPAIGN_ANALYSIS_OUTPUT_PROFILE,
-        "output_profile_schema_version": CAMPAIGN_ANALYSIS_SCHEMA_VERSION,
-        "output_profile_schema_sha256": CAMPAIGN_ANALYSIS_SCHEMA_SHA256,
+        "output_profile": output_profile,
+        "output_profile_schema_version": output_profile_schema_version,
+        "output_profile_schema_sha256": output_profile_schema_sha256,
         "plan_id": plan_id,
         "plan_sha256": plan_sha256,
         "config_sha256": config_sha256,

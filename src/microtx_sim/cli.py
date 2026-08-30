@@ -819,12 +819,11 @@ def _policy_batch(
                 "sensitivity is fixed by configuration"
             )
         exploratory_validation_metadata = _exploratory_validate(config_path)
-        raise CampaignExecutionRejectedError(
-            "exploratory pre-execution validation passed, but exploratory "
-            "model execution is not enabled in this pre-campaign task; no "
-            "cohort, scenario, sensitivity, export, or reproduce work was "
-            "dispatched"
-        )
+        if config.exploratory is None or not config.exploratory.execution_enabled:
+            raise CampaignExecutionRejectedError(
+                "exploratory execution is not explicitly enabled by the "
+                "reviewed configuration"
+            )
     execution_receipt_spec = None
     execution_receipt = None
     execution_pre_verification = None
@@ -868,81 +867,156 @@ def _policy_batch(
         population_adapter=population_adapter,
         profile_input_lineage=profile_input_lineage,
     )
-    batch = run_policy_batch(
-        config.batch,
-        profile_bundle=profiles,
-        harm_parameters=config.harm_parameters,
-        harm_weights=config.harm_weights,
-        opportunity_valuation=config.opportunity_valuation,
-        producer_assumptions=config.producer_assumptions,
-        epgc_policy=config.epgc_policy,
-        population_adapter=population_adapter,
-        campaign=campaign,
-        campaign_receipt=execution_receipt,
-        campaign_verification=execution_pre_verification,
-    )
-    analysis_binding = (
-        resolve_run_analysis_binding(analysis_plan.plan, batch)
-        if analysis_plan is not None
-        else None
-    )
-    sensitivity = (
-        _run_configured_sensitivity(
-            config,
-            profile_bundle=profiles,
-            population_adapter=population_adapter,
-        )
-        if sensitivity_enabled
-        else None
-    )
-    execution_verification = None
-    if campaign:
-        # The same complete identity is rebuilt after all model work and before
-        # any result is published.  A future receipt schema may open the gate;
-        # schema v1 cannot reach this branch because its pre-execution gate is
-        # intentionally fixed closed.
-        from .execution_attestation import (
-            ExecutionVerificationPhase,
-            require_campaign_execution,
-            verify_execution_receipt,
-            write_execution_attestation_atomic,
-        )
-
-        assert execution_receipt_spec is not None
-        assert execution_receipt is not None
-        execution_verification = verify_execution_receipt(
-            execution_receipt,
-            execution_receipt_spec,
-            phase=ExecutionVerificationPhase.POST_EXECUTION,
-        )
-        require_campaign_execution(execution_receipt, execution_verification)
-        assert config.execution_receipt is not None
-        write_execution_attestation_atomic(
-            config.execution_receipt.attestation_path,
-            execution_verification,
-        )
     repository_root = Path(__file__).resolve().parents[2]
     destination = _resolve_output(
         output if output is not None else config.output.output_dir,
         repository_root=repository_root,
     )
-    paths = export_policy_batch(
-        config,
-        batch,
-        sensitivity,
-        config_path=config_path,
-        repository_root=repository_root,
-        output_dir=destination,
-        command=command,
-        analysis_plan=analysis_plan,
-        analysis_binding=analysis_binding,
-        execution_receipt=execution_receipt,
-        execution_verification=execution_verification,
-        exploratory_validation_metadata=exploratory_validation_metadata,
-    )
+    checkpoint_recorder = None
+    if exploratory:
+        from .outputs.checkpoints import ExploratoryCheckpointRecorder
+        from .outputs.exploratory_results import preflight_exploratory_output
+
+        if config.exploratory is None or config.exploratory_checkpoint is None:
+            raise PolicyConfigurationError(
+                "exploratory execution requires explicit checkpoint policy"
+            )
+        preflight_exploratory_output(destination)
+        checkpoint_recorder = ExploratoryCheckpointRecorder.start(
+            config.exploratory_checkpoint.directory,
+            expected_seeds=config.batch.seeds,
+            config_sha256=sha256(config_path.read_bytes()).hexdigest(),
+            exploratory_plan_id=config.exploratory.exploratory_plan_id,
+            exploratory_plan_sha256=(
+                config.exploratory.exploratory_plan_sha256
+            ),
+            launch_command=command,
+        )
+    try:
+        batch = run_policy_batch(
+            config.batch,
+            profile_bundle=profiles,
+            harm_parameters=config.harm_parameters,
+            harm_weights=config.harm_weights,
+            opportunity_valuation=config.opportunity_valuation,
+            producer_assumptions=config.producer_assumptions,
+            epgc_policy=config.epgc_policy,
+            population_adapter=population_adapter,
+            campaign=campaign,
+            campaign_receipt=execution_receipt,
+            campaign_verification=execution_pre_verification,
+            checkpoint_callback=checkpoint_recorder,
+        )
+        if checkpoint_recorder is not None:
+            checkpoint_recorder.mark_model_batch_complete()
+        analysis_binding = (
+            resolve_run_analysis_binding(analysis_plan.plan, batch)
+            if analysis_plan is not None
+            else None
+        )
+        sensitivity = (
+            _run_configured_sensitivity(
+                config,
+                profile_bundle=profiles,
+                population_adapter=population_adapter,
+            )
+            if sensitivity_enabled
+            else None
+        )
+        execution_verification = None
+        if campaign:
+            # Rebuild the same identity after model work and before publication.
+            from .execution_attestation import (
+                ExecutionVerificationPhase,
+                require_campaign_execution,
+                verify_execution_receipt,
+                write_execution_attestation_atomic,
+            )
+
+            assert execution_receipt_spec is not None
+            assert execution_receipt is not None
+            execution_verification = verify_execution_receipt(
+                execution_receipt,
+                execution_receipt_spec,
+                phase=ExecutionVerificationPhase.POST_EXECUTION,
+            )
+            require_campaign_execution(execution_receipt, execution_verification)
+            assert config.execution_receipt is not None
+            write_execution_attestation_atomic(
+                config.execution_receipt.attestation_path,
+                execution_verification,
+            )
+        if exploratory:
+            from .outputs.exploratory_results import export_exploratory_results
+
+            if analysis_binding is None or checkpoint_recorder is None:
+                raise RuntimeError(
+                    "exploratory execution requires a weighted analysis binding "
+                    "and checkpoint attempt"
+                )
+            assert exploratory_validation_metadata is not None
+            paths = export_exploratory_results(
+                config,
+                batch,
+                sensitivity,
+                analysis_binding,
+                config_path=config_path,
+                output_dir=destination,
+                command=command,
+                exploratory_validation_metadata=(
+                    exploratory_validation_metadata
+                ),
+                checkpoint_attempt_id=checkpoint_recorder.attempt_id,
+            )
+            checkpoint_recorder.mark_complete()
+        else:
+            paths = export_policy_batch(
+                config,
+                batch,
+                sensitivity,
+                config_path=config_path,
+                repository_root=repository_root,
+                output_dir=destination,
+                command=command,
+                analysis_plan=analysis_plan,
+                analysis_binding=analysis_binding,
+                execution_receipt=execution_receipt,
+                execution_verification=execution_verification,
+                exploratory_validation_metadata=(
+                    exploratory_validation_metadata
+                ),
+            )
+    except KeyboardInterrupt as error:
+        if checkpoint_recorder is not None:
+            try:
+                checkpoint_recorder.mark_interrupted()
+            except BaseException as checkpoint_error:
+                error.add_note(
+                    "the interrupted exploratory attempt could not update "
+                    f"progress.json: {checkpoint_error}"
+                )
+        raise
+    except BaseException as error:
+        if checkpoint_recorder is not None:
+            try:
+                checkpoint_recorder.mark_failed(error)
+            except BaseException as checkpoint_error:
+                error.add_note(
+                    "the exploratory failure marker also failed: "
+                    f"{checkpoint_error}"
+                )
+        raise
     return {
         "status": "ok",
-        "mode": "campaign_policy_batch" if campaign else "synthetic_policy_batch",
+        "mode": (
+            "campaign_policy_batch"
+            if campaign
+            else (
+                "exploratory_policy_batch"
+                if exploratory
+                else "synthetic_policy_batch"
+            )
+        ),
         "run_purpose": config.run_purpose.value,
         "scenario": config.name,
         "scenario_count": len(config.batch.scenarios),

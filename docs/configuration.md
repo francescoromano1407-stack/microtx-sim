@@ -22,7 +22,7 @@ Six run configurations are supplied:
 | `configs/policy_prototype.toml` | Reproducible seven-scenario policy prototype | 1,000 players, 14 days, 3 seeds, 7 scenarios | Strictly `synthetic`; tested but not empirically calibrated |
 | `configs/policy_prospective.toml` | Opt-in prospective-plan validation fixture | 16 designed test players, 14 days, 3 fixed seeds, 7 scenarios | `UNREGISTERED`, illustrative/test population provenance, and explicitly not campaign-ready |
 | `configs/policy_campaign.toml` | Complete fail-closed full-campaign configuration | 50,000 projected players, 14 days, 150 fixed seeds, 7 scenarios | Schema-valid pre-campaign candidate; illustrative population and money bridge, unquantified required uncertainty, and `campaign_ready=false`; not executed |
-| `configs/policy_exploratory_synthetic.toml` | Explicit non-empirical computational experiment | 50,000 illustrative projected players, 14 days, 150 fixed seeds, 7 scenarios | Separate exploratory sidecar plan and artifact namespace; conditional model results only, `campaign_ready=false`, and not executed |
+| `configs/policy_exploratory_synthetic.toml` | Explicit non-empirical computational experiment | 50,000 illustrative projected players, 14 days, 150 fixed seeds, 7 scenarios | Separate exploratory sidecar plan, output namespace, and per-seed atomic checkpoints; conditional model results only, `campaign_ready=false`, launchable but not executed |
 | `configs/base.toml` | Future architecture baseline | 50,000 players, 5 companies, 8 games, 365 one-day cycles; final-only history and SQLite ledger | `ILLUSTRATIVE` and deliberately blocked from current execution/campaign use |
 
 The campaign-shaped file is a binding contract, not permission to execute.
@@ -333,6 +333,12 @@ and sidecar-plan identities, uncertainty and convergence rules, monetary and
 population contracts, an isolated output directory, and a persistent isolated
 ledger. It forbids `[campaign]`, the production `[output_contract]`, and
 `[execution_receipt]`. See [Exploratory synthetic campaign](exploratory_synthetic_campaign.md).
+
+`[exploratory_checkpoint]` is mandatory for a full exploratory configuration.
+It fixes one-seed checkpoint intervals, atomic writes, preservation of prior
+attempts, a non-monetary diagnostic-only partial profile, and explicit
+`RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT` behavior. It is invalid for
+development or production run purposes.
 | `notes` | string | Interpretation warning retained in the manifest. |
 
 ### `[policy_run]`

@@ -216,6 +216,7 @@ class ExploratoryControlConfig:
     unweighted_output_role: str
     internal_monetary_unit: str
     raw_internal_unit_output_role: str
+    execution_enabled: bool
     allow_synthetic: bool
     campaign_ready: bool
     production_campaign: bool
@@ -276,6 +277,11 @@ class ExploratoryControlConfig:
                 )
         if type(self.allow_synthetic) is not bool or not self.allow_synthetic:
             raise ValueError("exploratory allow_synthetic must be true")
+        if (
+            type(self.execution_enabled) is not bool
+            or not self.execution_enabled
+        ):
+            raise ValueError("exploratory execution_enabled must be true")
         required_false = (
             "campaign_ready",
             "production_campaign",
@@ -314,6 +320,7 @@ class ExploratoryControlConfig:
             "raw_internal_unit_output_role": (
                 self.raw_internal_unit_output_role
             ),
+            "execution_enabled": self.execution_enabled,
             "allow_synthetic": self.allow_synthetic,
             "campaign_ready": self.campaign_ready,
             "production_campaign": self.production_campaign,
@@ -328,6 +335,58 @@ class ExploratoryControlConfig:
                 self.identical_population_weights_across_scenarios
             ),
             "primary_estimand_id": self.primary_estimand_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExploratoryCheckpointConfig:
+    """Atomic, non-resumable intermediate-output policy for exploration."""
+
+    enabled: bool
+    interval_seeds: int
+    directory: Path
+    atomic_writes: bool
+    preserve_prior_attempts: bool
+    resume_mode: str
+    partial_result_profile: str
+
+    def __post_init__(self) -> None:
+        for name in ("enabled", "atomic_writes", "preserve_prior_attempts"):
+            if type(getattr(self, name)) is not bool or not getattr(self, name):
+                raise ValueError(
+                    f"exploratory_checkpoint {name} must be true"
+                )
+        if type(self.interval_seeds) is not int or isinstance(
+            self.interval_seeds, bool
+        ) or self.interval_seeds != 1:
+            raise ValueError(
+                "exploratory_checkpoint interval_seeds must be 1"
+            )
+        if not isinstance(self.directory, Path) or not str(self.directory):
+            raise TypeError("exploratory_checkpoint directory must be a Path")
+        if self.resume_mode != "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT":
+            raise ValueError(
+                "exploratory_checkpoint resume_mode must explicitly restart "
+                "from zero while preserving prior attempts"
+            )
+        if (
+            self.partial_result_profile
+            != "NONMONETARY_UNWEIGHTED_SEED_SCENARIO_DIAGNOSTICS_ONLY"
+        ):
+            raise ValueError(
+                "exploratory_checkpoint partial_result_profile must prohibit "
+                "monetary and estimand interpretation"
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "interval_seeds": self.interval_seeds,
+            "directory": str(self.directory),
+            "atomic_writes": self.atomic_writes,
+            "preserve_prior_attempts": self.preserve_prior_attempts,
+            "resume_mode": self.resume_mode,
+            "partial_result_profile": self.partial_result_profile,
         }
 
 
@@ -784,6 +843,7 @@ class PolicyPrototypeConfig:
     full_exploratory_config: bool = False
     campaign: CampaignControlConfig | None = None
     exploratory: ExploratoryControlConfig | None = None
+    exploratory_checkpoint: ExploratoryCheckpointConfig | None = None
     uncertainty: CampaignUncertaintyConfig | None = None
     convergence: CampaignConvergenceConfig | None = None
     population_contract: PopulationContractConfig | None = None
@@ -839,8 +899,19 @@ class PolicyPrototypeConfig:
             raise TypeError(
                 "exploratory must be ExploratoryControlConfig or None"
             )
+        if self.exploratory_checkpoint is not None and type(
+            self.exploratory_checkpoint
+        ) is not ExploratoryCheckpointConfig:
+            raise TypeError(
+                "exploratory_checkpoint must be "
+                "ExploratoryCheckpointConfig or None"
+            )
         if self.run_purpose is PolicyRunPurpose.CAMPAIGN:
-            if self.exploratory is not None or self.full_exploratory_config:
+            if (
+                self.exploratory is not None
+                or self.exploratory_checkpoint is not None
+                or self.full_exploratory_config
+            ):
                 raise ValueError(
                     "campaign policy runs cannot declare exploratory semantics"
                 )
@@ -875,7 +946,11 @@ class PolicyPrototypeConfig:
                 raise ValueError(
                     "exploratory policy runs require an [exploratory] table"
                 )
-        elif self.full_exploratory_config or self.exploratory is not None:
+        elif (
+            self.full_exploratory_config
+            or self.exploratory is not None
+            or self.exploratory_checkpoint is not None
+        ):
             raise ValueError(
                 "exploratory semantics require run_purpose = 'exploratory'"
             )
@@ -1024,6 +1099,7 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
         )
     required = {
         "exploratory": config.exploratory,
+        "exploratory_checkpoint": config.exploratory_checkpoint,
         "population": config.population,
         "analysis_plan": config.analysis_plan,
         "uncertainty": config.uncertainty,
@@ -1039,6 +1115,7 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
             + ", ".join(missing)
         )
     exploratory = config.exploratory
+    checkpoint = config.exploratory_checkpoint
     population = config.population
     analysis = config.analysis_plan
     uncertainty = config.uncertainty
@@ -1047,6 +1124,7 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
     monetary = config.monetary_contract
     ledger = config.ledger
     assert exploratory is not None
+    assert checkpoint is not None
     assert population is not None
     assert analysis is not None
     assert uncertainty is not None
@@ -1130,6 +1208,18 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
             "exploratory output_dir must be isolated at "
             f"{expected_output.as_posix()!r}"
         )
+    expected_checkpoint = (
+        Path("artifacts") / exploratory.artifact_namespace / "progress"
+    )
+    if (
+        checkpoint.directory.name != "progress"
+        or checkpoint.directory.parent.name != exploratory.artifact_namespace
+        or checkpoint.directory.parent.parent.name != "artifacts"
+    ):
+        raise ValueError(
+            "exploratory checkpoint directory must be isolated at "
+            f"{expected_checkpoint.as_posix()!r}"
+        )
     if (
         ledger.path.parent.name != exploratory.artifact_namespace
         or ledger.path.parent.parent.name != "artifacts"
@@ -1182,6 +1272,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
         campaign = _campaign_control(raw.get("campaign"))
         exploratory = _exploratory_control(
             raw.get("exploratory"),
+            config_path=config_path,
+        )
+        exploratory_checkpoint = _exploratory_checkpoint_control(
+            raw.get("exploratory_checkpoint"),
             config_path=config_path,
         )
         uncertainty = _campaign_uncertainty(
@@ -1339,6 +1433,7 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             full_exploratory_config=full_exploratory_config,
             campaign=campaign,
             exploratory=exploratory,
+            exploratory_checkpoint=exploratory_checkpoint,
             uncertainty=uncertainty,
             convergence=convergence,
             population_contract=population_contract,
@@ -1375,6 +1470,7 @@ def _strict_top_level(raw: Mapping[str, object]) -> None:
     for optional in (
         "campaign",
         "exploratory",
+        "exploratory_checkpoint",
         "uncertainty",
         "convergence",
         "population_contract",
@@ -1510,6 +1606,7 @@ def _exploratory_control(
         "unweighted_output_role",
         "internal_monetary_unit",
         "raw_internal_unit_output_role",
+        "execution_enabled",
         "allow_synthetic",
         "campaign_ready",
         "production_campaign",
@@ -1529,6 +1626,39 @@ def _exploratory_control(
                 values["exploratory_plan_path"],
                 config_path=config_path,
                 name="exploratory exploratory_plan_path",
+            ),
+        }
+    )
+
+
+def _exploratory_checkpoint_control(
+    value: object,
+    *,
+    config_path: Path,
+) -> ExploratoryCheckpointConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="exploratory_checkpoint")
+    _exact_keys(
+        values,
+        {
+            "enabled",
+            "interval_seeds",
+            "directory",
+            "atomic_writes",
+            "preserve_prior_attempts",
+            "resume_mode",
+            "partial_result_profile",
+        },
+        "exploratory_checkpoint",
+    )
+    return ExploratoryCheckpointConfig(
+        **{
+            **values,
+            "directory": _resolved_config_path(
+                values["directory"],
+                config_path=config_path,
+                name="exploratory_checkpoint directory",
             ),
         }
     )
@@ -1998,6 +2128,7 @@ __all__ = [
     "EXPLORATORY_POPULATION_BASIS",
     "EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE",
     "EXPLORATORY_UNWEIGHTED_OUTPUT_ROLE",
+    "ExploratoryCheckpointConfig",
     "ExploratoryControlConfig",
     "MonetaryContractConfig",
     "PolicyConfigurationError",

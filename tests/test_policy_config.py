@@ -104,6 +104,7 @@ monetary_amount_semantics = "SYNTHETIC_MODEL_EQUIVALENT_NOT_OBSERVED_SPENDING"
 unweighted_output_role = "DIAGNOSTIC_ONLY"
 internal_monetary_unit = "simulation_cents"
 raw_internal_unit_output_role = "DIAGNOSTIC_ONLY_NOT_A_CROSS_COUNTRY_MONETARY_RESULT"
+execution_enabled = true
 allow_synthetic = true
 campaign_ready = false
 production_campaign = false
@@ -114,6 +115,15 @@ generalisation_claims = false
 identical_pretreatment_cohorts = true
 identical_population_weights_across_scenarios = true
 primary_estimand_id = "primary.composite-harm.baseline-vs-safe.v1"
+
+[exploratory_checkpoint]
+enabled = true
+interval_seeds = 1
+directory = "../artifacts/policy_exploratory_synthetic/progress"
+atomic_writes = true
+preserve_prior_attempts = true
+resume_mode = "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT"
+partial_result_profile = "NONMONETARY_UNWEIGHTED_SEED_SCENARIO_DIAGNOSTICS_ONLY"
 """
 
 
@@ -235,6 +245,7 @@ class PolicyConfigTests(unittest.TestCase):
             EXPLORATORY_RAW_INTERNAL_UNIT_OUTPUT_ROLE,
         )
         self.assertTrue(exploratory.allow_synthetic)
+        self.assertTrue(exploratory.execution_enabled)
         for name in (
             "campaign_ready",
             "production_campaign",
@@ -252,6 +263,12 @@ class PolicyConfigTests(unittest.TestCase):
             config.output.output_dir,
             Path("artifacts/policy_exploratory_synthetic"),
         )
+        checkpoint = config.exploratory_checkpoint
+        assert checkpoint is not None
+        self.assertTrue(checkpoint.enabled)
+        self.assertEqual(checkpoint.interval_seeds, 1)
+        self.assertFalse("resume" == checkpoint.resume_mode)
+        self.assertEqual(checkpoint.directory.name, "progress")
         assert config.ledger is not None
         self.assertEqual(
             config.ledger.path.parent.name,
@@ -281,6 +298,11 @@ class PolicyConfigTests(unittest.TestCase):
                 "must be a resolved lowercase SHA-256",
             ),
             ("allow_synthetic = true", "allow_synthetic = false", "must be true"),
+            (
+                "execution_enabled = true",
+                "execution_enabled = false",
+                "execution_enabled must be true",
+            ),
             ("campaign_ready = false", "campaign_ready = true", "must be false"),
             (
                 "production_campaign = false",
@@ -318,6 +340,16 @@ class PolicyConfigTests(unittest.TestCase):
                 "../artifacts/policy_exploratory_synthetic/exploratory-ledger.sqlite3",
                 "../artifacts/policy_campaign_BLOCKED/campaign-ledger.sqlite3",
                 "ledger path must be the isolated",
+            ),
+            (
+                "interval_seeds = 1",
+                "interval_seeds = 50",
+                "interval_seeds must be 1",
+            ),
+            (
+                'directory = "../artifacts/policy_exploratory_synthetic/progress"',
+                'directory = "../artifacts/policy_campaign_BLOCKED/progress"',
+                "checkpoint directory must be isolated",
             ),
             (
                 'expected_plan_sha256 = "1f27f290179cb054da10d97fce877ca9b17582f82f7d18e76788575afb18a023"',
