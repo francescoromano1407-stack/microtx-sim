@@ -8,6 +8,13 @@ from typing import Protocol
 
 from ..config import ConfigurationError, SimulationConfig
 from ..core.ledger import Ledger
+from ..data.population_execution import validate_population_campaign_preflight
+from ..data.population_projection import (
+    PopulationProjectionExecution,
+    verify_population_projection_execution,
+)
+from ..metrics.population_balance import PopulationBalanceArtifact
+from ..metrics.population_estimands import ExactPopulationWeights
 from ..metrics.outcomes import OutcomeSnapshot
 from ..types import LedgerBackend
 
@@ -58,7 +65,6 @@ class SimulationOrchestrator:
     ) -> RunResult:
         world.config.validate(campaign=campaign)
         if campaign:
-            world.profiles.validate_for_campaign()
             ledger = getattr(world, "ledger", None)
             if (
                 not isinstance(ledger, Ledger)
@@ -69,6 +75,34 @@ class SimulationOrchestrator:
                 raise ConfigurationError(
                     "Scientific campaigns require a non-temporary SQLite ledger"
                 )
+            projection = getattr(world, "population_projection_execution", None)
+            if type(projection) is not PopulationProjectionExecution:
+                raise ConfigurationError(
+                    "Scientific campaigns require an installed projected "
+                    "population execution; legacy population fallback is prohibited"
+                )
+            observed_projection = verify_population_projection_execution(projection)
+            validate_population_campaign_preflight(observed_projection.adapter)
+            balance = getattr(world, "population_balance", None)
+            weights = getattr(world, "population_weights", None)
+            if (
+                type(balance) is not PopulationBalanceArtifact
+                or not balance.exact_balance_passed
+            ):
+                raise ConfigurationError(
+                    "Scientific campaigns require passing pre-treatment "
+                    "population balance"
+                )
+            if (
+                type(weights) is not ExactPopulationWeights
+                or weights.weight_sum != 1
+                or len(weights.player_ids) != len(world.players)
+            ):
+                raise ConfigurationError(
+                    "Scientific campaigns require exact full-cohort analysis "
+                    "weights summing to one"
+                )
+            world.profiles.validate_for_campaign()
         count = world.config.run.cycles if cycles is None else cycles
         if count <= 0:
             raise ValueError("cycles must be positive")

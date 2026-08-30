@@ -31,7 +31,11 @@ from .outputs.schema import (
     stamp_standalone_sensitivity_schema,
 )
 from .outputs.writers import write_csv_atomic, write_json_atomic
-from .policy_config import PolicyConfigurationError, load_policy_config
+from .policy_config import (
+    PolicyConfigurationError,
+    PolicyRunPurpose,
+    load_policy_config,
+)
 from .simulation import SimulationOrchestrator
 
 
@@ -134,6 +138,7 @@ def _smoke(config_path: Path) -> dict[str, object]:
 
 def _policy_validate(config_path: Path) -> dict[str, object]:
     config = load_policy_config(config_path)
+    campaign = config.run_purpose is PolicyRunPurpose.CAMPAIGN
     population_adapter = None
     profile_input_lineage = None
     if config.population is not None:
@@ -146,7 +151,11 @@ def _policy_validate(config_path: Path) -> dict[str, object]:
             config.population,
             profiles,
             player_count=config.batch.player_count,
+            campaign=campaign,
         )
+        if campaign:
+            _validate_policy_campaign_provenance(config)
+            profiles.validate_for_campaign()
     analysis_plan = _resolve_configured_analysis_plan(
         config,
         population_adapter=population_adapter,
@@ -154,7 +163,12 @@ def _policy_validate(config_path: Path) -> dict[str, object]:
     )
     return {
         "status": "ok",
-        "mode": "synthetic_policy_prototype",
+        "mode": (
+            "campaign_policy_preflight"
+            if campaign
+            else "synthetic_policy_prototype"
+        ),
+        "run_purpose": config.run_purpose.value,
         "scenario": config.name,
         "provenance_status": config.provenance_status,
         "scenario_count": len(config.batch.scenarios),
@@ -193,6 +207,7 @@ def _policy_batch(
     command: Sequence[str],
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
+    campaign = config.run_purpose is PolicyRunPurpose.CAMPAIGN
     sensitivity_enabled = (
         config.output.run_sensitivity
         if run_sensitivity is None
@@ -208,10 +223,14 @@ def _policy_batch(
             config.population,
             profiles,
             player_count=config.batch.player_count,
+            campaign=campaign,
         )
         if config.population is not None
         else None
     )
+    if campaign:
+        _validate_policy_campaign_provenance(config)
+        profiles.validate_for_campaign()
     analysis_plan = _resolve_configured_analysis_plan(
         config,
         population_adapter=population_adapter,
@@ -226,6 +245,7 @@ def _policy_batch(
         producer_assumptions=config.producer_assumptions,
         epgc_policy=config.epgc_policy,
         population_adapter=population_adapter,
+        campaign=campaign,
     )
     analysis_binding = (
         resolve_run_analysis_binding(analysis_plan.plan, batch)
@@ -259,7 +279,8 @@ def _policy_batch(
     )
     return {
         "status": "ok",
-        "mode": "synthetic_policy_batch",
+        "mode": "campaign_policy_batch" if campaign else "synthetic_policy_batch",
+        "run_purpose": config.run_purpose.value,
         "scenario": config.name,
         "scenario_count": len(config.batch.scenarios),
         "seeds": list(batch.spec.seeds),
@@ -297,6 +318,7 @@ def _policy_sensitivity(
     output: Path | None,
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
+    campaign = config.run_purpose is PolicyRunPurpose.CAMPAIGN
     profiles = load_profile_bundle(campaign=False)
     profile_input_lineage = build_profile_input_lineage(
         profiles.country_profiles,
@@ -307,10 +329,14 @@ def _policy_sensitivity(
             config.population,
             profiles,
             player_count=config.batch.player_count,
+            campaign=campaign,
         )
         if config.population is not None
         else None
     )
+    if campaign:
+        _validate_policy_campaign_provenance(config)
+        profiles.validate_for_campaign()
     analysis_plan = _resolve_configured_analysis_plan(
         config,
         population_adapter=population_adapter,
@@ -430,6 +456,14 @@ def _resolve_configured_analysis_plan(
         profile_input_lineage=profile_input_lineage,
     )
     return loaded
+
+
+def _validate_policy_campaign_provenance(config) -> None:
+    if config.provenance_status != "calibrated":
+        raise PolicyConfigurationError(
+            "campaign policy execution requires provenance_status = 'calibrated'; "
+            f"got {config.provenance_status!r}"
+        )
 
 
 def _run_configured_sensitivity(

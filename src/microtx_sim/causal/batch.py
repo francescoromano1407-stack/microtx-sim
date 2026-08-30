@@ -26,6 +26,7 @@ from ..data.population_execution import (
     build_population_seed_execution_record,
     population_execution_input_snapshot,
     population_policy_pretreatment_sha256,
+    validate_population_campaign_preflight,
 )
 from ..data.population_projection import (
     PopulationProjectionAdapter,
@@ -704,11 +705,28 @@ def run_policy_batch(
     producer_assumptions: ProducerAssumptions | None = None,
     epgc_policy: EPGCPolicy | None = None,
     population_adapter: PopulationProjectionAdapter | None = None,
+    campaign: bool = False,
 ) -> PolicyBatchResult:
     """Run all scenarios on the same seeded cohort within each replication."""
 
     if type(spec) is not PolicyBatchSpec:
         raise TypeError("spec must be PolicyBatchSpec")
+    if type(campaign) is not bool:
+        raise TypeError("campaign must be a strict boolean")
+    if campaign and population_adapter is None:
+        raise ValueError(
+            "campaign policy execution requires a verified projected "
+            "population adapter; legacy population fallback is prohibited"
+        )
+    if campaign and spec.player_count <= 0:
+        raise ValueError(
+            "campaign policy execution requires a positive player cohort"
+        )
+    if campaign:
+        assert population_adapter is not None
+        population_adapter = validate_population_campaign_preflight(
+            population_adapter
+        )
     run_inputs = resolve_policy_run_inputs(
         harm_parameters=harm_parameters,
         harm_weights=harm_weights,
@@ -751,14 +769,18 @@ def run_policy_batch(
         digest = _cohort_digest(players, life)
         digests[seed] = digest
         if population_execution is not None:
-            population_seed_records.append(
-                build_population_seed_execution_record(
-                    population_execution,
-                    seed=seed,
-                    cohort_digest=digest,
-                    policy_days=spec.days,
-                )
+            population_seed_record = build_population_seed_execution_record(
+                population_execution,
+                seed=seed,
+                cohort_digest=digest,
+                policy_days=spec.days,
             )
+            if campaign:
+                _validate_campaign_population_seed_record(
+                    population_seed_record,
+                    expected_player_count=spec.player_count,
+                )
+            population_seed_records.append(population_seed_record)
         scenario_results: dict[ScenarioId, PolicyScenarioResult] = {}
         for scenario in spec.scenarios:
             result = run_policy_scenario(
@@ -837,6 +859,32 @@ def run_policy_batch(
         profile_input_lineage=profile_lineage,
         population_execution_lineage=population_lineage,
     )
+
+
+def _validate_campaign_population_seed_record(
+    record: PopulationSeedExecutionRecord,
+    *,
+    expected_player_count: int,
+) -> None:
+    """Re-attest exact weights and balance before the first policy branch."""
+
+    if type(record) is not PopulationSeedExecutionRecord:
+        raise TypeError(
+            "campaign population seed record must be PopulationSeedExecutionRecord"
+        )
+    PopulationSeedExecutionRecord.__post_init__(record)
+    if len(record.exact_weights.player_ids) != expected_player_count:
+        raise ValueError(
+            "campaign population weights do not cover the complete cohort"
+        )
+    if record.exact_weights.weight_sum != 1:
+        raise ValueError(
+            "campaign full-cohort analysis weights must sum exactly to one"
+        )
+    if not record.balance.exact_balance_passed:
+        raise ValueError(
+            "campaign population requires passing pre-treatment balance"
+        )
 
 
 def _seed_row(record: SeedScenarioRecord) -> dict[str, object]:

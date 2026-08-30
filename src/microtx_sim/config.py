@@ -258,6 +258,14 @@ class SimulationConfig:
                 raise ConfigurationError(
                     "Scientific campaigns require ledger_backend='sqlite'"
                 )
+            if self.population is None or (
+                self.population.mode is not PopulationExecutionMode.PROJECTED_V1
+            ):
+                raise ConfigurationError(
+                    "Scientific campaigns require [population] with "
+                    "mode='projected_v1'; legacy marginal population fallback "
+                    "is prohibited"
+                )
 
 
 def load_config(path: str | Path, *, campaign: bool = False) -> SimulationConfig:

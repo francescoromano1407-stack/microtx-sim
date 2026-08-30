@@ -9,6 +9,7 @@ from microtx_sim.cli import _policy_batch
 from microtx_sim.policy_config import (
     AnalysisPlanSelection,
     PolicyConfigurationError,
+    PolicyRunPurpose,
     load_policy_config,
 )
 from microtx_sim.config import PopulationExecutionMode
@@ -16,15 +17,32 @@ from microtx_sim.config import PopulationExecutionMode
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "policy_prototype.toml"
+CAMPAIGN_CONFIG = ROOT / "configs" / "policy_campaign.toml"
 
 
 class PolicyConfigTests(unittest.TestCase):
+    def test_checked_in_campaign_candidate_requires_projected_population(self) -> None:
+        config = load_policy_config(CAMPAIGN_CONFIG)
+        self.assertIs(config.run_purpose, PolicyRunPurpose.CAMPAIGN)
+        self.assertEqual(config.provenance_status, "illustrative")
+        self.assertIsNotNone(config.population)
+        assert config.population is not None
+        self.assertIs(
+            config.population.mode,
+            PopulationExecutionMode.PROJECTED_V1,
+        )
+        self.assertIsNotNone(config.analysis_plan)
+        self.assertTrue(config.output.include_player_rows)
+        self.assertEqual(config.batch.player_count, 50_000)
+
     def test_checked_in_policy_config_is_strict_and_complete(self) -> None:
         config = load_policy_config(CONFIG)
         self.assertEqual(config.provenance_status, "synthetic")
         self.assertEqual(len(config.batch.scenarios), 7)
         self.assertEqual(config.batch.seeds, (101, 202, 303))
         self.assertEqual(config.batch.player_count, 1000)
+        self.assertIs(config.run_purpose, PolicyRunPurpose.DEVELOPMENT)
+        self.assertNotIn("run_purpose", config.batch.snapshot())
         self.assertFalse(
             any(item.mechanics.personalized_offers for item in config.batch.scenarios)
         )
@@ -95,6 +113,103 @@ adapter_id = "policy.population.v1"
                 "population keys differ",
             ):
                 load_policy_config(malformed)
+
+    def test_campaign_run_purpose_requires_population_plan_rows_and_cohort(
+        self,
+    ) -> None:
+        original = CONFIG.read_text("utf-8")
+        campaign = original.replace(
+            "[meta]\n",
+            '[meta]\nrun_purpose = "campaign"\n',
+            1,
+        ).replace(
+            'provenance_status = "synthetic"',
+            'provenance_status = "calibrated"',
+            1,
+        )
+        population = """
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "inputs/design.toml"
+runtime_mapping_bundle_path = "inputs/runtime-mapping.toml"
+adapter_id = "policy.population.v1"
+"""
+        analysis_plan = """
+
+[analysis_plan]
+plan_path = "inputs/prospective-analysis-plan.json"
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            valid_path = root / "campaign.toml"
+            valid_path.write_text(
+                campaign + population + analysis_plan,
+                "utf-8",
+            )
+            configured = load_policy_config(valid_path)
+            self.assertIs(configured.run_purpose, PolicyRunPurpose.CAMPAIGN)
+            self.assertNotIn("run_purpose", configured.batch.snapshot())
+
+            missing_population = root / "missing-population.toml"
+            missing_population.write_text(campaign, "utf-8")
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                r"campaign policy runs require \[population\]",
+            ):
+                load_policy_config(missing_population)
+
+            missing_plan = root / "missing-plan.toml"
+            missing_plan.write_text(campaign + population, "utf-8")
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                r"campaign policy runs require an \[analysis_plan\]",
+            ):
+                load_policy_config(missing_plan)
+
+            empty_cohort = root / "empty-cohort.toml"
+            empty_cohort.write_text(
+                campaign.replace("player_count = 1000", "player_count = 0")
+                + population
+                + analysis_plan,
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "positive player cohort",
+            ):
+                load_policy_config(empty_cohort)
+
+            missing_rows = root / "missing-rows.toml"
+            missing_rows.write_text(
+                campaign.replace(
+                    "include_player_rows = true",
+                    "include_player_rows = false",
+                )
+                + population
+                + analysis_plan,
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                r"output\.include_player_rows = true",
+            ):
+                load_policy_config(missing_rows)
+
+            invalid_purpose = root / "invalid-purpose.toml"
+            invalid_purpose.write_text(
+                campaign.replace(
+                    'run_purpose = "campaign"',
+                    'run_purpose = "production-ish"',
+                ),
+                "utf-8",
+            )
+            with self.assertRaisesRegex(
+                PolicyConfigurationError,
+                "meta.run_purpose",
+            ):
+                load_policy_config(invalid_purpose)
 
     def test_analysis_plan_selection_is_strict_and_opt_in(self) -> None:
         original = CONFIG.read_text("utf-8")

@@ -46,9 +46,27 @@ from microtx_sim.policy_config import (  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_CONFIG = ROOT / "configs" / "policy_prototype.toml"
+CAMPAIGN_CONFIG = ROOT / "configs" / "policy_campaign.toml"
 
 
 class PolicyCliTests(unittest.TestCase):
+    def test_campaign_candidate_validation_fails_before_treatment(self) -> None:
+        stderr = io.StringIO()
+        with (
+            patch("microtx_sim.cli.run_policy_batch") as run_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as sensitivity,
+            redirect_stderr(stderr),
+        ):
+            code = main(("policy-validate", str(CAMPAIGN_CONFIG)))
+        self.assertEqual(code, 2)
+        self.assertIn(
+            "campaign population preflight failed before treatment",
+            stderr.getvalue(),
+        )
+        self.assertIn("ILLUSTRATIVE", stderr.getvalue())
+        run_batch.assert_not_called()
+        sensitivity.assert_not_called()
+
     def test_invalid_monetary_plan_fails_before_batch_or_sensitivity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -299,6 +299,7 @@ class World:
                 config.population,
                 profile_bundle,
                 player_count=config.run.player_count,
+                campaign=campaign,
             )
             if selected_population_adapter is not None and (
                 selected_population_adapter != configured_population_adapter

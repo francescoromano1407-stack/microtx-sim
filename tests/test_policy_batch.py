@@ -2,10 +2,16 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, dataclass, field, fields, replace
 import json
+from pathlib import Path
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_population_projection_adapter import _complete_adapter  # noqa: E402
 
 from microtx_sim.causal.batch import (
     PolicyBatchResult,
@@ -18,6 +24,10 @@ from microtx_sim.causal.scenarios import ScenarioId, ScenarioSpec, required_scen
 from microtx_sim.consumers.decision import DecisionParameters
 from microtx_sim.consumers.population import CountryProfile
 from microtx_sim.domain.monetisation import MonetisationVector
+from microtx_sim.data.population_execution import (
+    build_population_seed_execution_record,
+)
+from microtx_sim.data.population_projection import initialize_population_projection
 from microtx_sim.metrics.harm import (
     HarmModelParameters,
     OpportunityCostValuation,
@@ -61,6 +71,148 @@ def _projection_bytes(batch: PolicyBatchResult) -> bytes:
 
 
 class PolicyBatchTests(unittest.TestCase):
+    def test_campaign_without_adapter_rejects_before_any_initializer(self) -> None:
+        spec = PolicyBatchSpec(seeds=(13,), days=0, player_count=12)
+        with (
+            patch("microtx_sim.causal.batch.initialize_player_table") as legacy,
+            patch(
+                "microtx_sim.causal.batch.initialize_population_projection"
+            ) as projected,
+            patch("microtx_sim.causal.batch.run_policy_scenario") as scenario,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "legacy population fallback is prohibited",
+            ):
+                run_policy_batch(
+                    spec,
+                    country_profiles=PROFILE,
+                    campaign=True,
+                )
+        legacy.assert_not_called()
+        projected.assert_not_called()
+        scenario.assert_not_called()
+
+    def test_campaign_initializes_one_population_per_seed_for_all_scenarios(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _verification, _plan, _path, _mapping, adapter = _complete_adapter(
+                Path(directory)
+            )
+            spec = PolicyBatchSpec(
+                seeds=(17, 29),
+                days=0,
+                player_count=12,
+                decision_parameters=DecisionParameters(step_minutes=240),
+            )
+            with (
+                patch(
+                    "microtx_sim.causal.batch.validate_population_campaign_preflight",
+                    side_effect=lambda adapter: adapter,
+                ),
+                patch(
+                    "microtx_sim.causal.batch.initialize_population_projection",
+                    wraps=initialize_population_projection,
+                ) as initialize,
+                patch(
+                    "microtx_sim.causal.batch.run_policy_scenario",
+                    wraps=run_policy_scenario,
+                ) as scenario,
+            ):
+                result = run_policy_batch(
+                    spec,
+                    country_profiles=(CountryProfile(code="UK"),),
+                    population_adapter=adapter,
+                    campaign=True,
+                )
+
+            self.assertEqual(initialize.call_count, len(spec.seeds))
+            self.assertEqual(
+                scenario.call_count,
+                len(spec.seeds) * len(spec.scenarios),
+            )
+            self.assertIsNotNone(result.population_execution_lineage)
+
+    def test_campaign_reattests_balance_and_weights_before_first_scenario(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _verification, _plan, _path, _mapping, adapter = _complete_adapter(
+                Path(directory)
+            )
+            spec = PolicyBatchSpec(
+                seeds=(31,),
+                days=0,
+                player_count=12,
+                decision_parameters=DecisionParameters(step_minutes=240),
+            )
+
+            def invalid_balance(*args, **kwargs):
+                record = build_population_seed_execution_record(*args, **kwargs)
+                object.__setattr__(record.balance, "exact_balance_passed", False)
+                return record
+
+            with (
+                patch(
+                    "microtx_sim.causal.batch.validate_population_campaign_preflight",
+                    side_effect=lambda adapter: adapter,
+                ),
+                patch(
+                    "microtx_sim.causal.batch.build_population_seed_execution_record",
+                    side_effect=invalid_balance,
+                ),
+                patch("microtx_sim.causal.batch.run_policy_scenario") as scenario,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "exact balance artifact",
+                ):
+                    run_policy_batch(
+                        spec,
+                        country_profiles=(CountryProfile(code="UK"),),
+                        population_adapter=adapter,
+                        campaign=True,
+                    )
+            scenario.assert_not_called()
+
+            def invalid_weights(*args, **kwargs):
+                record = build_population_seed_execution_record(*args, **kwargs)
+                weights = record.exact_weights
+                altered = replace(
+                    weights,
+                    weight_numerators=(
+                        weights.weight_numerators[0]
+                        + weights.weight_denominators[0],
+                        *weights.weight_numerators[1:],
+                    ),
+                )
+                object.__setattr__(record, "exact_weights", altered)
+                return record
+
+            with (
+                patch(
+                    "microtx_sim.causal.batch.validate_population_campaign_preflight",
+                    side_effect=lambda adapter: adapter,
+                ),
+                patch(
+                    "microtx_sim.causal.batch.build_population_seed_execution_record",
+                    side_effect=invalid_weights,
+                ),
+                patch("microtx_sim.causal.batch.run_policy_scenario") as scenario,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "weights must sum exactly to one",
+                ):
+                    run_policy_batch(
+                        spec,
+                        country_profiles=(CountryProfile(code="UK"),),
+                        population_adapter=adapter,
+                        campaign=True,
+                    )
+            scenario.assert_not_called()
+
     def test_batch_retains_fully_resolved_default_and_custom_inputs(self) -> None:
         spec = PolicyBatchSpec(seeds=(13,), days=0, player_count=0)
         default_result = run_policy_batch(spec, country_profiles=PROFILE)
