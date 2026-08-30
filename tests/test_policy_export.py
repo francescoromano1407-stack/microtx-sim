@@ -815,11 +815,17 @@ class PolicyExportTests(unittest.TestCase):
                 manifest["population_readiness"]["typed_assessment"],
                 lineage["population_evidence_assessment"],
             )
-            self.assertFalse(
-                any(
-                    manifest["population_readiness"]["manifest_gate"].values()
-                )
+            population_assessment = lineage["population_evidence_assessment"]
+            population_gate = manifest["population_readiness"]["manifest_gate"]
+            self.assertEqual(
+                population_gate,
+                {
+                    field: population_assessment[field] is True
+                    for field in population_gate
+                },
             )
+            self.assertTrue(population_gate["structure_coherent"])
+            self.assertFalse(population_gate["public_population_comparability"])
 
     def test_export_rejects_undeclared_player_and_opportunity_fields(self) -> None:
         base = load_policy_config(CONFIG_PATH)
