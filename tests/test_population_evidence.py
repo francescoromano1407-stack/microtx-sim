@@ -196,7 +196,7 @@ def _write_fixture(
 
 
 class DefaultPopulationEvidenceTests(unittest.TestCase):
-    def test_default_bundle_is_empty_illustrative_and_campaign_blocking(self) -> None:
+    def test_default_bundle_is_complete_illustrative_and_campaign_blocking(self) -> None:
         source_registry = DEFAULT_POPULATION_EVIDENCE_BUNDLE_PATH.with_name(
             "sources.toml"
         )
@@ -212,23 +212,28 @@ class DefaultPopulationEvidenceTests(unittest.TestCase):
         self.assertEqual(bundle.schema_version, POPULATION_EVIDENCE_SCHEMA_VERSION)
         self.assertIs(bundle.provenance_status, ProvenanceStatus.ILLUSTRATIVE)
         self.assertEqual(bundle.source_registry_sha256, source_registry_sha256)
-        self.assertEqual(bundle.artifacts, ())
-        self.assertEqual(bundle.bindings, ())
-        self.assertEqual(results, ())
+        self.assertEqual(len(bundle.artifacts), 1)
+        self.assertEqual(len(bundle.bindings), 8)
+        self.assertEqual(len(results), 8)
+        self.assertEqual(sum(len(result.cells) for result in results), 1_728)
         self.assertIs(
             bundle.signature.status,
             PopulationEvidenceSignatureStatus.MISSING,
         )
         self.assertFalse(bundle.campaign_ready)
-        self.assertEqual(
+        self.assertIn(
+            "population_evidence_bundle_status=ILLUSTRATIVE",
             bundle.campaign_blockers,
-            (
-                "population_evidence_bundle_status=ILLUSTRATIVE",
-                "population_evidence_bundle_signature_missing",
-                "population_evidence_bundle_empty",
-                "population_evidence_calibration_binding_missing",
-                "population_evidence_validation_binding_missing",
-            ),
+        )
+        self.assertIn(
+            "population_evidence_bundle_signature_missing",
+            bundle.campaign_blockers,
+        )
+        self.assertTrue(
+            any(
+                blocker.startswith("population_evidence_non_calibrated_bindings=")
+                for blocker in bundle.campaign_blockers
+            )
         )
         with self.assertRaisesRegex(
             PopulationEvidenceVerificationError,
@@ -238,10 +243,10 @@ class DefaultPopulationEvidenceTests(unittest.TestCase):
 
         rebuilt_bundle, rebuilt_results = validate_population_evidence_snapshot(
             bundle.snapshot(),
-            [],
+            [result.snapshot() for result in results],
         )
         self.assertEqual(rebuilt_bundle, bundle)
-        self.assertEqual(rebuilt_results, ())
+        self.assertEqual(rebuilt_results, results)
 
     def test_absent_snapshot_allows_no_results_only(self) -> None:
         self.assertEqual(validate_population_evidence_snapshot(None, []), (None, ()))

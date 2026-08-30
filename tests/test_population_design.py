@@ -351,7 +351,7 @@ def _write_complete_fixture(
 
 
 class DefaultPopulationDesignTests(unittest.TestCase):
-    def test_default_is_exact_empty_illustrative_and_campaign_blocking(self) -> None:
+    def test_default_is_complete_illustrative_and_campaign_blocking(self) -> None:
         evidence_bundle, evidence_results = (
             load_and_verify_population_evidence_bundle(
                 DEFAULT_POPULATION_EVIDENCE_BUNDLE_PATH
@@ -369,16 +369,26 @@ class DefaultPopulationDesignTests(unittest.TestCase):
         )
         self.assertEqual(bundle.schema_version, POPULATION_DESIGN_SCHEMA_VERSION)
         self.assertIs(bundle.provenance_status, ProvenanceStatus.ILLUSTRATIVE)
-        self.assertEqual(bundle.age_bands, ())
-        self.assertEqual(bundle.income_bands, ())
-        self.assertEqual(bundle.household_types, ())
-        self.assertEqual(bundle.jurisdictions, ())
-        self.assertEqual(bundle.partition.records, ())
-        self.assertFalse(bundle.declaration_complete)
+        self.assertEqual(len(bundle.age_bands), 6)
+        self.assertEqual(len(bundle.income_bands), 12)
+        self.assertEqual(len(bundle.household_types), 3)
+        self.assertEqual(
+            tuple(item.jurisdiction_code for item in bundle.jurisdictions),
+            ("BE", "JP", "KR", "UK"),
+        )
+        self.assertGreater(len(bundle.partition.records), 0)
+        self.assertTrue(bundle.declaration_complete)
         self.assertFalse(bundle.campaign_ready)
         self.assertTrue(verification.evidence_reverified)
         self.assertFalse(verification.authenticity_verified)
         self.assertFalse(verification.heldout_ready)
+        target = build_population_calibration_target(verification)
+        self.assertEqual(len(target.cells), 864)
+        self.assertEqual(target.total_population_count, 40_000)
+        self.assertEqual(
+            sum((cell.target_mass for cell in target.cells), Fraction()),
+            Fraction(1, 1),
+        )
         self.assertIn(
             "population_design_partition_source_unit_keys_unverified",
             bundle.campaign_blockers,

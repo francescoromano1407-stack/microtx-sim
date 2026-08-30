@@ -1809,16 +1809,22 @@ def validate_population_design_snapshot(
 def build_population_calibration_target(
     verification: PopulationDesignVerification,
 ) -> PopulationCalibrationTarget:
-    """Project verified declarations into a calibration-only typed target."""
+    """Project verified declarations into a calibration-role typed target.
+
+    ``CALIBRATION`` identifies the deterministic side of the declared
+    calibration/validation partition; it is not itself a claim that the source
+    evidence is empirically calibrated or campaign-ready.  Complete
+    non-calibrated declarations are therefore executable in explicitly
+    non-campaign development runs while retaining their original provenance
+    status and the schema-v1 campaign blockers.
+    """
 
     if type(verification) is not PopulationDesignVerification:
         raise TypeError("verification must be a PopulationDesignVerification")
     bundle = verification.bundle
-    if not bundle.declaration_complete or (
-        bundle.provenance_status is not ProvenanceStatus.CALIBRATED
-    ):
+    if not bundle.declaration_complete:
         raise PopulationDesignVerificationError(
-            "population design is not a complete CALIBRATED declaration"
+            "population design is not a complete declaration"
         )
     # Recompute semantic checks so hand-constructed verification-like objects do
     # not become an alternate path that exposes validation data to allocation.
@@ -2083,11 +2089,13 @@ def _verify_design_evidence_bindings(
         raise PopulationDesignVerificationError(
             "population-design evidence result digests/order do not match verified results"
         )
-    if bundle.jurisdictions and (
-        evidence_bundle.provenance_status is not ProvenanceStatus.CALIBRATED
+    if (
+        bundle.jurisdictions
+        and bundle.provenance_status is not evidence_bundle.provenance_status
     ):
         raise PopulationDesignVerificationError(
-            "a populated design requires CALIBRATED population evidence"
+            "a populated design and its population evidence must declare the "
+            "same provenance status"
         )
     results_by_binding = {result.binding_id: result for result in evidence_results}
     bindings_by_id = {
@@ -2149,7 +2157,7 @@ def _verify_design_evidence_bindings(
                 or binding.target_population_id != target_population_id
                 or result.jurisdiction_code != jurisdiction.jurisdiction_code
                 or binding.jurisdiction_code != jurisdiction.jurisdiction_code
-                or binding.status is not ProvenanceStatus.CALIBRATED
+                or binding.status is not bundle.provenance_status
             ):
                 raise PopulationDesignVerificationError(
                     f"population-design {role.value} binding metadata differ from "

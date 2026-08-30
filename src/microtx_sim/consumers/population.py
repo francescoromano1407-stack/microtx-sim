@@ -62,6 +62,19 @@ _DEFAULT_TRAIT_CORRELATION: Final[tuple[tuple[float, ...], ...]] = (
 )
 
 
+PROJECTED_INCOME_TARGET_QUANTITY: Final[str] = (
+    "runtime_personal_monthly_disposable_income_cents"
+)
+PROJECTED_INCOME_MODEL_FAMILY: Final[str] = "LOG_NORMAL"
+PROJECTED_INCOME_BOUNDARY_RULE: Final[str] = "CENSOR_TO_INCLUSIVE_BOUNDS"
+PROJECTED_INCOME_ROUNDING_RULE: Final[str] = "ROUND_HALF_TO_EVEN_CENTS"
+PROJECTED_INCOME_MINOR_GAMING_ADJUSTMENT: Final[str] = "NONE"
+PROJECTED_INCOME_MINOR_GAMING_ADJUSTMENT_REASON: Final[str] = (
+    "INSUFFICIENT_VERIFIED_EVIDENCE"
+)
+PROJECTED_HOUSEHOLD_WITH_MINOR_TYPE: Final[str] = "household.with-minor"
+
+
 @dataclass(frozen=True, slots=True)
 class CountryProfile:
     """Configurable, provenance-addressable inputs for one jurisdiction.
@@ -199,6 +212,120 @@ class CountryProfile:
 
 
 @dataclass(frozen=True, slots=True)
+class PopulationProjectionIncomeModel:
+    """Exact metadata for one bounded runtime personal-income model.
+
+    The model is an underlying log-normal distribution parameterized by its
+    median and a positive exact rational log-scale standard deviation. Values
+    outside the inclusive cent bounds are censored to the nearest bound and
+    then rounded to cents with NumPy's deterministic half-to-even rule. The
+    declaration deliberately records a ``NONE`` minor-gaming adjustment: a
+    conditional adjustment cannot be introduced without verified evidence.
+    """
+
+    target_quantity: str
+    model_family: str
+    median_cents: int
+    log_sigma: tuple[int, int]
+    lower_bound_cents: int
+    upper_bound_cents_inclusive: int
+    currency: str
+    time_period: str
+    source_id: str
+    calibration_target: str
+    transformation: str
+    boundary_rule: str
+    rounding_rule: str
+    minor_gaming_adjustment: str
+    minor_gaming_adjustment_reason: str
+
+    def __post_init__(self) -> None:
+        exact_values = (
+            ("target_quantity", PROJECTED_INCOME_TARGET_QUANTITY),
+            ("model_family", PROJECTED_INCOME_MODEL_FAMILY),
+            ("boundary_rule", PROJECTED_INCOME_BOUNDARY_RULE),
+            ("rounding_rule", PROJECTED_INCOME_ROUNDING_RULE),
+            (
+                "minor_gaming_adjustment",
+                PROJECTED_INCOME_MINOR_GAMING_ADJUSTMENT,
+            ),
+            (
+                "minor_gaming_adjustment_reason",
+                PROJECTED_INCOME_MINOR_GAMING_ADJUSTMENT_REASON,
+            ),
+        )
+        for name, expected in exact_values:
+            if getattr(self, name) != expected:
+                raise ValueError(f"{name} must be {expected}")
+        for name in (
+            "currency",
+            "time_period",
+            "source_id",
+            "calibration_target",
+            "transformation",
+        ):
+            value = getattr(self, name)
+            if type(value) is not str or not value or value.strip() != value:
+                raise ValueError(
+                    f"{name} must be non-empty text without surrounding whitespace"
+                )
+        if (
+            len(self.currency) != 3
+            or not self.currency.isascii()
+            or not self.currency.isalpha()
+            or self.currency.upper() != self.currency
+        ):
+            raise ValueError("currency must be three uppercase ASCII letters")
+        for name in (
+            "median_cents",
+            "lower_bound_cents",
+            "upper_bound_cents_inclusive",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int:
+                raise TypeError(f"{name} must be a Python integer")
+        if self.median_cents <= 0:
+            raise ValueError("median_cents must be positive")
+        if (
+            self.lower_bound_cents < 0
+            or self.upper_bound_cents_inclusive < self.lower_bound_cents
+            or self.upper_bound_cents_inclusive > 2**53
+        ):
+            raise ValueError(
+                "income-model bounds must be ordered, non-negative, and at most "
+                "2**53 cents"
+            )
+        if not (
+            self.lower_bound_cents
+            <= self.median_cents
+            <= self.upper_bound_cents_inclusive
+        ):
+            raise ValueError("median_cents must lie within the censoring bounds")
+        if type(self.log_sigma) is not tuple or len(self.log_sigma) != 2:
+            raise TypeError(
+                "log_sigma must be an exact (numerator, denominator) tuple"
+            )
+        numerator, denominator = self.log_sigma
+        if type(numerator) is not int or type(denominator) is not int:
+            raise TypeError(
+                "log_sigma numerator and denominator must be Python integers"
+            )
+        if numerator <= 0 or denominator <= 0:
+            raise ValueError("log_sigma must be a positive rational")
+        if numerator.bit_length() > 4096 or denominator.bit_length() > 4096:
+            raise ValueError("log_sigma exceeds the exact-integer safety limit")
+        reduced = Fraction(numerator, denominator)
+        if (reduced.numerator, reduced.denominator) != self.log_sigma:
+            raise ValueError("log_sigma must be expressed in lowest terms")
+        try:
+            floating_sigma = float(reduced)
+        except OverflowError as exc:
+            raise ValueError("log_sigma must have a finite float64 projection") from exc
+        if not np.isfinite(floating_sigma) or floating_sigma <= 0.0:
+            raise ValueError("log_sigma must have a finite positive float64 projection")
+
+
+@dataclass(frozen=True, slots=True)
 class PopulationProjectionCell:
     """One exact target cell after upstream evidence-to-runtime conversion.
 
@@ -219,6 +346,7 @@ class PopulationProjectionCell:
     baseline_gamer: bool
     baseline_ever_payer: bool
     global_mass: tuple[int, int]
+    income_model: PopulationProjectionIncomeModel | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -267,6 +395,20 @@ class PopulationProjectionCell:
                 "runtime income upper bound times modeled household size must be "
                 "at most 2**53 cents for exact float64 household-resource input"
             )
+        if self.income_model is not None:
+            if type(self.income_model) is not PopulationProjectionIncomeModel:
+                raise TypeError(
+                    "income_model must be an exact PopulationProjectionIncomeModel"
+                )
+            if (
+                self.income_model.lower_bound_cents
+                != self.monthly_disposable_income_min_cents
+                or self.income_model.upper_bound_cents_inclusive
+                != self.monthly_disposable_income_max_cents_exclusive - 1
+            ):
+                raise ValueError(
+                    "income_model bounds must exactly match the runtime income interval"
+                )
         if not isinstance(self.baseline_gamer, bool):
             raise TypeError("baseline_gamer must be a bool")
         if not isinstance(self.baseline_ever_payer, bool):
@@ -695,7 +837,7 @@ def _initialize_projected_player_table_resolved(
 
     group_specification: dict[
         tuple[str, str, str],
-        tuple[int, int, int],
+        tuple[int, int, int, PopulationProjectionIncomeModel | None],
     ] = {}
     for cell in cells:
         key = (
@@ -707,6 +849,7 @@ def _initialize_projected_player_table_resolved(
             cell.modeled_players_per_household,
             cell.monthly_disposable_income_min_cents,
             cell.monthly_disposable_income_max_cents_exclusive,
+            cell.income_model,
         )
         previous_specification = group_specification.setdefault(key, specification)
         if previous_specification != specification:
@@ -843,24 +986,39 @@ def _initialize_projected_player_table_resolved(
             cell.age_min_inclusive + age_offset
         ).astype(np.int16)
 
-        income_draw = _uniform(
-            rng,
-            entity_ids,
-            tick,
-            _ProjectionStream.MONTHLY_DISPOSABLE_INCOME,
-            index,
-        )
-        income_width = (
-            cell.monthly_disposable_income_max_cents_exclusive
-            - cell.monthly_disposable_income_min_cents
-        )
-        income_offset = np.minimum(
-            np.floor(income_draw * income_width).astype(np.int64),
-            income_width - 1,
-        )
-        monthly_income[positions] = (
-            cell.monthly_disposable_income_min_cents + income_offset
-        )
+        if cell.income_model is None:
+            # Schema-v1 cells retain their historical discrete-uniform draw,
+            # including the exact RNG method, stream, and draw coordinate.
+            income_draw = _uniform(
+                rng,
+                entity_ids,
+                tick,
+                _ProjectionStream.MONTHLY_DISPOSABLE_INCOME,
+                index,
+            )
+            income_width = (
+                cell.monthly_disposable_income_max_cents_exclusive
+                - cell.monthly_disposable_income_min_cents
+            )
+            income_offset = np.minimum(
+                np.floor(income_draw * income_width).astype(np.int64),
+                income_width - 1,
+            )
+            monthly_income[positions] = (
+                cell.monthly_disposable_income_min_cents + income_offset
+            )
+        else:
+            income_noise = _normal(
+                rng,
+                entity_ids,
+                tick,
+                _ProjectionStream.MONTHLY_DISPOSABLE_INCOME,
+                index,
+            )
+            monthly_income[positions] = _censored_log_normal_income_cents(
+                cell.income_model,
+                income_noise,
+            )
 
     household_id = np.empty(player_count, dtype=np.int64)
     household_liquidity = np.empty(player_count, dtype=np.int64)
@@ -881,7 +1039,7 @@ def _initialize_projected_player_table_resolved(
         positions = np.flatnonzero(np.isin(cell_index, group_cell_indices))
         if not positions.size:
             continue
-        size, _income_min, _income_max = group_specification[key]
+        size, _income_min, _income_max, _income_model = group_specification[key]
         entity_ids = player_id[positions]
         household_draw = _uniform(
             rng,
@@ -890,9 +1048,51 @@ def _initialize_projected_player_table_resolved(
             _ProjectionStream.HOUSEHOLD_ORDER,
             group_index,
         )
-        shuffled_positions = positions[np.lexsort((entity_ids, household_draw))]
         local_household = np.arange(positions.size, dtype=np.int64) // size
         number_households = int(local_household[-1]) + 1
+        country_index = code_to_index[key[0]]
+        profile = country_profiles[country_index]
+        if key[2] == PROJECTED_HOUSEHOLD_WITH_MINOR_TYPE:
+            minor_local = np.flatnonzero(
+                age_years[positions] < profile.adult_age
+            )
+            if minor_local.size < number_households:
+                raise ValueError(
+                    "projected household.with-minor group lacks one "
+                    "pre-treatment minor per realized household"
+                )
+            minor_order = np.lexsort(
+                (entity_ids[minor_local], household_draw[minor_local])
+            )
+            anchor_local = minor_local[minor_order[:number_households]]
+            remaining_local = np.concatenate(
+                (
+                    minor_local[minor_order[number_households:]],
+                    np.flatnonzero(age_years[positions] >= profile.adult_age),
+                )
+            )
+            remaining_order = np.lexsort(
+                (
+                    entity_ids[remaining_local],
+                    household_draw[remaining_local],
+                )
+            )
+            shuffled_positions = np.empty(positions.size, dtype=np.int64)
+            anchor_slots = np.arange(number_households, dtype=np.int64) * size
+            shuffled_positions[anchor_slots] = positions[anchor_local]
+            non_anchor_slots = np.flatnonzero(
+                ~np.isin(
+                    np.arange(positions.size, dtype=np.int64),
+                    anchor_slots,
+                )
+            )
+            shuffled_positions[non_anchor_slots] = positions[
+                remaining_local[remaining_order]
+            ]
+        else:
+            shuffled_positions = positions[
+                np.lexsort((entity_ids, household_draw))
+            ]
         household_id[shuffled_positions] = household_offset + local_household
 
         household_income = np.bincount(
@@ -905,8 +1105,6 @@ def _initialize_projected_player_table_resolved(
             household_offset + number_households,
             dtype=np.int64,
         )
-        country_index = code_to_index[key[0]]
-        profile = country_profiles[country_index]
         resource_noise = _normal(
             rng,
             household_entities,
@@ -1307,6 +1505,41 @@ def _baseline_vulnerability(
         + 0.15 * minors
     )
     return _sigmoid(latent).astype(np.float32)
+
+
+def _censored_log_normal_income_cents(
+    model: PopulationProjectionIncomeModel,
+    normal_draws: NDArray[np.float64],
+) -> NDArray[np.int64]:
+    """Project standard-normal coordinates through one declared income model.
+
+    Censoring happens on the continuous log-normal quantity before rounding.
+    There is no rejection sampling, redistribution, or sample normalization.
+    A final integer clip makes the declared inclusive-bound invariant explicit
+    at the cent representation boundary.
+    """
+
+    if type(model) is not PopulationProjectionIncomeModel:
+        raise TypeError("model must be an exact PopulationProjectionIncomeModel")
+    values = np.asarray(normal_draws, dtype=np.float64)
+    if not np.all(np.isfinite(values)):
+        raise ValueError("normal_draws must be finite")
+    sigma = float(Fraction(*model.log_sigma))
+    with np.errstate(over="ignore"):
+        log_values = np.log(float(model.median_cents)) + sigma * values
+    lower_log = (
+        -np.inf
+        if model.lower_bound_cents == 0
+        else np.log(float(model.lower_bound_cents))
+    )
+    upper_log = np.log(float(model.upper_bound_cents_inclusive))
+    censored = np.exp(np.clip(log_values, lower_log, upper_log))
+    rounded = np.rint(censored)
+    return np.clip(
+        rounded,
+        model.lower_bound_cents,
+        model.upper_bound_cents_inclusive,
+    ).astype(np.int64)
 
 
 def _uniform(

@@ -718,7 +718,7 @@ class ProfileLoadingTests(unittest.TestCase):
         self.assertEqual(summary_count, 0)
         self.assertEqual(
             _normalized_registered_snapshot_sha(legacy.snapshot),
-            "d452aa6622726060a0e35b061fc8289445f278f4140ae863d074f74a4cbb3d25",
+            "faa2d2d297cbf5dc61adb655346d1c7032e994de873ff150dac1361bc496dba1",
         )
 
     def test_frozen_profile_lineage_v1_and_v2_fixtures_remain_readable(self) -> None:
@@ -824,7 +824,7 @@ class ProfileLoadingTests(unittest.TestCase):
         self.assertEqual(summary_count, 1)
         self.assertEqual(
             _normalized_registered_snapshot_sha(legacy.snapshot),
-            "2cbf76453fbc288effad30b7006c8135578b3e89c4ddafcdebaa4cae1cbac5fc",
+            "fd1afb51a97c5f5b8a5917f21a9b0251551d8388574ecc08bbdb45f65644679f",
         )
 
     def test_profile_lineage_v2_downgrade_cannot_carry_v3_evidence(self) -> None:

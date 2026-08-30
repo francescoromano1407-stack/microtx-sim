@@ -2,6 +2,7 @@
 # representation on every supported platform.
 configs/*.toml text eol=lf
 data/provenance/*.toml text eol=lf
+data/provenance/population_runtime_mapping.json text eol=lf
 tests/fixtures/*.json text eol=lf
 
 # Evidence artifacts are content-addressed opaque bytes.  Never apply Git text

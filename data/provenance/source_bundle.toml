@@ -1,7 +1,7 @@
 schema_version = 1
 bundle_id = "default-empty-rate-evidence"
 provenance_status = "ILLUSTRATIVE"
-source_registry_sha256 = "acd5093e72963d6d5906b0914512514bba7cea38fa048871130a9d5390bea870"
+source_registry_sha256 = "da65c31a1829779b24dd3665e163448c901a6df556d601f409132e090a2fc1c9"
 artifact_root = "rate_artifacts"
 notes = "No immutable rate extracts or signature are registered; this empty bundle cannot support campaign comparability."
 artifacts = []

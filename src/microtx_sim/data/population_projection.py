@@ -1,6 +1,6 @@
 """Fail-closed bridge from static population targets to runtime players.
 
-This schema-v1 adapter keeps three concepts separate:
+This schema-versioned adapter keeps three concepts separate:
 
 * verified source household-income and household-type semantics;
 * an explicit, content-addressed conversion to runtime *personal monthly
@@ -8,7 +8,10 @@ This schema-v1 adapter keeps three concepts separate:
 * the already-attested integer sample counts in a population apportionment
   plan.
 
-The adapter never reallocates cells.  Its runtime initializer consumes the
+Schema v1 retains its discrete-uniform runtime interval semantics. Schema v2
+adds an exact, bounded log-normal personal-income declaration without changing
+the v1 file shape or digest recipes. The adapter never reallocates cells. Its
+runtime initializer consumes the
 static plan's exact counts through the exact-count population primitive.  The
 result binds the adapter, runtime plan, ordered player ids, and per-player
 assignment, but makes no authenticity, balance, held-out, configured-use, or
@@ -37,7 +40,14 @@ from ..agents.players import (
 )
 from ..consumers.population import (
     CountryProfile,
+    PROJECTED_INCOME_BOUNDARY_RULE,
+    PROJECTED_INCOME_MINOR_GAMING_ADJUSTMENT,
+    PROJECTED_INCOME_MINOR_GAMING_ADJUSTMENT_REASON,
+    PROJECTED_INCOME_MODEL_FAMILY,
+    PROJECTED_INCOME_ROUNDING_RULE,
+    PROJECTED_INCOME_TARGET_QUANTITY,
     PopulationProjectionCell,
+    PopulationProjectionIncomeModel,
     PopulationProjectionSampleCount,
     initialize_projected_player_table_from_exact_counts,
 )
@@ -57,12 +67,18 @@ from .population_evidence import (
 
 
 POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION = 1
+POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2 = 2
 POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION = 1
+POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2 = 2
 POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION = 1
+POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2 = 2
 MAX_POPULATION_RUNTIME_MAPPING_BYTES = 16 * 1024 * 1024
 
 SOURCE_INCOME_CONCEPT = "source_household_income"
 RUNTIME_INCOME_CONCEPT = "runtime_personal_monthly_disposable_income_cents"
+
+if RUNTIME_INCOME_CONCEPT != PROJECTED_INCOME_TARGET_QUANTITY:  # pragma: no cover
+    raise RuntimeError("runtime income concept constants diverged")
 
 _ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
@@ -100,6 +116,29 @@ _MAPPING_ENTRY_KEYS = frozenset(
         "modeled_players_per_household",
         "conversion_recipe_id",
         "conversion_recipe_sha256",
+    }
+)
+_MAPPING_V2_INCOME_MODEL_KEY = (
+    "runtime_personal_monthly_disposable_income_model"
+)
+_MAPPING_ENTRY_KEYS_V2 = _MAPPING_ENTRY_KEYS | {_MAPPING_V2_INCOME_MODEL_KEY}
+_MAPPING_V2_INCOME_MODEL_KEYS = frozenset(
+    {
+        "target_quantity",
+        "model_family",
+        "median_cents",
+        "log_sigma",
+        "lower_bound_cents",
+        "upper_bound_cents_inclusive",
+        "currency",
+        "time_period",
+        "source_id",
+        "calibration_target",
+        "transformation",
+        "boundary_rule",
+        "rounding_rule",
+        "minor_gaming_adjustment",
+        "minor_gaming_adjustment_reason",
     }
 )
 
@@ -196,6 +235,30 @@ def _exact_fraction(
     return value
 
 
+def _income_model_snapshot(
+    model: PopulationProjectionIncomeModel,
+) -> dict[str, object]:
+    if type(model) is not PopulationProjectionIncomeModel:
+        raise TypeError("model must be an exact PopulationProjectionIncomeModel")
+    return {
+        "target_quantity": model.target_quantity,
+        "model_family": model.model_family,
+        "median_cents": model.median_cents,
+        "log_sigma": list(model.log_sigma),
+        "lower_bound_cents": model.lower_bound_cents,
+        "upper_bound_cents_inclusive": model.upper_bound_cents_inclusive,
+        "currency": model.currency,
+        "time_period": model.time_period,
+        "source_id": model.source_id,
+        "calibration_target": model.calibration_target,
+        "transformation": model.transformation,
+        "boundary_rule": model.boundary_rule,
+        "rounding_rule": model.rounding_rule,
+        "minor_gaming_adjustment": model.minor_gaming_adjustment,
+        "minor_gaming_adjustment_reason": model.minor_gaming_adjustment_reason,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class PopulationRuntimeMappingEntry:
     """One explicit source household-income/type to runtime mapping."""
@@ -218,6 +281,7 @@ class PopulationRuntimeMappingEntry:
     modeled_players_per_household: int
     conversion_recipe_id: str
     conversion_recipe_sha256: str
+    income_model: PopulationProjectionIncomeModel | None = None
 
     def __post_init__(self) -> None:
         _identifier(self.jurisdiction_code, name="jurisdiction_code")
@@ -329,6 +393,22 @@ class PopulationRuntimeMappingEntry:
             )
         _identifier(self.conversion_recipe_id, name="conversion_recipe_id")
         _digest(self.conversion_recipe_sha256, name="conversion_recipe_sha256")
+        if self.income_model is not None:
+            if type(self.income_model) is not PopulationProjectionIncomeModel:
+                raise PopulationProjectionValidationError(
+                    "income_model must be an exact PopulationProjectionIncomeModel"
+                )
+            if (
+                self.income_model.target_quantity != RUNTIME_INCOME_CONCEPT
+                or self.income_model.currency
+                != self.runtime_personal_monthly_disposable_income_currency
+                or self.income_model.lower_bound_cents != minimum
+                or self.income_model.upper_bound_cents_inclusive != maximum - 1
+            ):
+                raise PopulationProjectionValidationError(
+                    "schema-v2 income-model quantity, currency, and bounds must "
+                    "exactly match the declared runtime income interval"
+                )
 
     @property
     def semantic_key(self) -> tuple[str, str, str]:
@@ -351,7 +431,7 @@ class PopulationRuntimeMappingEntry:
         return sha256(_canonical_json(self.snapshot()).encode("utf-8")).hexdigest()
 
     def snapshot(self) -> dict[str, object]:
-        return {
+        snapshot: dict[str, object] = {
             "jurisdiction_code": self.jurisdiction_code,
             "source_household_income_band_id": (
                 self.source_household_income_band_id
@@ -395,6 +475,11 @@ class PopulationRuntimeMappingEntry:
             "conversion_recipe_id": self.conversion_recipe_id,
             "conversion_recipe_sha256": self.conversion_recipe_sha256,
         }
+        if self.income_model is not None:
+            snapshot[_MAPPING_V2_INCOME_MODEL_KEY] = _income_model_snapshot(
+                self.income_model
+            )
+        return snapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,8 +496,16 @@ class PopulationRuntimeMappingBundle:
     mapping_path: Path
     mapping_sha256: str
     mapping_byte_length: int
+    schema_version: int = POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or self.schema_version not in (
+            POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION,
+            POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2,
+        ):
+            raise PopulationProjectionValidationError(
+                "runtime mapping schema_version must be integer 1 or 2"
+            )
         _identifier(self.mapping_id, name="mapping_id")
         _identifier(self.design_id, name="design_id")
         _digest(self.design_bundle_sha256, name="design_bundle_sha256")
@@ -435,6 +528,15 @@ class PopulationRuntimeMappingBundle:
         ):
             raise PopulationProjectionValidationError(
                 "entries must be a non-empty immutable tuple of exact mapping entries"
+            )
+        if self.schema_version == POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION:
+            if any(entry.income_model is not None for entry in self.entries):
+                raise PopulationProjectionValidationError(
+                    "schema-v1 mapping entries must not declare an income model"
+                )
+        elif any(entry.income_model is None for entry in self.entries):
+            raise PopulationProjectionValidationError(
+                "every schema-v2 mapping entry must declare an exact income model"
             )
         keys = tuple(entry.semantic_key for entry in self.entries)
         if keys != tuple(sorted(keys)):
@@ -494,7 +596,7 @@ class PopulationRuntimeMappingBundle:
 
     def declaration_snapshot(self) -> dict[str, object]:
         return {
-            "schema_version": POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "mapping_id": self.mapping_id,
             "design_id": self.design_id,
             "design_bundle_sha256": self.design_bundle_sha256,
@@ -657,20 +759,25 @@ def _parse_mapping_declaration(observed: bytes) -> dict[str, object]:
         raise PopulationProjectionValidationError(
             "runtime mapping root fields differ from schema v1"
         )
-    if raw.get("schema_version") != POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION or type(
-        raw.get("schema_version")
-    ) is not int:
+    schema_version = raw.get("schema_version")
+    if type(schema_version) is not int or schema_version not in (
+        POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION,
+        POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2,
+    ):
         raise PopulationProjectionValidationError(
-            "runtime mapping schema_version must be integer 1"
+            "runtime mapping schema_version must be integer 1 or 2"
         )
     entries_raw = raw.get("entries")
     if type(entries_raw) is not list or not entries_raw:
         raise PopulationProjectionValidationError(
             "runtime mapping entries must be a non-empty JSON array"
         )
-    entries = tuple(_parse_mapping_entry(item) for item in entries_raw)
+    entries = tuple(
+        _parse_mapping_entry(item, schema_version=schema_version)
+        for item in entries_raw
+    )
     declaration = {
-        "schema_version": POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "mapping_id": _identifier(raw.get("mapping_id"), name="mapping_id"),
         "design_id": _identifier(raw.get("design_id"), name="design_id"),
         "design_bundle_sha256": _digest(
@@ -727,10 +834,108 @@ def _raise_invalid_json_constant(value: str) -> object:
     )
 
 
-def _parse_mapping_entry(value: object) -> PopulationRuntimeMappingEntry:
-    if type(value) is not dict or set(value) != _MAPPING_ENTRY_KEYS:
+def _parse_income_model(value: object) -> PopulationProjectionIncomeModel:
+    if type(value) is not dict or set(value) != _MAPPING_V2_INCOME_MODEL_KEYS:
         raise PopulationProjectionValidationError(
-            "runtime mapping entry fields differ from schema v1"
+            "runtime income-model fields differ from schema v2"
+        )
+    row = value
+    raw_log_sigma = row.get("log_sigma")
+    if type(raw_log_sigma) is not list or len(raw_log_sigma) != 2:
+        raise PopulationProjectionValidationError(
+            "income-model log_sigma must be a two-integer JSON array"
+        )
+    log_sigma = tuple(raw_log_sigma)
+    _exact_fraction(
+        log_sigma,
+        name="income-model log_sigma",
+        nonnegative=False,
+    )
+    try:
+        return PopulationProjectionIncomeModel(
+            target_quantity=_text(
+                row.get("target_quantity"),
+                name="income-model target_quantity",
+            ),
+            model_family=_text(
+                row.get("model_family"),
+                name="income-model model_family",
+            ),
+            median_cents=_strict_int(
+                row.get("median_cents"),
+                name="income-model median_cents",
+                minimum=1,
+                maximum=2**53,
+            ),
+            log_sigma=log_sigma,  # type: ignore[arg-type]
+            lower_bound_cents=_strict_int(
+                row.get("lower_bound_cents"),
+                name="income-model lower_bound_cents",
+                maximum=2**53,
+            ),
+            upper_bound_cents_inclusive=_strict_int(
+                row.get("upper_bound_cents_inclusive"),
+                name="income-model upper_bound_cents_inclusive",
+                maximum=2**53,
+            ),
+            currency=_text(
+                row.get("currency"),
+                name="income-model currency",
+            ),
+            time_period=_text(
+                row.get("time_period"),
+                name="income-model time_period",
+            ),
+            source_id=_identifier(
+                row.get("source_id"),
+                name="income-model source_id",
+            ),
+            calibration_target=_text(
+                row.get("calibration_target"),
+                name="income-model calibration_target",
+            ),
+            transformation=_text(
+                row.get("transformation"),
+                name="income-model transformation",
+            ),
+            boundary_rule=_text(
+                row.get("boundary_rule"),
+                name="income-model boundary_rule",
+            ),
+            rounding_rule=_text(
+                row.get("rounding_rule"),
+                name="income-model rounding_rule",
+            ),
+            minor_gaming_adjustment=_text(
+                row.get("minor_gaming_adjustment"),
+                name="income-model minor_gaming_adjustment",
+            ),
+            minor_gaming_adjustment_reason=_text(
+                row.get("minor_gaming_adjustment_reason"),
+                name="income-model minor_gaming_adjustment_reason",
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, PopulationProjectionValidationError):
+            raise
+        raise PopulationProjectionValidationError(
+            f"invalid schema-v2 runtime income model: {exc}"
+        ) from exc
+
+
+def _parse_mapping_entry(
+    value: object,
+    *,
+    schema_version: int,
+) -> PopulationRuntimeMappingEntry:
+    expected_keys = (
+        _MAPPING_ENTRY_KEYS
+        if schema_version == POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION
+        else _MAPPING_ENTRY_KEYS_V2
+    )
+    if type(value) is not dict or set(value) != expected_keys:
+        raise PopulationProjectionValidationError(
+            f"runtime mapping entry fields differ from schema v{schema_version}"
         )
     row = value
     lower = row.get("source_household_income_lower_bound")
@@ -742,6 +947,11 @@ def _parse_mapping_entry(value: object) -> PopulationRuntimeMappingEntry:
     if type(upper) is not list or len(upper) != 2:
         raise PopulationProjectionValidationError(
             "source upper bound must be a two-integer JSON array"
+        )
+    income_model = None
+    if schema_version == POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2:
+        income_model = _parse_income_model(
+            row.get(_MAPPING_V2_INCOME_MODEL_KEY)
         )
     return PopulationRuntimeMappingEntry(
         jurisdiction_code=row.get("jurisdiction_code"),  # type: ignore[arg-type]
@@ -790,6 +1000,7 @@ def _parse_mapping_entry(value: object) -> PopulationRuntimeMappingEntry:
         conversion_recipe_sha256=row.get(  # type: ignore[arg-type]
             "conversion_recipe_sha256"
         ),
+        income_model=income_model,
     )
 
 
@@ -802,7 +1013,14 @@ def load_population_runtime_mapping_bundle(
     mapping_path = Path(os.path.abspath(os.fspath(candidate)))
     observed = _secure_read_regular_file(mapping_path)
     declaration = _parse_mapping_declaration(observed)
-    entries = tuple(_parse_mapping_entry(item) for item in declaration["entries"])
+    schema_version = declaration["schema_version"]
+    entries = tuple(
+        _parse_mapping_entry(
+            item,
+            schema_version=schema_version,  # type: ignore[arg-type]
+        )
+        for item in declaration["entries"]
+    )
     return PopulationRuntimeMappingBundle(
         mapping_id=declaration["mapping_id"],  # type: ignore[arg-type]
         design_id=declaration["design_id"],  # type: ignore[arg-type]
@@ -814,6 +1032,7 @@ def load_population_runtime_mapping_bundle(
         mapping_path=mapping_path,
         mapping_sha256=sha256(observed).hexdigest(),
         mapping_byte_length=len(observed),
+        schema_version=schema_version,  # type: ignore[arg-type]
     )
 
 
@@ -998,7 +1217,7 @@ class PopulationProjectionAdapterCell:
 def _projection_cell_snapshot(cell: PopulationProjectionCell) -> dict[str, object]:
     if type(cell) is not PopulationProjectionCell:
         raise TypeError("cell must be an exact PopulationProjectionCell")
-    return {
+    snapshot: dict[str, object] = {
         "cell_id": cell.cell_id,
         "jurisdiction_code": cell.jurisdiction_code,
         "age_min_inclusive": cell.age_min_inclusive,
@@ -1018,6 +1237,11 @@ def _projection_cell_snapshot(cell: PopulationProjectionCell) -> dict[str, objec
         "baseline_ever_payer": cell.baseline_ever_payer,
         "global_mass": list(cell.global_mass),
     }
+    if cell.income_model is not None:
+        snapshot[_MAPPING_V2_INCOME_MODEL_KEY] = _income_model_snapshot(
+            cell.income_model
+        )
+    return snapshot
 
 
 def _expected_adapter_cells(
@@ -1062,6 +1286,7 @@ def _expected_adapter_cells(
                 is PopulationPayerHistoryState.EVER_PAYER
             ),
             global_mass=(mass.numerator, mass.denominator),
+            income_model=entry.income_model,
         )
         result.append(
             PopulationProjectionAdapterCell(
@@ -1081,6 +1306,14 @@ def _expected_adapter_cells(
             )
         )
     return tuple(result)
+
+
+def _adapter_schema_version(mapping: PopulationRuntimeMappingBundle) -> int:
+    return (
+        POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION
+        if mapping.schema_version == POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION
+        else POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1148,6 +1381,10 @@ class PopulationProjectionAdapter:
         return self.mapping_bundle.mapping_sha256
 
     @property
+    def schema_version(self) -> int:
+        return _adapter_schema_version(self.mapping_bundle)
+
+    @property
     def authenticity_verified(self) -> bool:
         return False
 
@@ -1161,8 +1398,8 @@ class PopulationProjectionAdapter:
 
     def attestation_payload(self) -> dict[str, object]:
         plan = self.apportionment_plan
-        return {
-            "schema_version": POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION,
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
             "adapter_id": self.adapter_id,
             "design_verification_sha256": self.verification.verification_sha256,
             "design_id": plan.design_id,
@@ -1181,6 +1418,9 @@ class PopulationProjectionAdapter:
             "balance_verified": False,
             "campaign_ready": False,
         }
+        if self.schema_version == POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2:
+            payload["mapping_schema_version"] = self.mapping_bundle.schema_version
+        return payload
 
     def snapshot(self) -> dict[str, object]:
         return {
@@ -1206,8 +1446,9 @@ def build_population_projection_adapter(
     )
     mapping = _verify_mapping_against_design(mapping_bundle, fresh)
     cells = _expected_adapter_cells(fresh, plan, mapping)
-    payload = {
-        "schema_version": POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION,
+    adapter_schema_version = _adapter_schema_version(mapping)
+    payload: dict[str, object] = {
+        "schema_version": adapter_schema_version,
         "adapter_id": adapter_id,
         "design_verification_sha256": fresh.verification_sha256,
         "design_id": plan.design_id,
@@ -1226,6 +1467,8 @@ def build_population_projection_adapter(
         "balance_verified": False,
         "campaign_ready": False,
     }
+    if adapter_schema_version == POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2:
+        payload["mapping_schema_version"] = mapping.schema_version
     return PopulationProjectionAdapter(
         verification=fresh,
         apportionment_plan=plan,
@@ -1284,8 +1527,13 @@ def _population_projection_execution_attestation_payload(
     ordered_player_ids_sha256: str,
 ) -> dict[str, object]:
     plan = adapter.apportionment_plan
-    return {
-        "schema_version": POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION,
+    execution_schema_version = (
+        POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION
+        if adapter.schema_version == POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION
+        else POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2
+    )
+    payload: dict[str, object] = {
+        "schema_version": execution_schema_version,
         "adapter_sha256": adapter.adapter_sha256,
         "apportionment_sha256": adapter.apportionment_sha256,
         "calibration_target_sha256": adapter.calibration_target_sha256,
@@ -1303,6 +1551,10 @@ def _population_projection_execution_attestation_payload(
         "ordered_player_ids_sha256": ordered_player_ids_sha256,
         "campaign_ready": False,
     }
+    if execution_schema_version == POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2:
+        payload["adapter_schema_version"] = adapter.schema_version
+        payload["mapping_schema_version"] = adapter.mapping_bundle.schema_version
+    return payload
 
 
 def population_projection_execution_sha256(
@@ -1638,8 +1890,11 @@ def verify_population_projection_execution(
 __all__ = [
     "MAX_POPULATION_RUNTIME_MAPPING_BYTES",
     "POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION",
+    "POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2",
     "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION",
+    "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2",
     "POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION",
+    "POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2",
     "RUNTIME_INCOME_CONCEPT",
     "SOURCE_INCOME_CONCEPT",
     "PopulationProjectionAdapter",
