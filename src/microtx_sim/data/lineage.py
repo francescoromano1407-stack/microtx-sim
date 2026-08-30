@@ -63,9 +63,6 @@ class ProfileInputLineage:
             raise ProfileValidationError("profile lineage repeats a profile code")
         if not _is_sha256(self.fingerprint_sha256):
             raise ProfileValidationError("profile fingerprint must be a SHA-256 digest")
-        expected = sha256(self.snapshot_json.encode("utf-8")).hexdigest()
-        if expected != self.fingerprint_sha256:
-            raise ProfileValidationError("profile fingerprint does not match its snapshot")
         try:
             snapshot = json.loads(self.snapshot_json)
         except json.JSONDecodeError as exc:
@@ -85,6 +82,10 @@ class ProfileInputLineage:
             )
         if self.snapshot_json != _canonical_snapshot_json(snapshot):
             raise ProfileValidationError("profile snapshot JSON must be canonical")
+        expected_legacy = sha256(self.snapshot_json.encode("utf-8")).hexdigest()
+        expected_portable = _profile_lineage_fingerprint_sha256(snapshot)
+        if self.fingerprint_sha256 not in {expected_legacy, expected_portable}:
+            raise ProfileValidationError("profile fingerprint does not match its snapshot")
         snapshot_schema_version = snapshot.get("schema_version")
         if (
             type(snapshot_schema_version) is not int
@@ -869,7 +870,7 @@ def build_profile_input_lineage(
     return ProfileInputLineage(
         lineage_status=lineage_status,
         profile_codes=tuple(profile.code for profile in profiles),
-        fingerprint_sha256=sha256(snapshot_json.encode("utf-8")).hexdigest(),
+        fingerprint_sha256=_profile_lineage_fingerprint_sha256(snapshot),
         snapshot_json=snapshot_json,
         jurisdictions_path=jurisdictions_path,
         jurisdictions_sha256=jurisdictions_sha256,
@@ -1194,6 +1195,42 @@ def _canonical_snapshot_json(snapshot: Mapping[str, object]) -> str:
         separators=(",", ":"),
         allow_nan=False,
     )
+
+
+def _profile_lineage_fingerprint_sha256(
+    snapshot: Mapping[str, object],
+) -> str:
+    """Hash profile content without binding it to a local worktree path."""
+
+    portable = json.loads(_canonical_snapshot_json(snapshot))
+    file_lineage = portable.get("file_lineage")
+    if isinstance(file_lineage, dict):
+        for record in file_lineage.values():
+            if isinstance(record, dict) and "path" in record:
+                record["path"] = _portable_lineage_path(record["path"])
+    portable_json = _canonical_snapshot_json(portable)
+    return sha256(portable_json.encode("utf-8")).hexdigest()
+
+
+def _portable_lineage_path(value: object) -> object:
+    """Represent repository paths consistently across checkout locations."""
+
+    if value is None or not isinstance(value, str):
+        return value
+    parts = Path(value).parts
+    repository_directories = {
+        "configs",
+        "data",
+        "docs",
+        "inputs",
+        "src",
+        "tests",
+        "tools",
+    }
+    for index, part in enumerate(parts):
+        if part.casefold() in repository_directories:
+            return "<repository>/" + "/".join(parts[index:])
+    return "<external>"
 
 
 def _status_counts(rows: Sequence[object], field: str) -> dict[str, int]:
