@@ -1,9 +1,9 @@
 schema_version = 1
 bundle_id = "default-empty-rate-evidence"
 provenance_status = "ILLUSTRATIVE"
-source_registry_sha256 = "da65c31a1829779b24dd3665e163448c901a6df556d601f409132e090a2fc1c9"
+source_registry_sha256 = "2eaf3e2230d7fa50568bafb4be7534da23b1442d708713812146414c25f6f09e"
 artifact_root = "rate_artifacts"
-notes = "No immutable rate extracts or signature are registered; this empty bundle cannot support campaign comparability."
+notes = "Legacy empty-bundle fixture retained for compatibility. Runtime defaults use inputs/monetary/ecb-eur-fx-2024-v1/bundle.toml; this empty bundle cannot support monetary execution."
 artifacts = []
 bindings = []
 

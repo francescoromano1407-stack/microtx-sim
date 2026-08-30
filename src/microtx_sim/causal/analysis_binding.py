@@ -1396,7 +1396,7 @@ def _effective_metric_contract_snapshot(
         )
     basis = monetary_output_basis
     payload = {
-        "contract_kind": "MONETARY_MODEL_EQUIVALENT_PER_OBSERVATION_V1",
+        "contract_kind": "MONETARY_MODEL_EQUIVALENT_FINAL_ROUNDING_V2",
         "source_contract_id": source_contract.contract_id,
         "source_contract_sha256": source_contract_sha256,
         "source_contract": source_snapshot,
@@ -1411,8 +1411,9 @@ def _effective_metric_contract_snapshot(
             "currency_code": basis.target_currency,
             "money_basis": (
                 "target-currency-equivalent model amount from one retained "
-                "per-observation composite conversion; not recovered observed "
-                "local currency"
+                "per-observation exact composite conversion, aggregated with "
+                "common population weights before final output rounding; not "
+                "recovered observed local currency"
             ),
         },
         "price_period_start": basis.price_period_start.isoformat(),
@@ -1428,18 +1429,19 @@ def _effective_metric_contract_snapshot(
         "conversion_contract_population_base": basis.population_base,
         "conversion_contract_comparison_group": basis.comparison_group,
         "population_semantics_compatibility": "UNREVIEWED",
-        "recipe_id": "prospective-monetary-model-equivalent-per-observation",
-        "recipe_version": "1.0",
+        "recipe_id": "prospective-monetary-convert-before-aggregate",
+        "recipe_version": "2.0",
         "implementation": (
             "microtx_sim.data.monetary_execution.convert_monetary_outcome"
         ),
         "formula": (
-            "round_half_away_from_zero(simulation_cents * "
-            "local_anchor_minor_units * rate_numerator / "
-            "(simulation_anchor_cents * rate_denominator)) for each player "
-            "and scenario before contrast and population weighting"
+            "simulation_cents * local_anchor_minor_units * rate_numerator / "
+            "(simulation_anchor_cents * rate_denominator) exactly for each "
+            "player and scenario; then common population weighting, declared "
+            "contrast, equal-seed aggregation, and one half-away-from-zero "
+            "rounding at the production output boundary"
         ),
-        "status": "SYNTHETIC",
+        "status": "RATE_ATTESTED_INTERNAL_SCALE_UNVALIDATED",
         "interpretation": "target-currency-equivalent model amount",
         "observed_currency_recovered": False,
         "legacy_output_relabelled": False,

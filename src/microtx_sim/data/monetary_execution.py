@@ -3,15 +3,18 @@
 This module is deliberately narrower than a substantive monetary-comparability
 claim.  It re-attests registered profile lineage, binds the exact local-money
 scales and verified rate extractions used by one target-currency basis, and
-converts player observations before any cross-jurisdiction reduction.
+converts player observations exactly before any cross-jurisdiction reduction.
 
 Simulation cents are not inverted into recovered local-currency observations.
 For jurisdiction ``j`` the executed model-scale ratio is instead
 
 ``(target minor / source minor) / (simulation cent / source minor)``.
 
-The combined exact rational is rounded once, signed half-away from zero.  This
-avoids both a lossy intermediate local amount and double rounding.
+The combined exact rational remains unrounded through population weighting,
+scenario contrast, and seed aggregation.  It is rounded once, signed
+half-away from zero, only by the separate production monetary writer.  This
+avoids a lossy intermediate local amount, raw cross-currency pooling, and
+double rounding.
 """
 
 from __future__ import annotations
@@ -49,17 +52,19 @@ from .rate_evidence import (
 )
 
 
-MONETARY_OUTPUT_EXECUTION_SCHEMA_VERSION: Final[str] = "1.0"
+MONETARY_OUTPUT_EXECUTION_SCHEMA_VERSION: Final[str] = "2.0"
 MONETARY_OUTPUT_ROUNDING_METHOD: Final[str] = (
     "nearest_minor_unit_half_away_from_zero"
 )
 MONETARY_OUTPUT_AGGREGATION_UNIT: Final[str] = (
-    "one player-scenario horizon outcome before contrast and population weighting"
+    "one population-weighted target-currency-equivalent estimand after "
+    "conversion and cross-seed aggregation"
 )
 
 _CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
-    "monetary_output_execution.schema_v1=campaign_ineligible",
-    "monetary_output_execution.source_authenticity=unverified",
+    "monetary_output_execution.schema_v2=campaign_ineligible",
+    "monetary_output_execution.source_bundle_signature=MISSING",
+    "monetary_output_execution.simulation_to_local_currency_bridge=unvalidated",
     "monetary_output_execution.population_comparability=unresolved",
     "monetary_output_execution.external_preregistration=unregistered",
     "monetary_output_execution.substantive_validity=unestablished",
@@ -84,6 +89,7 @@ class JurisdictionMonetaryBasis:
     source_currency: str
     conversion_id: str
     rate_binding_id: str
+    rate_artifact_id: str
     nominal_monthly_anchor_minor_units: int
     simulation_monthly_anchor_cents: int
     rate_numerator: int
@@ -94,12 +100,21 @@ class JurisdictionMonetaryBasis:
     monetary_conversion_sha256: str
     rate_binding_sha256: str
     rate_evidence_sha256: str
+    rate_artifact_sha256: str
+    rate_artifact_byte_length: int
+    anchor_status: str
+    scale_status: str
+    quote_convention: str
+    scale_convention: str
+    timing_convention: str
+    missing_date_policy: str
 
     def __post_init__(self) -> None:
         _jurisdiction_code(self.jurisdiction_code)
         _currency_code(self.source_currency, name="source_currency")
         _identifier(self.conversion_id, name="conversion_id")
         _identifier(self.rate_binding_id, name="rate_binding_id")
+        _identifier(self.rate_artifact_id, name="rate_artifact_id")
         for name in (
             "nominal_monthly_anchor_minor_units",
             "simulation_monthly_anchor_cents",
@@ -107,6 +122,7 @@ class JurisdictionMonetaryBasis:
             "rate_denominator",
             "target_per_simulation_numerator",
             "target_per_simulation_denominator",
+            "rate_artifact_byte_length",
         ):
             _strict_int(getattr(self, name), name=name, minimum=1)
         for name in (
@@ -114,8 +130,18 @@ class JurisdictionMonetaryBasis:
             "monetary_conversion_sha256",
             "rate_binding_sha256",
             "rate_evidence_sha256",
+            "rate_artifact_sha256",
         ):
             _sha256_digest(getattr(self, name), name=name)
+        for name in (
+            "anchor_status",
+            "scale_status",
+            "quote_convention",
+            "scale_convention",
+            "timing_convention",
+            "missing_date_policy",
+        ):
+            _nonempty_text(getattr(self, name), name=name)
         expected = Fraction(
             self.rate_numerator * self.nominal_monthly_anchor_minor_units,
             self.rate_denominator * self.simulation_monthly_anchor_cents,
@@ -149,6 +175,7 @@ class JurisdictionMonetaryBasis:
             "source_currency": self.source_currency,
             "conversion_id": self.conversion_id,
             "rate_binding_id": self.rate_binding_id,
+            "rate_artifact_id": self.rate_artifact_id,
             "nominal_monthly_anchor_minor_units_decimal": str(
                 self.nominal_monthly_anchor_minor_units
             ),
@@ -167,6 +194,14 @@ class JurisdictionMonetaryBasis:
             "monetary_conversion_sha256": self.monetary_conversion_sha256,
             "rate_binding_sha256": self.rate_binding_sha256,
             "rate_evidence_sha256": self.rate_evidence_sha256,
+            "rate_artifact_sha256": self.rate_artifact_sha256,
+            "rate_artifact_byte_length": self.rate_artifact_byte_length,
+            "anchor_status": self.anchor_status,
+            "scale_status": self.scale_status,
+            "quote_convention": self.quote_convention,
+            "scale_convention": self.scale_convention,
+            "timing_convention": self.timing_convention,
+            "missing_date_policy": self.missing_date_policy,
         }
 
 
@@ -176,7 +211,9 @@ class MonetaryOutputBasis:
 
     schema_version: str
     profile_input_sha256: str
+    source_bundle_id: str
     source_bundle_sha256: str
+    source_bundle_signature_status: str
     target_currency: str
     target_minor_unit_name: str
     method: MonetaryConversionMethod
@@ -205,7 +242,12 @@ class MonetaryOutputBasis:
                 "unsupported monetary-output basis schema version"
             )
         _sha256_digest(self.profile_input_sha256, name="profile_input_sha256")
+        _identifier(self.source_bundle_id, name="source_bundle_id")
         _sha256_digest(self.source_bundle_sha256, name="source_bundle_sha256")
+        if self.source_bundle_signature_status != "MISSING":
+            raise MonetaryOutputExecutionValidationError(
+                "unsupported or unverifiable monetary source-bundle signature status"
+            )
         _currency_code(self.target_currency, name="target_currency")
         _nonempty_text(
             self.target_minor_unit_name,
@@ -235,14 +277,14 @@ class MonetaryOutputBasis:
             raise MonetaryOutputExecutionValidationError(
                 "unsupported monetary-output rounding method"
             )
-        if self.rounding_scope is not MonetaryRoundingScope.PER_OBSERVATION:
+        if self.rounding_scope is not MonetaryRoundingScope.AFTER_AGGREGATION:
             raise MonetaryOutputExecutionValidationError(
-                "monetary-output schema v1 requires PER_OBSERVATION rounding"
+                "monetary-output schema v2 requires AFTER_AGGREGATION rounding"
             )
         if self.aggregation_unit != MONETARY_OUTPUT_AGGREGATION_UNIT:
             raise MonetaryOutputExecutionValidationError(
-                "monetary-output schema v1 requires the exact player-scenario "
-                "horizon aggregation unit"
+                "monetary-output schema v2 requires the exact final estimand "
+                "aggregation unit"
             )
         _ordered_jurisdiction_codes(self.jurisdiction_codes)
         if type(self.jurisdictions) is not tuple or any(
@@ -262,7 +304,7 @@ class MonetaryOutputBasis:
             )
         if self.campaign_ready or self.campaign_blockers != _CAMPAIGN_BLOCKERS:
             raise MonetaryOutputExecutionValidationError(
-                "monetary-output schema v1 has fixed non-campaign status"
+                "monetary-output schema v2 has fixed non-campaign status"
             )
         _sha256_digest(self.basis_sha256, name="basis_sha256")
         if self.basis_sha256 != _canonical_sha256(self.attestation_payload()):
@@ -274,7 +316,11 @@ class MonetaryOutputBasis:
         return {
             "schema_version": self.schema_version,
             "profile_input_sha256": self.profile_input_sha256,
+            "source_bundle_id": self.source_bundle_id,
             "source_bundle_sha256": self.source_bundle_sha256,
+            "source_bundle_signature_status": (
+                self.source_bundle_signature_status
+            ),
             "target_currency": self.target_currency,
             "target_minor_unit_name": self.target_minor_unit_name,
             "method": self.method.value,
@@ -292,6 +338,20 @@ class MonetaryOutputBasis:
             "jurisdictions": [item.snapshot() for item in self.jurisdictions],
             "campaign_ready": self.campaign_ready,
             "campaign_blockers": list(self.campaign_blockers),
+            "conversion_order": [
+                "retain_raw_simulation_cents",
+                "apply_jurisdiction_local_scale_and_fx_as_exact_rational",
+                "apply_common_population_weights_to_each_scenario",
+                "form_declared_scenario_contrast",
+                "aggregate_fixed seeds equally",
+                "round_once_at_production_output_boundary",
+            ],
+            "raw_cross_jurisdiction_sum_allowed": False,
+            "rounding_point": "production monetary output boundary only",
+            "empirical_interpretation": (
+                "target-currency-equivalent model amount; not observed "
+                "real-world spending"
+            ),
         }
 
     def snapshot(self) -> dict[str, object]:
@@ -318,7 +378,7 @@ class ConvertedMonetaryOutcome:
     player_ids: tuple[int, ...]
     jurisdiction_indices: tuple[int, ...]
     raw_values: tuple[int, ...]
-    converted_values: tuple[int, ...]
+    converted_values: tuple[Fraction, ...]
     player_ids_sha256: str
     raw_values_sha256: str
     converted_values_sha256: str
@@ -371,16 +431,24 @@ class ConvertedMonetaryOutcome:
                 minimum=0,
                 maximum=len(self.basis.jurisdiction_codes) - 1,
             )
-        for values_name, values in (
-            ("raw_values", self.raw_values),
-            ("converted_values", self.converted_values),
-        ):
-            for index, value in enumerate(values):
-                _strict_int(
-                    value,
-                    name=f"{values_name}[{index}]",
-                    minimum=_INT64_MIN if values_name == "raw_values" else None,
-                    maximum=_INT64_MAX if values_name == "raw_values" else None,
+        for index, value in enumerate(self.raw_values):
+            _strict_int(
+                value,
+                name=f"raw_values[{index}]",
+                minimum=_INT64_MIN,
+                maximum=_INT64_MAX,
+            )
+        for index, value in enumerate(self.converted_values):
+            if type(value) is not Fraction:
+                raise TypeError(
+                    f"converted_values[{index}] must be an exact Fraction"
+                )
+            if (
+                value.numerator.bit_length() > _MAX_EXACT_INTEGER_BITS
+                or value.denominator.bit_length() > _MAX_EXACT_INTEGER_BITS
+            ):
+                raise MonetaryOutputExecutionValidationError(
+                    f"converted_values[{index}] exceeds the exact integer limit"
                 )
         for name in (
             "player_ids_sha256",
@@ -398,7 +466,7 @@ class ConvertedMonetaryOutcome:
             raise MonetaryOutputExecutionValidationError(
                 "raw_values_sha256 does not match raw values"
             )
-        if self.converted_values_sha256 != _integer_values_sha256(
+        if self.converted_values_sha256 != _fraction_values_sha256(
             self.converted_values
         ):
             raise MonetaryOutputExecutionValidationError(
@@ -440,6 +508,9 @@ class ConvertedMonetaryOutcome:
             "player_ids_sha256": self.player_ids_sha256,
             "raw_values_sha256": self.raw_values_sha256,
             "converted_values_sha256": self.converted_values_sha256,
+            "converted_value_representation": (
+                "exact unrounded target minor-unit rationals"
+            ),
             "jurisdiction_assignment_sha256": (
                 self.jurisdiction_assignment_sha256
             ),
@@ -561,7 +632,7 @@ def convert_monetary_outcome(
     )
     player_ids_digest = _integer_values_sha256(normalized_player_ids)
     raw_digest = _integer_values_sha256(normalized_raw)
-    converted_digest = _integer_values_sha256(converted)
+    converted_digest = _fraction_values_sha256(converted)
     assignment_digest = _canonical_sha256(
         {
             "jurisdiction_codes": list(jurisdiction_codes),
@@ -578,6 +649,9 @@ def convert_monetary_outcome(
         "player_ids_sha256": player_ids_digest,
         "raw_values_sha256": raw_digest,
         "converted_values_sha256": converted_digest,
+        "converted_value_representation": (
+            "exact unrounded target minor-unit rationals"
+        ),
         "jurisdiction_assignment_sha256": assignment_digest,
     }
     return ConvertedMonetaryOutcome(
@@ -708,22 +782,14 @@ def _resolve_components(
         raise MonetaryOutputExecutionValidationError(
             "money scales or conversions repeat a jurisdiction"
         )
-    for scale in scales:
-        if (
-            scale.anchor_status is not ProvenanceStatus.CALIBRATED
-            or scale.scale_status is not ProvenanceStatus.CALIBRATED
-        ):
-            raise MonetaryOutputExecutionValidationError(
-                f"{scale.jurisdiction_code} monetary anchor and scale must be CALIBRATED"
-            )
     for conversion in conversions:
         if conversion.status is not ProvenanceStatus.CALIBRATED:
             raise MonetaryOutputExecutionValidationError(
                 f"{conversion.jurisdiction_code} monetary conversion must be CALIBRATED"
             )
-        if conversion.rounding_scope is not MonetaryRoundingScope.PER_OBSERVATION:
+        if conversion.rounding_scope is not MonetaryRoundingScope.AFTER_AGGREGATION:
             raise MonetaryOutputExecutionValidationError(
-                "monetary output execution schema v1 requires PER_OBSERVATION "
+                "monetary output execution schema v2 requires AFTER_AGGREGATION "
                 f"rounding; {conversion.jurisdiction_code} declares "
                 f"{conversion.rounding_scope.value}"
             )
@@ -733,11 +799,22 @@ def _resolve_components(
             )
         if conversion.aggregation_unit != MONETARY_OUTPUT_AGGREGATION_UNIT:
             raise MonetaryOutputExecutionValidationError(
-                "monetary output execution schema v1 requires the exact "
-                "player-scenario horizon aggregation unit; "
+                "monetary output execution schema v2 requires the exact final "
+                "estimand aggregation unit; "
                 f"{conversion.jurisdiction_code} declares "
                 f"{conversion.aggregation_unit!r}"
             )
+        for name in (
+            "quote_convention",
+            "scale_convention",
+            "timing_convention",
+            "missing_date_policy",
+        ):
+            if not getattr(conversion, name):
+                raise MonetaryOutputExecutionValidationError(
+                    f"{conversion.jurisdiction_code} monetary conversion lacks "
+                    f"{name}"
+                )
     signatures = {item.comparison_signature for item in conversions}
     if len(signatures) != 1:
         raise MonetaryOutputExecutionValidationError(
@@ -784,6 +861,7 @@ def _resolve_components(
                 source_currency=scale.currency,
                 conversion_id=conversion_id,
                 rate_binding_id=binding_id,
+                rate_artifact_id=result.artifact_id,
                 nominal_monthly_anchor_minor_units=(
                     scale.nominal_monthly_anchor_minor_units
                 ),
@@ -802,13 +880,23 @@ def _resolve_components(
                 ),
                 rate_binding_sha256=result.binding_sha256,
                 rate_evidence_sha256=result.evidence_sha256,
+                rate_artifact_sha256=result.artifact_sha256,
+                rate_artifact_byte_length=result.artifact_byte_length,
+                anchor_status=scale.anchor_status.value,
+                scale_status=scale.scale_status.value,
+                quote_convention=conversion.quote_convention,
+                scale_convention=conversion.scale_convention,
+                timing_convention=conversion.timing_convention,
+                missing_date_policy=conversion.missing_date_policy,
             )
         )
 
     first = conversions_by_code[jurisdiction_codes[0]]
     return {
         "profile_input_sha256": reattested.fingerprint_sha256,
+        "source_bundle_id": evidence_bundle.bundle_id,
         "source_bundle_sha256": evidence_bundle.bundle_sha256,
+        "source_bundle_signature_status": evidence_bundle.signature.status.value,
         "target_currency": first.target_currency,
         "method": first.method,
         "rate_period_start": first.rate_period_start,
@@ -844,12 +932,16 @@ def _basis_from_components(
     if currency.rounding is not PopulationCurrencyRounding.NONE_EXACT_RATIONAL:
         raise MonetaryOutputExecutionValidationError(
             "population estimator must retain exact rational results after "
-            "per-observation currency rounding"
+            "jurisdiction conversion and before final output rounding"
         )
     kwargs = {
         "schema_version": MONETARY_OUTPUT_EXECUTION_SCHEMA_VERSION,
         "profile_input_sha256": components["profile_input_sha256"],
+        "source_bundle_id": components["source_bundle_id"],
         "source_bundle_sha256": components["source_bundle_sha256"],
+        "source_bundle_signature_status": components[
+            "source_bundle_signature_status"
+        ],
         "target_currency": components["target_currency"],
         "target_minor_unit_name": currency.minor_unit_name,
         "method": components["method"],
@@ -892,6 +984,20 @@ def _basis_attestation_payload(**kwargs: object) -> dict[str, object]:
         "jurisdictions": [item.snapshot() for item in jurisdictions],
         "campaign_ready": False,
         "campaign_blockers": list(_CAMPAIGN_BLOCKERS),
+        "conversion_order": [
+            "retain_raw_simulation_cents",
+            "apply_jurisdiction_local_scale_and_fx_as_exact_rational",
+            "apply_common_population_weights_to_each_scenario",
+            "form_declared_scenario_contrast",
+            "aggregate_fixed seeds equally",
+            "round_once_at_production_output_boundary",
+        ],
+        "raw_cross_jurisdiction_sum_allowed": False,
+        "rounding_point": "production monetary output boundary only",
+        "empirical_interpretation": (
+            "target-currency-equivalent model amount; not observed "
+            "real-world spending"
+        ),
     }
     return payload
 
@@ -916,21 +1022,20 @@ def _convert_values(
     *,
     jurisdiction_indices: tuple[int, ...],
     raw_values: tuple[int, ...],
-) -> tuple[int, ...]:
+) -> tuple[Fraction, ...]:
     rows = basis.jurisdictions
-    converted: list[int] = []
+    converted: list[Fraction] = []
     for jurisdiction_index, raw_value in zip(
         jurisdiction_indices,
         raw_values,
         strict=True,
     ):
         row = rows[jurisdiction_index]
-        numerator = raw_value * row.target_per_simulation_numerator
-        value = _round_signed_half_away(
-            numerator,
-            row.target_per_simulation_denominator,
-        )
-        if abs(value).bit_length() > _MAX_EXACT_INTEGER_BITS:
+        value = Fraction(raw_value, 1) * row.target_per_simulation
+        if (
+            abs(value.numerator).bit_length() > _MAX_EXACT_INTEGER_BITS
+            or value.denominator.bit_length() > _MAX_EXACT_INTEGER_BITS
+        ):
             raise MonetaryOutputExecutionValidationError(
                 "converted monetary value exceeds the exact-integer safety limit"
             )
@@ -938,14 +1043,16 @@ def _convert_values(
     return tuple(converted)
 
 
-def _round_signed_half_away(numerator: int, denominator: int) -> int:
-    if denominator <= 0:
-        raise MonetaryOutputExecutionValidationError(
-            "monetary-output denominator must be positive"
-        )
-    if numerator < 0:
-        return -((-numerator + denominator // 2) // denominator)
-    return (numerator + denominator // 2) // denominator
+def round_target_minor_units(value: Fraction) -> int:
+    """Round one final target-minor-unit estimand exactly once."""
+
+    if type(value) is not Fraction:
+        raise TypeError("final monetary output must be an exact Fraction")
+    absolute = abs(value.numerator)
+    quotient, remainder = divmod(absolute, value.denominator)
+    if remainder * 2 >= value.denominator:
+        quotient += 1
+    return quotient if value.numerator >= 0 else -quotient
 
 
 def _integer_tuple(
@@ -984,6 +1091,22 @@ def _integer_values_sha256(values: tuple[int, ...]) -> str:
             "count": len(values),
             "count_decimal": str(len(values)),
             "values_decimal": [str(value) for value in values],
+        }
+    )
+
+
+def _fraction_values_sha256(values: tuple[Fraction, ...]) -> str:
+    return _canonical_sha256(
+        {
+            "count": len(values),
+            "count_decimal": str(len(values)),
+            "values": [
+                {
+                    "numerator_decimal": str(value.numerator),
+                    "denominator_decimal": str(value.denominator),
+                }
+                for value in values
+            ],
         }
     )
 
@@ -1104,5 +1227,6 @@ __all__ = [
     "MonetaryOutputExecutionValidationError",
     "build_monetary_output_currency_semantics",
     "convert_monetary_outcome",
+    "round_target_minor_units",
     "resolve_monetary_output_basis",
 ]

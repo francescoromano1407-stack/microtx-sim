@@ -1150,6 +1150,10 @@ def _downgrade_profile_bundle_snapshot(
             if isinstance(conversion, dict):
                 conversion.pop("conversion_id", None)
                 conversion.pop("rate_binding_id", None)
+                conversion.pop("quote_convention", None)
+                conversion.pop("scale_convention", None)
+                conversion.pop("timing_convention", None)
+                conversion.pop("missing_date_policy", None)
     if version == 1:
         bundle.pop("monetary_conversions", None)
     return bundle

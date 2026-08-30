@@ -123,13 +123,15 @@ real-world amount.
 For each retained player observation, the money path combines that player's
 jurisdiction-specific simulation-money scale and local-to-target rate into one
 exact rational composite conversion. It applies that composite directly to the
-simulation-cent outcome and performs exactly one signed nearest-minor-unit
-rounding, with half ties away from zero. The implementation does not first
+simulation-cent outcome without rounding. The implementation does not first
 reconstruct or round a nominal local-currency amount. Reference and comparison
-outcomes are converted per observation before their paired contrast is formed
-and before target-population weights are applied. This fixed order prevents a
-pooled aggregate, a contrast, or an intermediate local-currency reconstruction
-from silently choosing a different rounding result.
+outcomes are converted before their paired contrast is formed, the same
+target-population weights are applied to every scenario, and only converted
+values enter the cross-jurisdiction aggregate. The declared equal-seed primary
+estimate is rounded exactly once when the final production value is serialized,
+using nearest minor unit with half ties away from zero. This fixed order prevents
+a raw-unit pool, intermediate local-currency value, or scenario-specific weight
+from silently changing the result.
 
 Run-binding version 2 is an explicit metadata migration for every prospective
 plan, including score-only plans. Non-money specifications and exact results

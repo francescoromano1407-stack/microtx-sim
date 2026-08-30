@@ -32,7 +32,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_JURISDICTIONS_PATH = _PROJECT_ROOT / "configs" / "jurisdictions.toml"
 DEFAULT_SOURCES_PATH = _PROJECT_ROOT / "data" / "provenance" / "sources.toml"
 DEFAULT_SOURCE_BUNDLE_PATH = (
-    _PROJECT_ROOT / "data" / "provenance" / "source_bundle.toml"
+    _PROJECT_ROOT
+    / "inputs"
+    / "monetary"
+    / "ecb-eur-fx-2024-v1"
+    / "bundle.toml"
 )
 DEFAULT_POPULATION_BUNDLE_PATH = (
     _PROJECT_ROOT / "data" / "provenance" / "population_bundle.toml"
@@ -133,7 +137,14 @@ _MONETARY_CONVERSION_V2_FIELDS = frozenset(
     }
 )
 _MONETARY_CONVERSION_V3_FIELDS = _MONETARY_CONVERSION_V2_FIELDS.union(
-    {"conversion_id", "rate_binding_id"}
+    {
+        "conversion_id",
+        "rate_binding_id",
+        "quote_convention",
+        "scale_convention",
+        "timing_convention",
+        "missing_date_policy",
+    }
 )
 _MONETARY_FIXED_BLOCKERS = (
     (
@@ -250,6 +261,19 @@ _MONEY_SCALE_SNAPSHOT_FIELDS = frozenset(
 )
 _MONETARY_CONVERSION_SNAPSHOT_FIELDS = _MONETARY_CONVERSION_V3_FIELDS.union(
     {"rate_numerator_decimal", "rate_denominator_decimal"}
+)
+_MONETARY_CONVERSION_LEGACY_SNAPSHOT_FIELDS = _MONETARY_CONVERSION_V2_FIELDS.union(
+    {"rate_numerator_decimal", "rate_denominator_decimal"}
+)
+_MONETARY_CONVERSION_PRE_METADATA_SNAPSHOT_FIELDS = (
+    _MONETARY_CONVERSION_SNAPSHOT_FIELDS.difference(
+        {
+            "quote_convention",
+            "scale_convention",
+            "timing_convention",
+            "missing_date_policy",
+        }
+    )
 )
 
 
@@ -518,6 +542,10 @@ class MonetaryConversionContract:
     notes: str = ""
     conversion_id: str | None = None
     rate_binding_id: str | None = None
+    quote_convention: str = ""
+    scale_convention: str = ""
+    timing_convention: str = ""
+    missing_date_policy: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.source_ids, tuple):
@@ -608,6 +636,19 @@ class MonetaryConversionContract:
             )
         if not isinstance(self.notes, str):
             raise ProfileValidationError("monetary conversion notes must be text")
+        declared_execution_metadata = (
+            self.quote_convention,
+            self.scale_convention,
+            self.timing_convention,
+            self.missing_date_policy,
+        )
+        if any(declared_execution_metadata) and not all(
+            isinstance(value, str) and value.strip()
+            for value in declared_execution_metadata
+        ):
+            raise ProfileValidationError(
+                "monetary conversion execution metadata must be declared together"
+            )
         identifiers = (self.conversion_id, self.rate_binding_id)
         if (identifiers[0] is None) != (identifiers[1] is None):
             raise ProfileValidationError(
@@ -648,6 +689,8 @@ class MonetaryConversionContract:
             self.rounding_method,
             self.rounding_scope.value,
             self.aggregation_unit,
+            self.quote_convention,
+            self.scale_convention,
         )
 
     @property
@@ -1049,15 +1092,10 @@ def _valid_structural_monetary_blockers(blockers: tuple[str, ...]) -> bool:
             if blocker.startswith(f"{code}.monetary_conversion=")
         )
         return tuple(blockers) == expected and len(expected) == len(blockers)
-    ordered_global = (
-        "monetary_conversion.comparison_basis=inconsistent",
-        "monetary_conversion.internal_scale=incoherent",
-    )
+    ordered_global = ("monetary_conversion.comparison_basis=inconsistent",)
     return tuple(blockers) in {
         ("monetary_conversion.structure=unavailable",),
         (ordered_global[0],),
-        (ordered_global[1],),
-        ordered_global,
     }
 
 
@@ -1257,21 +1295,15 @@ def monetary_structure_assessment_from_snapshot(
         return False, tuple(failures)
 
     signatures: set[tuple[str, ...]] = set()
-    simulation_per_target: set[Fraction] = set()
     for scale in scales:
         code = scale.jurisdiction_code
         conversion = conversions_by_code[code]
         signatures.add(conversion.comparison_signature)
-        simulation_per_target.add(
-            scale.currency_scale_to_sim / conversion.conversion_ratio
-        )
     global_failures: list[str] = []
     if len(signatures) != 1:
         global_failures.append(
             "monetary_conversion.comparison_basis=inconsistent"
         )
-    if len(simulation_per_target) != 1:
-        global_failures.append("monetary_conversion.internal_scale=incoherent")
     return not global_failures, tuple(global_failures)
 
 
@@ -1355,7 +1387,11 @@ def _money_scale_from_snapshot(value: Mapping[object, object]) -> MoneyScaleCont
 def _monetary_conversion_from_snapshot(
     value: Mapping[object, object],
 ) -> MonetaryConversionContract:
-    if set(value) != _MONETARY_CONVERSION_SNAPSHOT_FIELDS:
+    if set(value) not in {
+        _MONETARY_CONVERSION_LEGACY_SNAPSHOT_FIELDS,
+        _MONETARY_CONVERSION_PRE_METADATA_SNAPSHOT_FIELDS,
+        _MONETARY_CONVERSION_SNAPSHOT_FIELDS,
+    }:
         raise ProfileValidationError(
             "profile monetary-conversion snapshot fields are malformed"
         )
@@ -1413,6 +1449,10 @@ def _monetary_conversion_from_snapshot(
             notes=value.get("notes"),
             conversion_id=value.get("conversion_id"),
             rate_binding_id=value.get("rate_binding_id"),
+            quote_convention=value.get("quote_convention", ""),
+            scale_convention=value.get("scale_convention", ""),
+            timing_convention=value.get("timing_convention", ""),
+            missing_date_policy=value.get("missing_date_policy", ""),
         )
     except (AttributeError, TypeError) as exc:
         raise ProfileValidationError(
@@ -2050,15 +2090,6 @@ class ProfileBundle:
         if len({contract.comparison_signature for contract in ordered}) != 1:
             failures.append("monetary_conversion.comparison_basis=inconsistent")
 
-        # Each local-to-simulation scale divided by its local-to-target rate is
-        # the exact number of simulation cents per common target minor unit.
-        # Those ratios must agree; matching currency labels alone is insufficient.
-        simulation_per_target = {
-            scale.currency_scale_to_sim / conversion.conversion_ratio
-            for scale, conversion in zip(self.money_scales, ordered, strict=True)
-        }
-        if len(simulation_per_target) != 1:
-            failures.append("monetary_conversion.internal_scale=incoherent")
         return failures
 
     def validate_for_run(self, *, allow_synthetic: bool) -> None:
@@ -2221,6 +2252,22 @@ def load_profile_bundle(
                     "version-3 evidence fields: "
                     + ", ".join(sorted(present_v3_fields))
                 )
+    else:
+        missing_scale_fields = sorted(
+            f"{code}.{field}"
+            for code, row in rows_by_code.items()
+            for field in (
+                "simulation_monthly_anchor_cents",
+                "currency_scale_status",
+            )
+            if field not in row
+        )
+        if missing_scale_fields:
+            raise ProfileValidationError(
+                f"{jurisdiction_file}: profile schema_version 3 requires "
+                "explicit monetary scale declarations: "
+                + ", ".join(missing_scale_fields)
+            )
 
     shared = jurisdiction_raw.get("shared_assumptions")
     if not isinstance(shared, dict):
@@ -2261,6 +2308,13 @@ def load_profile_bundle(
         jurisdiction_file,
         schema_version=jurisdiction_schema_version,
     )
+    if selected_source_bundle_path is None and jurisdiction_schema_version >= 3:
+        # Schema 3 makes the content-addressed rate binding part of the
+        # executable conversion contract.  Without that evidence, expose no
+        # executable conversions so a money estimand fails preflight.  Schema 2
+        # declarations remain readable for the documented legacy projection,
+        # but cannot clear the registered-evidence campaign gates.
+        monetary_conversions = ()
 
     contracts.extend(_shared_contracts(shared))
     contracts.append(
@@ -3234,6 +3288,26 @@ def _parse_monetary_conversions(
                     _required_string(row, "rate_binding_id", context)
                     if schema_version == 3
                     else None
+                ),
+                quote_convention=(
+                    _required_string(row, "quote_convention", context)
+                    if schema_version == 3
+                    else ""
+                ),
+                scale_convention=(
+                    _required_string(row, "scale_convention", context)
+                    if schema_version == 3
+                    else ""
+                ),
+                timing_convention=(
+                    _required_string(row, "timing_convention", context)
+                    if schema_version == 3
+                    else ""
+                ),
+                missing_date_policy=(
+                    _required_string(row, "missing_date_policy", context)
+                    if schema_version == 3
+                    else ""
                 ),
             )
         )

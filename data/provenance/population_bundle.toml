@@ -1,7 +1,7 @@
 schema_version = 1
 bundle_id = "illustrative-four-country-joint-population-2024-v1"
 provenance_status = "ILLUSTRATIVE"
-source_registry_sha256 = "da65c31a1829779b24dd3665e163448c901a6df556d601f409132e090a2fc1c9"
+source_registry_sha256 = "2eaf3e2230d7fa50568bafb4be7534da23b1442d708713812146414c25f6f09e"
 artifact_root = "population_artifacts"
 notes = "Complete illustrative joint recipe: P(age)*P(household|age)*P(income|age,household,jurisdiction)*P(gaming|age,jurisdiction,role)*P(payer|age,income,gaming,role). Every factor and role adjustment is stated in each binding; no additional independence is implied. Exact 10,000-unit jurisdiction counts use Hamilton floor-plus-largest-remainder integerization. Evidence household source order is canonical ordinals 2/0/1 and design construction maps semantic keys to canonical 0/1/2. Official sources are contextual anchors only; assumptions are unsigned and campaign readiness is false."
 
@@ -38,7 +38,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "CALIBRATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_BE_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"BE\",\"target_population_id\":\"standardized.person.2024.be.calibration\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -67,7 +67,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "VALIDATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_BE_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"BE\",\"target_population_id\":\"standardized.person.2024.be.validation\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -96,7 +96,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "CALIBRATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_JP_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"JP\",\"target_population_id\":\"standardized.person.2024.jp.calibration\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -125,7 +125,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "VALIDATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_JP_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"JP\",\"target_population_id\":\"standardized.person.2024.jp.validation\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -154,7 +154,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "CALIBRATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_KR_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"KR\",\"target_population_id\":\"standardized.person.2024.kr.calibration\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -183,7 +183,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "VALIDATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_KR_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"KR\",\"target_population_id\":\"standardized.person.2024.kr.validation\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -212,7 +212,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "CALIBRATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_UK_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"CALIBRATION\",\"jurisdiction_code\":\"UK\",\"target_population_id\":\"standardized.person.2024.uk.calibration\"},\"schema_version\":1}"
 
 [[bindings]]
@@ -241,7 +241,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "VALIDATION"
 status = "ILLUSTRATIVE"
 source_ids = ["MICROTX_POP_MODEL_UK_2024"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = "{\"cell_columns\":[\"target_population_id\",\"jurisdiction_code\",\"estimand_role\",\"cell_id\",\"age_min_inclusive\",\"age_max_exclusive\",\"household_income_band\",\"household_type\",\"gaming_state\",\"payer_history_state\",\"target_mass_numerator\",\"target_mass_denominator\"],\"interpreter\":\"exact_csv_joint_population_cells/1\",\"row_match\":{\"estimand_role\":\"VALIDATION\",\"jurisdiction_code\":\"UK\",\"target_population_id\":\"standardized.person.2024.uk.validation\"},\"schema_version\":1}"
 
 [signature]

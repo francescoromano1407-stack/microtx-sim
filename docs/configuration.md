@@ -24,27 +24,29 @@ Three run configurations are supplied:
 Jurisdiction profiles and evidence contracts are stored separately in
 `configs/jurisdictions.toml`. Source records are in
 `data/provenance/sources.toml`; exact-byte rate and population registries are in
-`data/provenance/source_bundle.toml` and
+`inputs/monetary/ecb-eur-fx-2024-v1/bundle.toml` and
 `data/provenance/population_bundle.toml`.
 
-The checked-in `jurisdictions.toml` uses profile schema version 2. It optionally accepts one
+The checked-in `jurisdictions.toml` uses profile schema version 3. It requires one
 `[[monetary_conversion]]` table per jurisdiction with `jurisdiction_code`,
 `source_currency`, `target_currency`, `method` (`FX` or `PPP`), positive exact
 `rate_numerator` and `rate_denominator`, canonical ISO
 `rate_period_start`/`rate_period_end` and
 `target_price_period_start`/`target_price_period_end`, `estimand`,
 `population_base`, `comparison_group`, provenance `status`, non-empty
-`source_ids`, and canonical `retrieved_on`. The rounding contract also requires
-the fixed `nearest_minor_unit_half_away_from_zero` method, a `rounding_scope` of
-`PER_OBSERVATION` or `AFTER_AGGREGATION`, and a named `aggregation_unit`.
-Jurisdiction rows may also declare `simulation_monthly_anchor_cents` and
-`currency_scale_status`.
+`source_ids`, and canonical `retrieved_on`. The checked-in production contract
+also requires quote, scale, timing, and missing-date conventions; the fixed
+`nearest_minor_unit_half_away_from_zero` method; `rounding_scope =
+"AFTER_AGGREGATION"`; and the named final population-weighted aggregation unit.
+Jurisdiction rows must declare `simulation_monthly_anchor_cents` and
+`currency_scale_status` explicitly.
 
-The loader supplies no conversion defaults. The checked-in file has no
-conversion tables, so its four local money profiles remain deliberately
-non-comparable and campaign-blocking. A future pooled campaign must provide
-complete calibrated coverage with one common comparison signature and exact
-coherence between conversion rates and internal scales. The target price period
+The loader supplies no conversion defaults. The checked-in file has complete
+UK, South Korea, Japan, and Belgium coverage on one EUR/2024/FX basis. Its rate
+bindings are calibrated official observations, but its internal-to-local
+currency scales remain explicitly `ILLUSTRATIVE`, so production campaign use is
+still blocked. A pooled campaign requires complete calibrated coverage with one
+common comparison signature. The target price period
 must equal the rate period until a separate price-adjustment/deflator contract
 exists. Rate sources must use the method-specific `foreign_exchange_rate` or
 `purchasing_power_parity` support scope and the same canonical date interval.
@@ -54,9 +56,11 @@ conversion-table keys are rejected.
 Profile schema version 3 adds required `conversion_id` and `rate_binding_id`
 fields. Each binding must resolve through a separately versioned
 `source_bundle.toml`, whose own digest binds the exact source catalogue. The
-bundle verifier re-reads a regular non-link CSV artifact, checks its declared
-byte length and SHA-256, executes one whitelisted canonical exact-rational CSV
-recipe, and requires the extracted currencies, direction, method, dates,
+bundle verifier re-reads regular non-link CSV artifacts, checks their declared
+byte lengths and SHA-256 values, and executes a whitelisted canonical recipe:
+either a positive rational table extraction or an ECB annual EXR
+decimal-to-minor-unit transformation. It requires the extracted currencies,
+direction, method, dates,
 source, jurisdiction, numerator, and denominator to match the conversion.
 Unknown fields, path traversal, links/reparse points, mutation, ambiguous rows,
 floats, scientific notation, and unreduced rationals fail closed.
@@ -64,10 +68,12 @@ floats, scientific notation, and unreduced rationals fail closed.
 Those are structural and reproducible-extraction checks, not a substantive
 comparability attestation. Source extraction, source-bundle signature,
 output/design, population, and external preregistration are independent gates.
-The checked-in source bundle is empty, `ILLUSTRATIVE`, and has signature status
-`MISSING`; the checked-in jurisdiction file remains version 2 with zero
-conversions. Public comparability and campaign validation therefore remain
-false even if a test fixture clears the source-extraction subgate.
+The checked-in `ecb-eur-fx-2024-v1` bundle contains one immutable CSV artifact
+and four verified bindings. It is `CALIBRATED` for rate extraction and has
+signature status `MISSING`; a checksum is not treated as an authentic
+signature. Public empirical comparability and campaign validation therefore
+remain false despite the source-extraction subgate being satisfied. The exact
+basis and arithmetic are specified in [monetary_contract.md](monetary_contract.md).
 
 Legacy jurisdiction-profile schema versions 1 and 2 remain readable on their
 exact historical surfaces. Version 1 rejects monetary fields; version 2 rejects

@@ -83,9 +83,9 @@
   "expected_model_inputs_sha256": "12c4aa97e1ea85a4fc62d444efb4bbed0896d54f50358ddc685cd33df4eccfd1",
   "expected_output_profile_sha256": "f030da5be86757cf65446418a9218a413ab51449d25911bf62ee02f8f5df9a2e",
   "expected_population_input_sha256": "8bafac4390c6721a57ebcf90f5d122d748ed5350d1c0dd8775a45447d553983f",
-  "expected_profile_input_sha256": "4833c782161b784c99a6591e5fbb426cc83cf9870df57e4523a2fba506824990",
+  "expected_profile_input_sha256": "8458d4c844e4a1e810d76e0a83e41e742d97e595373432b95e9e493322232dd4",
   "plan_id": "illustrative.prospective.composite-harm.baseline-vs-safe.v2",
-  "plan_sha256": "497fe08c39d4bb7e9f482ae2c895e94f129d96508c0c96b227fa4d791498dc04",
+  "plan_sha256": "7467f50b19d54d63ec6ab56df6e9bb5fdf580bc149688178cbe12d8da9b71c82",
   "preregistered": false,
   "primary_aggregate_rule": {
     "analysis_unit": "INDEPENDENT_MONTE_CARLO_SEED",

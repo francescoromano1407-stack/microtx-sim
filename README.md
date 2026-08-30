@@ -39,14 +39,17 @@ optimal funding policy.
   future scale has not been run or benchmarked.
 - No empirical or scientific campaign has been run or authorised for this
   release.
-- Profile schema version 2 retains declaration-only dated FX/PPP contracts;
-  version 3 additionally requires each conversion to reference a verified,
-  content-addressed rate extraction. The checked-in source bundle binds the
-  source-catalogue digest but is empty, illustrative, and explicitly has no
-  signature. No conversion rates are checked in. Source extraction, signature,
-  output/design, population, and preregistration gates therefore remain
-  independently false, so present outputs are non-comparable across
-  jurisdictions.
+- Profile schema version 3 binds every jurisdiction to the checked-in
+  `ecb-eur-fx-2024-v1` content-addressed rate extraction. The primary monetary
+  basis is the ECB's 2024 annual-average observed market FX basis, quoted as
+  source-currency units per EUR; Belgium uses the explicit EUR/EUR identity.
+  Exact conversion precedes population weighting and cross-jurisdiction
+  aggregation, and one half-away-from-zero rounding occurs only at the final
+  output boundary. The ECB source bytes are reproducible but unsigned, and the
+  bridge from internal `simulation_cents` to nominal local currency remains
+  illustrative. Implementation is complete, while source authentication,
+  empirical scale calibration, population validity, output registration, and
+  preregistration therefore remain independently campaign-blocking.
 - A separate population-evidence bundle schema version 1 can attest exact CSV
   bytes and strict joint age × household-income-band × household-type × gaming
   × pre-treatment payer-history cells whose reduced rational masses sum exactly

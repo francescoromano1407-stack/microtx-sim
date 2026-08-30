@@ -900,10 +900,10 @@ def _outcome_fractions(
         if isinstance(value, (bool, np.bool_)):
             raise TypeError(f"{item_name} must be numeric, not boolean")
         if metric_kind is PopulationMetricKind.MONEY_MINOR_UNITS and not isinstance(
-            value, (int, np.integer)
+            value, (Fraction, int, np.integer)
         ):
             raise TypeError(
-                f"{item_name} must be exact integer currency minor units"
+                f"{item_name} must be exact rational target-currency minor units"
             )
         if isinstance(value, Fraction):
             fraction = value

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import fields, replace
 from datetime import date
 from fractions import Fraction
@@ -36,6 +37,7 @@ from microtx_sim.causal.analysis_plan import (  # noqa: E402
     PrimaryAggregateRule,
     analysis_plan_harm_weights_sha256,
     build_prospective_analysis_plan,
+    load_prospective_analysis_plan,
 )
 from microtx_sim.causal.primary_aggregate import (  # noqa: E402
     compute_plan_primary_aggregate,
@@ -51,10 +53,15 @@ from microtx_sim.causal.design import assess_causal_design  # noqa: E402
 from microtx_sim.causal.scenarios import ScenarioId  # noqa: E402
 from microtx_sim.consumers.decision import DecisionParameters  # noqa: E402
 from microtx_sim.consumers.population import CountryProfile  # noqa: E402
+from microtx_sim.config import (  # noqa: E402
+    PopulationExecutionMode,
+    PopulationProjectionConfig,
+)
 from microtx_sim.data.lineage import build_profile_input_lineage  # noqa: E402
 from microtx_sim.data.monetary_execution import (  # noqa: E402
     build_monetary_output_currency_semantics,
     convert_monetary_outcome,
+    round_target_minor_units,
 )
 from microtx_sim.data.population_evidence import PopulationEstimandRole  # noqa: E402
 from microtx_sim.data.population_evidence import (  # noqa: E402
@@ -78,6 +85,11 @@ from microtx_sim.metrics.population_estimands import (  # noqa: E402
 from microtx_sim.outputs.metric_contracts import (  # noqa: E402
     metric_contract_registry_sha256,
 )
+from microtx_sim.outputs.manifest import build_run_manifest  # noqa: E402
+from microtx_sim.outputs.monetary import (  # noqa: E402
+    monetary_lineage_payload,
+    write_production_monetary_outputs,
+)
 from microtx_sim.outputs.population import (  # noqa: E402
     write_target_population_estimands,
 )
@@ -85,11 +97,17 @@ from microtx_sim.outputs.schema import (  # noqa: E402
     PROSPECTIVE_ANALYSIS_SCHEMA_SHA256,
     TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256,
 )
+from microtx_sim.policy_config import (  # noqa: E402
+    AnalysisPlanSelection,
+    PolicyOutputConfig,
+    load_policy_config,
+)
 
 
 _CANONICAL_INCLUSION_FIELDS = tuple(
     sorted(PopulationInclusionField, key=lambda item: item.value)
 )
+ROOT = Path(__file__).resolve().parents[1]
 _PROFILES = (CountryProfile(code="UK"),)
 _PROFILE_INPUT_LINEAGE = build_profile_input_lineage(_PROFILES)
 
@@ -802,6 +820,123 @@ class AnalysisBindingTests(unittest.TestCase):
             self.assertEqual(
                 money_item.comparison_outcome_sha256,
                 comparison_execution.execution_sha256,
+            )
+
+            production_dir = root / "production-monetary"
+            production_paths = write_production_monetary_outputs(
+                production_dir,
+                binding,
+            )
+            with production_paths["production_monetary_estimates"].open(
+                encoding="utf-8",
+                newline="",
+            ) as handle:
+                production_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(production_rows), 1)
+            production_row = production_rows[0]
+            self.assertEqual(production_row["target_currency"], "TST")
+            self.assertEqual(
+                production_row["converted_monetary_estimate_minor_units"],
+                str(round_target_minor_units(money_item.result.value_fraction)),
+            )
+            self.assertEqual(production_row["rounding_count_decimal"], "1")
+            self.assertEqual(production_row["campaign_ready"], "false")
+            self.assertNotIn(
+                "simulation cents",
+                production_row["estimate_label"].lower(),
+            )
+            production_metadata = json.loads(
+                production_paths["production_monetary_metadata"].read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(production_metadata, monetary_lineage_payload(binding))
+            self.assertTrue(
+                production_metadata["diagnostic_simulator_unit_outputs_separate"]
+            )
+            self.assertFalse(
+                production_metadata["raw_simulation_cents_allowed_as_final_estimand"]
+            )
+            self.assertTrue(production_metadata["conversion_before_aggregation"])
+            self.assertFalse(
+                production_metadata["raw_cross_jurisdiction_summation_allowed"]
+            )
+            self.assertEqual(
+                production_metadata["rounding_operation_count_per_reported_estimate"],
+                1,
+            )
+            self.assertTrue(
+                all(
+                    row["same_weights_used_for_reference_and_comparison"]
+                    for row in production_metadata["applied_population_weights"]
+                )
+            )
+            self.assertEqual(
+                production_metadata["monetary_bases"][0][
+                    "source_bundle_signature_status"
+                ],
+                "MISSING",
+            )
+
+            diagnostic_paths = write_target_population_estimands(
+                root / "diagnostic-estimands",
+                binding.writer_pairs,
+            )
+            self.assertTrue(
+                set(production_paths.values()).isdisjoint(diagnostic_paths.values())
+            )
+
+            plan_path = root / "monetary-plan.json"
+            plan_path.write_text(
+                json.dumps(plan.snapshot(), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            loaded_plan = load_prospective_analysis_plan(plan_path)
+            config_path = ROOT / "configs" / "policy_prospective.toml"
+            base_config = load_policy_config(config_path)
+            manifest_config = replace(
+                base_config,
+                batch=spec,
+                harm_parameters=run_inputs.harm_parameters,
+                harm_weights=run_inputs.harm_weights,
+                opportunity_valuation=run_inputs.opportunity_valuation,
+                producer_assumptions=run_inputs.producer_assumptions,
+                epgc_policy=run_inputs.epgc_policy,
+                output=PolicyOutputConfig(
+                    root / "manifest-only-output",
+                    histogram_bins=8,
+                    include_player_rows=True,
+                    run_sensitivity=False,
+                ),
+                population=PopulationProjectionConfig(
+                    mode=PopulationExecutionMode.PROJECTED_V1,
+                    design_bundle_path=(
+                        population_adapter.verification.bundle.bundle_path
+                    ),
+                    runtime_mapping_bundle_path=(
+                        population_adapter.mapping_bundle.mapping_path
+                    ),
+                    adapter_id=population_adapter.adapter_id,
+                ),
+                analysis_plan=AnalysisPlanSelection(plan_path.resolve()),
+            )
+            manifest = build_run_manifest(
+                manifest_config,
+                batch,
+                config_path=config_path,
+                repository_root=ROOT,
+                created_utc="2026-08-30T00:00:00+00:00",
+                command=("test-fixture", "manifest-only"),
+                analysis_plan=loaded_plan,
+                analysis_binding=binding,
+            )
+            self.assertEqual(
+                manifest["prospective_monetary_output_execution"],
+                production_metadata,
+            )
+            self.assertIn(
+                "git_commit",
+                manifest["repository"],
             )
 
             shifted_money = replace(

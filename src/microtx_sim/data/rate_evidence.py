@@ -1,7 +1,8 @@
 """Fail-closed, content-addressed evidence for exact monetary rates.
 
 Schema version 1 deliberately supports only bundles with a missing signature
-and one tightly specified CSV interpreter. It can prove that a declared rational was
+and tightly specified CSV interpreters for an exact rational table or an
+official ECB annual EXR response. It can prove that a declared rational was
 extracted from particular bytes by a particular recipe; it cannot prove that
 the publisher, rate choice, or downstream estimand is scientifically valid.
 Consequently every v1 bundle remains campaign-blocking.
@@ -30,6 +31,9 @@ from ..types import ProvenanceStatus
 
 RATE_EVIDENCE_SCHEMA_VERSION = 1
 EXACT_CSV_INTERPRETER_V1 = "exact_csv_positive_rational/1"
+ECB_EXR_SOURCE_PER_EUR_INTERPRETER_V1 = (
+    "ecb_exr_source_per_eur_to_target_minor_rational/1"
+)
 MAX_RATE_ARTIFACT_BYTES = 16 * 1024 * 1024
 MAX_RATE_BUNDLE_BYTES = 1024 * 1024
 
@@ -120,6 +124,17 @@ _RECIPE_KEYS = frozenset(
         "denominator_column",
     }
 )
+_ECB_RECIPE_KEYS = frozenset(
+    {
+        "schema_version",
+        "interpreter",
+        "row_match",
+        "source_row_match",
+        "observation_column",
+        "source_minor_unit_exponent",
+        "target_minor_unit_exponent",
+    }
+)
 _ROW_MATCH_KEYS = (
     "jurisdiction_code",
     "method",
@@ -131,10 +146,24 @@ _ROW_MATCH_KEYS = (
     "target_currency",
 )
 _ROW_MATCH_KEY_SET = frozenset(_ROW_MATCH_KEYS)
+_ECB_SOURCE_ROW_MATCH_KEYS = frozenset(
+    {
+        "KEY",
+        "FREQ",
+        "CURRENCY",
+        "CURRENCY_DENOM",
+        "EXR_TYPE",
+        "EXR_SUFFIX",
+        "TIME_PERIOD",
+    }
+)
 _ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _COLUMN_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _POSITIVE_INTEGER_PATTERN = re.compile(r"[1-9][0-9]*\Z")
+_POSITIVE_DECIMAL_PATTERN = re.compile(
+    r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z"
+)
 
 
 class RateEvidenceValidationError(ValueError):
@@ -288,6 +317,36 @@ class RateEvidenceBinding:
                 f"binding {self.binding_id} recipe row_match does not exactly "
                 "match its typed metadata"
             )
+        if recipe["interpreter"] == ECB_EXR_SOURCE_PER_EUR_INTERPRETER_V1:
+            if self.method is not RateEvidenceMethod.FX:
+                raise RateEvidenceValidationError(
+                    "the ECB EXR interpreter is valid only for FX bindings"
+                )
+            if (
+                self.rate_period_start != date(self.rate_period_start.year, 1, 1)
+                or self.rate_period_end
+                != date(self.rate_period_start.year, 12, 31)
+            ):
+                raise RateEvidenceValidationError(
+                    "the ECB annual EXR interpreter requires one calendar year"
+                )
+            expected_source_match = {
+                "KEY": (
+                    f"EXR.A.{self.source_currency}."
+                    f"{self.target_currency}.SP00.A"
+                ),
+                "FREQ": "A",
+                "CURRENCY": self.source_currency,
+                "CURRENCY_DENOM": self.target_currency,
+                "EXR_TYPE": "SP00",
+                "EXR_SUFFIX": "A",
+                "TIME_PERIOD": str(self.rate_period_start.year),
+            }
+            if recipe["source_row_match"] != expected_source_match:
+                raise RateEvidenceValidationError(
+                    f"binding {self.binding_id} ECB source_row_match does not "
+                    "match its typed metadata"
+                )
 
     @property
     def rate(self) -> Fraction:
@@ -1112,7 +1171,6 @@ def _parse_recipe_json(recipe_json: object) -> dict[str, object]:
         ) from exc
     if not isinstance(parsed, dict):
         raise RateEvidenceValidationError("rate-evidence recipe root must be an object")
-    _exact_keys(parsed, _RECIPE_KEYS, name="rate-evidence recipe")
     try:
         canonical = _canonical_json(parsed)
     except (TypeError, ValueError) as exc:
@@ -1123,13 +1181,19 @@ def _parse_recipe_json(recipe_json: object) -> dict[str, object]:
         raise RateEvidenceValidationError(
             "rate-evidence recipe_json must use canonical JSON"
         )
+    interpreter = parsed.get("interpreter")
+    if interpreter == EXACT_CSV_INTERPRETER_V1:
+        expected_keys = _RECIPE_KEYS
+    elif interpreter == ECB_EXR_SOURCE_PER_EUR_INTERPRETER_V1:
+        expected_keys = _ECB_RECIPE_KEYS
+    else:
+        raise RateEvidenceValidationError(
+            "rate-evidence recipe uses a non-whitelisted interpreter"
+        )
+    _exact_keys(parsed, expected_keys, name="rate-evidence recipe")
     if type(parsed["schema_version"]) is not int or parsed["schema_version"] != 1:
         raise RateEvidenceValidationError(
             "rate-evidence recipe schema_version must be strict integer 1"
-        )
-    if parsed["interpreter"] != EXACT_CSV_INTERPRETER_V1:
-        raise RateEvidenceValidationError(
-            "rate-evidence recipe uses a non-whitelisted interpreter"
         )
     row_match = parsed["row_match"]
     if not isinstance(row_match, dict):
@@ -1139,21 +1203,63 @@ def _parse_recipe_json(recipe_json: object) -> dict[str, object]:
         raise RateEvidenceValidationError(
             "recipe row_match values must be non-empty strings"
         )
-    for field in ("numerator_column", "denominator_column"):
-        value = parsed[field]
-        if not isinstance(value, str):
-            raise RateEvidenceValidationError(f"recipe {field} must be text")
-        _validate_column_name(value, name=field)
-    if parsed["numerator_column"] == parsed["denominator_column"]:
-        raise RateEvidenceValidationError(
-            "recipe rational-value columns must be distinct"
+    if interpreter == EXACT_CSV_INTERPRETER_V1:
+        for field in ("numerator_column", "denominator_column"):
+            value = parsed[field]
+            if not isinstance(value, str):
+                raise RateEvidenceValidationError(f"recipe {field} must be text")
+            _validate_column_name(value, name=field)
+        if parsed["numerator_column"] == parsed["denominator_column"]:
+            raise RateEvidenceValidationError(
+                "recipe rational-value columns must be distinct"
+            )
+        if parsed["numerator_column"] in _ROW_MATCH_KEY_SET or (
+            parsed["denominator_column"] in _ROW_MATCH_KEY_SET
+        ):
+            raise RateEvidenceValidationError(
+                "recipe rational-value columns cannot be selector columns"
+            )
+    else:
+        source_row_match = parsed["source_row_match"]
+        if not isinstance(source_row_match, dict):
+            raise RateEvidenceValidationError(
+                "ECB recipe source_row_match must be an object"
+            )
+        _exact_keys(
+            source_row_match,
+            _ECB_SOURCE_ROW_MATCH_KEYS,
+            name="ECB recipe source_row_match",
         )
-    if parsed["numerator_column"] in _ROW_MATCH_KEY_SET or (
-        parsed["denominator_column"] in _ROW_MATCH_KEY_SET
-    ):
-        raise RateEvidenceValidationError(
-            "recipe rational-value columns cannot be selector columns"
+        if any(
+            not isinstance(value, str) or not value
+            for value in source_row_match.values()
+        ):
+            raise RateEvidenceValidationError(
+                "ECB recipe source_row_match values must be non-empty strings"
+            )
+        observation_column = parsed["observation_column"]
+        if not isinstance(observation_column, str):
+            raise RateEvidenceValidationError(
+                "ECB recipe observation_column must be text"
+            )
+        _validate_column_name(
+            observation_column,
+            name="observation_column",
         )
+        if observation_column in _ECB_SOURCE_ROW_MATCH_KEYS:
+            raise RateEvidenceValidationError(
+                "ECB recipe observation column cannot be a selector column"
+            )
+        for field in (
+            "source_minor_unit_exponent",
+            "target_minor_unit_exponent",
+        ):
+            _validate_strict_int(
+                parsed[field],
+                name=f"ECB recipe {field}",
+                minimum=0,
+                maximum=9,
+            )
     return parsed
 
 
@@ -1209,11 +1315,17 @@ def _execute_exact_csv_recipe(
         raise RateEvidenceVerificationError(
             f"artifact {binding.artifact_id} repeats a CSV column"
         )
-    required_columns = {
-        *binding.row_match,
-        str(recipe["numerator_column"]),
-        str(recipe["denominator_column"]),
-    }
+    if recipe["interpreter"] == EXACT_CSV_INTERPRETER_V1:
+        selector = binding.row_match
+        value_columns = {
+            str(recipe["numerator_column"]),
+            str(recipe["denominator_column"]),
+        }
+    else:
+        selector = recipe["source_row_match"]
+        assert isinstance(selector, dict)
+        value_columns = {str(recipe["observation_column"])}
+    required_columns = {*selector, *value_columns}
     missing = sorted(required_columns.difference(header))
     if missing:
         raise RateEvidenceVerificationError(
@@ -1231,7 +1343,7 @@ def _execute_exact_csv_recipe(
                 f"artifact {binding.artifact_id} row {index} has multiline data"
             )
         mapped = dict(zip(header, row, strict=True))
-        if all(mapped[key] == value for key, value in binding.row_match.items()):
+        if all(mapped[key] == value for key, value in selector.items()):
             matched.append(mapped)
     if len(matched) != 1:
         raise RateEvidenceVerificationError(
@@ -1239,19 +1351,28 @@ def _execute_exact_csv_recipe(
             f"matched={len(matched)}"
         )
     row = matched[0]
-    numerator = _parse_positive_canonical_integer(
-        row[str(recipe["numerator_column"])],
-        name=f"binding {binding.binding_id} numerator",
-    )
-    denominator = _parse_positive_canonical_integer(
-        row[str(recipe["denominator_column"])],
-        name=f"binding {binding.binding_id} denominator",
-    )
-    if math.gcd(numerator, denominator) != 1:
-        raise RateEvidenceVerificationError(
-            f"binding {binding.binding_id} CSV rational is not in lowest terms"
+    if recipe["interpreter"] == EXACT_CSV_INTERPRETER_V1:
+        numerator = _parse_positive_canonical_integer(
+            row[str(recipe["numerator_column"])],
+            name=f"binding {binding.binding_id} numerator",
         )
-    return numerator, denominator
+        denominator = _parse_positive_canonical_integer(
+            row[str(recipe["denominator_column"])],
+            name=f"binding {binding.binding_id} denominator",
+        )
+        if math.gcd(numerator, denominator) != 1:
+            raise RateEvidenceVerificationError(
+                f"binding {binding.binding_id} CSV rational is not in lowest terms"
+            )
+        return numerator, denominator
+    observation = _parse_positive_canonical_decimal(
+        row[str(recipe["observation_column"])],
+        name=f"binding {binding.binding_id} ECB observation",
+    )
+    source_exponent = int(recipe["source_minor_unit_exponent"])
+    target_exponent = int(recipe["target_minor_unit_exponent"])
+    rate = Fraction(10**target_exponent, 10**source_exponent) / observation
+    return rate.numerator, rate.denominator
 
 
 def _secure_read_regular_file(
@@ -1515,6 +1636,17 @@ def _parse_positive_canonical_integer(value: str, *, name: str) -> int:
             f"{name} must be a canonical positive decimal integer"
         )
     return int(value)
+
+
+def _parse_positive_canonical_decimal(value: str, *, name: str) -> Fraction:
+    if _POSITIVE_DECIMAL_PATTERN.fullmatch(value) is None:
+        raise RateEvidenceVerificationError(
+            f"{name} must be a canonical non-negative decimal"
+        )
+    parsed = Fraction(value)
+    if parsed <= 0:
+        raise RateEvidenceVerificationError(f"{name} must be positive")
+    return parsed
 
 
 def _exact_keys(

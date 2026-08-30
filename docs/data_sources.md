@@ -6,23 +6,23 @@ This document describes what the current code actually reads and uses. It is not
 a claim that the model has been empirically calibrated. The machine-readable
 source register is `data/provenance/sources.toml`; jurisdiction inputs are in
 `configs/jurisdictions.toml`; run-level assumptions are in `configs/base.toml`
-and `configs/smoke.toml`. The content-addressed rate-evidence registry is
-`data/provenance/source_bundle.toml`; the separate population-evidence registry
+and `configs/smoke.toml`. The active content-addressed rate-evidence registry is
+`inputs/monetary/ecb-eur-fx-2024-v1/bundle.toml`; the separate population-evidence registry
 is `data/provenance/population_bundle.toml`. The policy prototype reads
 `configs/policy_prototype.toml` and reuses the jurisdiction profile loader.
 
 At this stage:
 
-- official records in the source register are `ANCHORED`, while the four joint-
-  construction assumption records are explicitly `ILLUSTRATIVE`; none is
-  `CALIBRATED`;
+- the ECB annual FX source record is `CALIBRATED` for the declared rate
+  extraction; other official anchors remain `ANCHORED`, and the joint-
+  construction assumptions remain explicitly `ILLUSTRATIVE`;
 - the jurisdiction bundle is globally `ILLUSTRATIVE`;
 - the common money scale is `ILLUSTRATIVE`;
 - profile schema version 2 can retain declaration-only dated exact FX/PPP
   contracts, while version 3 requires verified rate-binding identifiers;
-- the checked-in source bundle binds the exact source-catalogue digest but has
-  zero artifacts, zero bindings, `ILLUSTRATIVE` status, and signature
-  `MISSING`; no fallback rates are invented;
+- the checked-in monetary bundle binds the exact source-catalogue digest, two
+  artifacts and four jurisdiction bindings, has `CALIBRATED` rate-extraction
+  status and signature `MISSING`; no fallback rates are invented;
 - population-evidence schema version 1 verifies the checked-in artifact, eight
   bindings, and 1,728 modeled joint rows; it retains `ILLUSTRATIVE` status,
   signature `MISSING`, and `campaign_ready=false`;
@@ -188,26 +188,29 @@ income source and is explicitly illustrative.
 
 ### Cross-country conversion and source-evidence contracts
 
-Profile schema version 2 accepts optional `[[monetary_conversion]]` records as
+Profile schema version 3 requires `[[monetary_conversion]]` records as
 immutable `MonetaryConversionContract` values. Each record names one
 jurisdiction and its source and target ISO-style currency codes; selects `FX`
 or `PPP`;
 stores an exact positive rational rate in target minor units per source minor
 unit; declares typed start/end dates for the rate and target-price periods,
 comparison group, status, estimand, population base, source IDs, retrieval date,
-rounding stage, and aggregation unit. Signed integer conversion rounds half ties
-away from zero, either per observation or after the declared aggregate is
-formed. There is no default method, target, rate, period, rounding stage, or
+rounding stage, aggregation unit, quote convention, scale convention, timing
+convention, and missing-date policy. The checked-in contract requires
+`AFTER_AGGREGATION`; signed final-output rounding uses half ties away from zero.
+There is no default method, target, rate, period, scale, rounding stage, or
 scientific status.
 
 Profile schema version 3 keeps those terms and additionally requires stable
 `conversion_id` and `rate_binding_id` values. The referenced binding lives in a
 separate source-bundle schema. That bundle binds the exact SHA-256 of
 `sources.toml`, each regular CSV artifact's normalized relative path, media
-type, byte length, and digest, and a canonical JSON extraction recipe. The only
-version-1 interpreter selects exactly one row by source, jurisdiction, quote
-direction, method, rate dates, and retrieval date, then parses a positive
-reduced integer numerator and denominator without a floating-point conversion.
+type, byte length, and digest, and a canonical JSON extraction recipe. The
+version-1 exact-table interpreter selects exactly one typed row and parses a
+positive reduced integer numerator and denominator. The separate ECB EXR
+interpreter selects the exact annual official series row and transforms its
+canonical decimal `OBS_VALUE` plus declared currency exponents into a reduced
+target-minor/source-minor rational without binary floating point.
 The artifact and bundle are re-read when registered lineage is built and again
 when a manifest is emitted. Content hashes establish reproducibility, not
 publisher authenticity or scientific correctness. Repository attributes pin
@@ -238,13 +241,14 @@ model observations. It does not supply a calibrated target-population
 specification, authenticate the rate source, or provide external
 preregistration, so public comparability remains false.
 
-The checked-in `jurisdictions.toml` deliberately remains schema version 2 with
-zero conversion records. The checked-in source bundle deliberately has zero
-artifacts and bindings. Those absences, the catalogue digest, and the missing
-signature are fingerprinted and summarized in exported manifests. The software
-can reproduce a reviewed rate extraction later, but P0 monetary calibration,
-scientific rate selection, output use, population binding, and preregistration
-are not complete.
+The checked-in `jurisdictions.toml` is schema version 3 with complete UK, South
+Korea, Japan, and Belgium conversion coverage. The `ecb-eur-fx-2024-v1` bundle
+contains the official ECB annual-average 2024 GBP/EUR, JPY/EUR, and KRW/EUR
+observations plus Belgium's explicit EUR identity. The exact basis is documented
+in [monetary_contract.md](monetary_contract.md). Its extraction subgate is
+satisfied, but the missing authentic signature, illustrative model-unit scale,
+population validity, output registration, and preregistration remain separate
+campaign blockers.
 
 The complete profile bundle must also match the jurisdiction and source files
 whose hashes it claims. Registered lineage reloads those files both when the
@@ -254,29 +258,30 @@ their test-only statuses are labelled `CALIBRATED`.
 
 ### Opt-in prospective money execution
 
-A prospective analysis plan may explicitly request money execution when its
+A prospective analysis plan must explicitly request money execution when its
 profile lineage contains complete, mutually coherent jurisdiction conversion
 contracts. This path does not replace the simulator's internal unit. It derives
 one exact rational composite for each jurisdiction from the internal
 simulation-money scale and the declared local-to-target rate, then applies that
-composite directly to every retained player outcome. The result is a
+composite directly to every retained player outcome without rounding. The result is a
 **target-currency-equivalent model amount**, not an observed or calibrated
 amount in that currency.
 
-Conversion occurs per observation before reference/comparison contrasts and
-before target-population weighting. Each observation receives exactly one
-signed nearest-minor-unit rounding, with half ties away from zero. There is no
-intermediate reconstruction or rounding of a nominal local-currency amount;
-such a two-stage path could disagree with the declared composite conversion.
-The prospective result retains the jurisdiction-specific conversion identity,
-target currency and price period needed to reproduce this order of operations.
+Exact conversion occurs before reference/comparison contrasts, target-population
+weighting, and cross-jurisdiction aggregation. Every scenario uses the same
+population weights. The equal-seed primary estimate receives exactly one signed
+nearest-minor-unit rounding, with half ties away from zero, only when the final
+production estimate is serialized. There is no intermediate reconstruction or
+rounding of a nominal local-currency amount. The prospective result retains the
+jurisdiction-specific conversion identity, target currency, price period, and
+full order-of-operations lineage.
 
 This is a separate opt-in output layer. The ordinary output-v3 root tables,
 plots, summaries, and metric contracts continue to use illustrative simulation
-cents with their existing unweighted semantics. No supplied configuration
-selects prospective money execution, and the checked-in profile still provides
-no conversion records or authenticated rate artifacts. Source authenticity,
-calibration, population validity, genuine held-out validation, and external
+cents with their existing unweighted semantics. The checked-in prospective plan
+selects monetary execution only as an unregistered deterministic validation
+fixture. The rate bytes are attested but unsigned. Source authenticity,
+model-scale calibration, population validity, genuine held-out validation, and external
 preregistration therefore remain unresolved campaign blockers.
 
 ### Layer 2: internal simulation cents
@@ -564,9 +569,9 @@ a future calibrated estimate will require immutable raw artifacts, scripted
 extraction, exact environment capture, and transformation-level tests in
 addition to the current register.
 
-The population-evidence schema supplies a place to register exact local CSV
-bytes and a deterministic extraction, but the default bundle contains no such
-artifact and no publisher signature. The static design now supplies exact
+The population-evidence schema registers exact local CSV bytes and a
+deterministic extraction for the complete development fixture, but the default
+bundle has no publisher signature. The static design supplies exact
 domains, partition declarations, target counts, and Hamilton weights, but is
 illustrative. These populated files establish declared reproducibility only.
 The adapter, per-seed structural balance/lineage,

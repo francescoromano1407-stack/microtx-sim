@@ -258,7 +258,10 @@ class PopulationEstimandTests(unittest.TestCase):
             _spec(weights, metric_kind=PopulationMetricKind.MONEY_MINOR_UNITS)
         with self.assertRaisesRegex(ValueError, "only valid for money"):
             _spec(weights, currency=_currency())
-        with self.assertRaisesRegex(TypeError, "integer currency minor units"):
+        with self.assertRaisesRegex(
+            TypeError,
+            "exact rational target-currency minor units",
+        ):
             weighted_mean(total_spec, weights, (101.0, 103.0))
 
     def test_inclusions_cannot_be_posttreatment_or_validation_derived(self) -> None:

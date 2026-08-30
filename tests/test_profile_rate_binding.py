@@ -146,15 +146,17 @@ class ProfileRateBindingTests(unittest.TestCase):
             assert bundle.source_registry_path is not None
             assert bundle.source_evidence_bundle is not None
 
+            without_evidence = load_profile_bundle(
+                bundle.jurisdictions_path,
+                bundle.source_registry_path,
+                source_bundle_path=None,
+            )
+            self.assertEqual(without_evidence.monetary_conversions, ())
             with self.assertRaisesRegex(
                 ProfileValidationError,
-                "require a source evidence bundle",
+                "monetary_conversion=missing",
             ):
-                load_profile_bundle(
-                    bundle.jurisdictions_path,
-                    bundle.source_registry_path,
-                    source_bundle_path=None,
-                )
+                without_evidence.validate_monetary_comparability_for_campaign()
 
             text = bundle.jurisdictions_path.read_text(encoding="utf-8")
             uk = bundle.monetary_conversion("UK")
@@ -235,7 +237,11 @@ calibration_status = "CALIBRATED"
         if launder_binding_source
         else ""
     )
-    sources_text = SOURCES.read_text(encoding="utf-8") + f'''
+    sources_text = SOURCES.read_text(encoding="utf-8").replace(
+        'retrieved_on = "2026-08-30"',
+        'retrieved_on = "2026-08-24"',
+        1,
+    ) + f'''
 
 [[source]]
 id = "{_SOURCE_ID}"
@@ -253,10 +259,21 @@ calibration_status = "CALIBRATED"
 
     # Load only to reuse the exact local-to-simulation ratios already declared
     # in the jurisdiction contract. This fixture is algebraic, not empirical.
+    base_jurisdictions_text = JURISDICTIONS.read_text(encoding="utf-8").split(
+        "\n[[monetary_conversion]]",
+        1,
+    )[0].replace("schema_version = 3", "schema_version = 2", 1)
+    base_jurisdictions_path = root / "base-jurisdictions.toml"
+    base_jurisdictions_path.write_text(
+        base_jurisdictions_text,
+        encoding="utf-8",
+        newline="",
+    )
     base = load_profile_bundle(
-        JURISDICTIONS,
+        base_jurisdictions_path,
         sources_path,
         source_bundle_path=None,
+        population_bundle_path=None,
     )
     ratios = {
         scale.jurisdiction_code: Fraction(
@@ -345,7 +362,7 @@ value = ""
         newline="",
     )
 
-    jurisdiction_text = JURISDICTIONS.read_text(encoding="utf-8")
+    jurisdiction_text = base_jurisdictions_text
     jurisdiction_text = jurisdiction_text.replace(
         "schema_version = 2", "schema_version = 3", 1
     )
@@ -393,6 +410,10 @@ population_base = "test-only common population"
 comparison_group = "test-only exact extraction fixture"
 rounding_method = "nearest_minor_unit_half_away_from_zero"
 rounding_scope = "AFTER_AGGREGATION"
+quote_convention = "target minor units per source minor unit"
+scale_convention = "test local anchor per simulation_cents"
+timing_convention = "test annual observation"
+missing_date_policy = "test fixture complete"
 aggregation_unit = "one test-only jurisdiction-seed total"
 status = "CALIBRATED"
 source_ids = {conversion_source_ids}

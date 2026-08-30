@@ -42,7 +42,7 @@ def write_monetary_execution_fixture(
     root: Path,
     *,
     target_per_simulation: Mapping[str, Fraction] | None = None,
-    rounding_scope: str = "PER_OBSERVATION",
+    rounding_scope: str = "AFTER_AGGREGATION",
     aggregation_unit: str = MONETARY_OUTPUT_AGGREGATION_UNIT,
 ) -> tuple[ProfileBundle, Path]:
     """Write a registered algebraic fixture, never an empirical rate claim."""
@@ -60,7 +60,11 @@ def write_monetary_execution_fixture(
             "target_per_simulation must exactly cover UK, KR, JP, and BE "
             "with positive Fraction values"
         )
-    sources_text = SOURCES.read_text(encoding="utf-8") + f'''
+    sources_text = SOURCES.read_text(encoding="utf-8").replace(
+        'retrieved_on = "2026-08-30"',
+        'retrieved_on = "2026-08-24"',
+        1,
+    ) + f'''
 
 [[source]]
 id = "{SOURCE_ID}"
@@ -76,10 +80,21 @@ calibration_status = "CALIBRATED"
     sources_path.write_text(sources_text, encoding="utf-8", newline="")
     source_registry_sha256 = sha256(sources_path.read_bytes()).hexdigest()
 
+    base_jurisdictions_text = JURISDICTIONS.read_text(encoding="utf-8").split(
+        "\n[[monetary_conversion]]",
+        1,
+    )[0].replace("schema_version = 3", "schema_version = 2", 1)
+    base_jurisdictions_path = root / "base-jurisdictions.toml"
+    base_jurisdictions_path.write_text(
+        base_jurisdictions_text,
+        encoding="utf-8",
+        newline="",
+    )
     base = load_profile_bundle(
-        JURISDICTIONS,
+        base_jurisdictions_path,
         sources_path,
         source_bundle_path=None,
+        population_bundle_path=None,
     )
     scales = {scale.jurisdiction_code: scale for scale in base.money_scales}
     currencies = {code: scale.currency for code, scale in scales.items()}
@@ -164,7 +179,7 @@ value = ""
         newline="",
     )
 
-    jurisdiction_text = JURISDICTIONS.read_text(encoding="utf-8")
+    jurisdiction_text = base_jurisdictions_text
     jurisdiction_text = jurisdiction_text.replace(
         "schema_version = 2",
         "schema_version = 3",
@@ -185,8 +200,7 @@ value = ""
         'income_status = "ILLUSTRATIVE"',
         'income_status = "CALIBRATED"',
     ).replace(
-        'income_status = "CALIBRATED"',
-        'income_status = "CALIBRATED"\n'
+        'currency_scale_status = "ILLUSTRATIVE"',
         'currency_scale_status = "CALIBRATED"',
     )
     conversion_tables = []
@@ -212,6 +226,10 @@ population_base = "test-only common player population"
 comparison_group = "test-only monetary execution basis"
 rounding_method = "nearest_minor_unit_half_away_from_zero"
 rounding_scope = "{rounding_scope}"
+quote_convention = "target minor units per source minor unit"
+scale_convention = "local nominal monthly anchor minor units per 180000 simulation_cents"
+timing_convention = "test annual observation"
+missing_date_policy = "test fixture has one complete annual observation"
 aggregation_unit = "{aggregation_unit}"
 status = "CALIBRATED"
 source_ids = ["{SOURCE_ID}"]

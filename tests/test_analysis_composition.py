@@ -75,6 +75,9 @@ from microtx_sim.outputs.export import export_policy_batch  # noqa: E402
 from microtx_sim.outputs.metric_contracts import (  # noqa: E402
     metric_contract_registry_sha256,
 )
+from microtx_sim.outputs.monetary import (  # noqa: E402
+    PRODUCTION_MONETARY_ARTIFACT_FILENAMES,
+)
 from microtx_sim.outputs.schema import (  # noqa: E402
     POLICY_ARTIFACT_FILENAMES,
     PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES,
@@ -620,25 +623,26 @@ class AnalysisCompositionTests(unittest.TestCase):
 
             monetary = manifest["prospective_monetary_output_execution"]
             self.assertTrue(monetary["present"])
-            self.assertEqual(monetary["basis_count"], 1)
-            self.assertEqual(monetary["target_currencies"], ["TST"])
+            self.assertEqual(len(monetary["monetary_bases"]), 1)
             self.assertEqual(
-                monetary["basis_sha256s"],
-                [binding.monetary_output_bases[0].basis_sha256],
+                monetary["monetary_bases"][0]["target_currency"],
+                "TST",
             )
             self.assertEqual(
-                monetary["scope"],
-                "prospective_analysis target-population estimands only",
+                monetary["monetary_bases"][0]["basis_sha256"],
+                binding.monetary_output_bases[0].basis_sha256,
             )
-            self.assertTrue(
-                monetary["per_observation_before_contrast_and_weighting"]
+            self.assertEqual(
+                monetary["output_role"],
+                "separate production-shaped monetary model-equivalent output",
             )
-            self.assertFalse(monetary["observed_currency_recovered"])
-            self.assertFalse(monetary["legacy_root_outputs_relabelled"])
-            self.assertFalse(
-                monetary[
-                    "legacy_root_monetary_outputs_cross_country_comparable"
-                ]
+            self.assertTrue(monetary["conversion_before_aggregation"])
+            self.assertFalse(monetary["observed_real_world_spending_claimed"])
+            self.assertTrue(monetary["diagnostic_simulator_unit_outputs_separate"])
+            self.assertFalse(monetary["raw_cross_jurisdiction_summation_allowed"])
+            self.assertEqual(
+                monetary["rounding_operation_count_per_reported_estimate"],
+                1,
             )
             self.assertFalse(monetary["campaign_ready"])
 
@@ -723,7 +727,8 @@ class AnalysisCompositionTests(unittest.TestCase):
             self.assertEqual(
                 {path.name for path in paths.values()},
                 set(POLICY_ARTIFACT_FILENAMES).union(
-                    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+                    TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES,
+                    PRODUCTION_MONETARY_ARTIFACT_FILENAMES,
                 ),
             )
             control_manifest = json.loads(

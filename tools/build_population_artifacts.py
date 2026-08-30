@@ -380,7 +380,7 @@ zero_spender_treatment = "never-payers and non-gamers are retained explicitly; n
 estimand_role = "{role.value}"
 status = "ILLUSTRATIVE"
 source_ids = ["{jurisdiction['source_id']}"]
-retrieved_on = 2026-08-24
+retrieved_on = 2026-08-30
 recipe_json = {json.dumps(recipe)}
 
 '''

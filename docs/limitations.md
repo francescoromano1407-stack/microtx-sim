@@ -110,10 +110,11 @@ campaign-ineligible.
 Money-valued estimands require an additional explicit opt-in prospective money
 execution; without it they fail before treatment. When selected, the execution
 applies one jurisdiction-specific composite conversion directly to each retained
-simulation-cent observation, before reference/comparison contrasts and
-population weights. It performs one signed nearest-minor-unit rounding with half
-ties away from zero and never reconstructs or rounds an intermediate nominal
-local-currency amount. The results are target-currency-equivalent model amounts,
+simulation-cent observation, before reference/comparison contrasts, identical
+scenario population weights, and cross-jurisdiction aggregation. Exact values
+remain unrounded until one signed nearest-minor-unit rounding, with half ties
+away from zero, at the final serialized estimate. It never reconstructs or
+rounds an intermediate nominal local-currency amount. The results are target-currency-equivalent model amounts,
 not observed or calibrated money, and only the separate prospective profile
 receives them. Legacy root output-v3 artifacts remain unchanged in simulation
 cents.
@@ -149,17 +150,18 @@ empirically exact.
 
 The code now has a typed, dated, exact-rational FX/PPP conversion contract, a
 content-addressed exact-CSV extraction contract, a strict pooled-currency
-campaign gate, and opt-in prospective execution plumbing. These are validation
-and arithmetic boundaries, not a calibration result: the checked-in profile
-bundle contains no conversion rates, the checked-in source bundle contains no
-artifacts or bindings and has signature `MISSING`, and the legacy manifest
-conversion summary is empty. No supplied configuration selects the prospective
-money path, and no root output is cross-country comparable.
+campaign gate, and opt-in prospective execution plumbing. The checked-in
+`ecb-eur-fx-2024-v1` basis supplies complete official rate coverage and is used
+by the prospective path. These are validation and arithmetic boundaries, not a
+model-money calibration result: the source bundle has signature `MISSING`, the
+internal-to-local scale is illustrative, and no root diagnostic output is
+cross-country comparable.
 
-The general contract records per-observation versus after-aggregation rounding
-because those stages can yield different totals. The prospective money path is
-stricter: only per-observation execution is admissible, using one composite and
-one rounding before contrasts or weights. Method-specific source scope, typed
+The general parser retains historical rounding-stage declarations. The current
+prospective monetary contract is stricter: only `AFTER_AGGREGATION` is
+admissible, using exact composites and one final rounding after contrasts,
+identical scenario weights, jurisdiction aggregation, and seed aggregation.
+Method-specific source scope, typed
 date intervals, registered-file re-attestation, and exact execution still cannot
 decide whether the declared estimand or population is scientifically appropriate.
 Structural coherence or a reproducible test extraction therefore does not

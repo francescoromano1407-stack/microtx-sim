@@ -1,5 +1,15 @@
 schema_version = 1
-retrieved_on = "2026-08-24"
+retrieved_on = "2026-08-30"
+
+[[source]]
+id = "ECB_EXR_A_2024_EUR"
+publisher = "European Central Bank"
+title = "ECB annual euro foreign-exchange reference rates for GBP, JPY, and KRW; EUR identity for Belgium"
+url = "https://data-api.ecb.europa.eu/service/data/EXR/A.GBP+JPY+KRW.EUR.SP00.A?startPeriod=2024&endPeriod=2024&format=csvdata"
+period = "2024-01-01/2024-12-31"
+geography = "Euro area reference rates for United Kingdom, Japan, South Korea, and EUR identity for Belgium"
+supports = ["foreign_exchange_rate"]
+calibration_status = "CALIBRATED"
 
 [[source]]
 id = "EUROSTAT_ILC_DI03"

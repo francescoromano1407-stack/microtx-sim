@@ -39,6 +39,7 @@ from ..data.profiles import (
 from ..metrics.population_estimands import TARGET_POPULATION_OUTPUT_PROFILE
 from ..policy_config import PolicyPrototypeConfig, PolicyRunPurpose
 from .metric_contracts import build_metric_contract_manifest_payload
+from .monetary import monetary_lineage_payload
 
 
 def build_run_manifest(
@@ -375,35 +376,9 @@ def build_run_manifest(
         manifest["analysis_binding"] = analysis_binding.manifest_payload()
         monetary_bases = analysis_binding.monetary_output_bases
         if monetary_bases:
-            manifest["prospective_monetary_output_execution"] = {
-                "present": True,
-                "scope": "prospective_analysis target-population estimands only",
-                "basis_count": len(monetary_bases),
-                "basis_sha256s": [
-                    basis.basis_sha256 for basis in monetary_bases
-                ],
-                "target_currencies": [
-                    basis.target_currency for basis in monetary_bases
-                ],
-                "interpretation": "target-currency-equivalent model amounts",
-                "per_observation_before_contrast_and_weighting": True,
-                "observed_currency_recovered": False,
-                "legacy_root_outputs_relabelled": False,
-                "legacy_root_monetary_outputs_cross_country_comparable": False,
-                "campaign_ready": False,
-                "campaign_blockers": sorted(
-                    {
-                        "monetary_output_execution.population_semantics_compatibility="
-                        "unreviewed",
-                    }.union(
-                        blocker
-                        for basis in monetary_bases
-                        for blocker in basis.campaign_blockers
-                    ).union(
-                        analysis_binding.campaign_blockers
-                    )
-                ),
-            }
+            manifest["prospective_monetary_output_execution"] = (
+                monetary_lineage_payload(analysis_binding)
+            )
     return manifest
 
 

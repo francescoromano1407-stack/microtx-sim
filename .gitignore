@@ -9,8 +9,9 @@ venv/
 build/
 dist/
 artifacts/
+!inputs/monetary/**/artifacts/
+!inputs/monetary/**/artifacts/**
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-

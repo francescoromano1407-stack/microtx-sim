@@ -109,7 +109,7 @@ def _comparable_profile_inputs_fixture() -> dict[str, object]:
             "aggregation_unit": "one test-only jurisdiction-seed total",
             "status": "CALIBRATED",
             "source_ids": ["TEST_ONLY_SOURCE"],
-            "retrieved_on": "2026-08-24",
+            "retrieved_on": "2026-08-30",
             "rounding_method": "nearest_minor_unit_half_away_from_zero",
             "rounding_scope": "AFTER_AGGREGATION",
             "notes": "test-only conversion",
@@ -133,7 +133,7 @@ def _comparable_profile_inputs_fixture() -> dict[str, object]:
                         "geography": "Test jurisdictions",
                         "supports": ["foreign_exchange_rate"],
                         "calibration_status": "CALIBRATED",
-                        "retrieved_on": "2026-08-24",
+                        "retrieved_on": "2026-08-30",
                     }
                 ],
                 "money_scales": scales,
@@ -763,7 +763,7 @@ class PolicyExportTests(unittest.TestCase):
             )
             self.assertEqual(
                 lineage["source_registry"]["retrieved_on"],
-                "2026-08-24",
+                "2026-08-30",
             )
             self.assertEqual(
                 lineage["snapshot"]["country_profiles"][0]["population_weight"],
@@ -774,30 +774,20 @@ class PolicyExportTests(unittest.TestCase):
                 len(bundle.contracts),
             )
             self.assertEqual(lineage["money_scale_summary"]["count"], 4)
-            self.assertEqual(
-                lineage["monetary_conversion_summary"],
-                {
-                    "count": 0,
-                    "methods": [],
-                    "source_currencies": [],
-                    "target_currencies": [],
-                    "rate_period_starts": [],
-                    "rate_period_ends": [],
-                    "target_price_period_starts": [],
-                    "target_price_period_ends": [],
-                    "estimands": [],
-                    "population_bases": [],
-                    "comparison_groups": [],
-                    "retrieval_dates": [],
-                    "rounding_scopes": [],
-                    "aggregation_units": [],
-                    "status_counts": {},
-                },
-            )
+            conversion_summary = lineage["monetary_conversion_summary"]
+            self.assertEqual(conversion_summary["count"], 4)
+            self.assertEqual(conversion_summary["methods"], ["FX"])
+            self.assertEqual(conversion_summary["target_currencies"], ["EUR"])
+            self.assertEqual(conversion_summary["retrieval_dates"], ["2026-08-30"])
             self.assertEqual(lineage["snapshot"]["schema_version"], 4)
             self.assertEqual(
-                lineage["snapshot"]["profile_bundle"]["monetary_conversions"],
-                [],
+                {
+                    item["jurisdiction_code"]
+                    for item in lineage["snapshot"]["profile_bundle"][
+                        "monetary_conversions"
+                    ]
+                },
+                {"BE", "JP", "KR", "UK"},
             )
             self.assertEqual(
                 manifest["jurisdictions_sha256"],

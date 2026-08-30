@@ -11,3 +11,4 @@ inputs/** text eol=lf
 data/provenance/rate_artifacts/** -text
 data/provenance/population_artifacts/** -text
 inputs/illustrative_population/population_artifacts/** -text
+inputs/monetary/**/artifacts/** -text whitespace=cr-at-eol

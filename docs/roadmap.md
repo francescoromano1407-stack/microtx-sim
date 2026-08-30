@@ -55,7 +55,8 @@ These tasks block scientific interpretation.
    household-type × gaming × pre-treatment payer-history cells with exact
    reduced rational mass. Registered profile-input lineage version 4 retains
    the bundle, verified extraction, and independent readiness blockers while
-   versions 1–3 remain readable. The default bundle is empty, `ILLUSTRATIVE`,
+   versions 1–3 remain readable. The default bundle contains the complete
+   deterministic 1,728-cell development fixture, remains `ILLUSTRATIVE`,
    unsigned, and `campaign_ready=false`; hashes prove reproducibility, not
    publisher authenticity or calibration.
 
@@ -101,8 +102,9 @@ These tasks block scientific interpretation.
    estimand must additionally select the opt-in prospective money execution and
    otherwise fails before treatment. That execution creates target-currency-
    equivalent model amounts by applying one jurisdiction-specific composite to
-   each retained observation before contrasts and weights, then rounding once to
-   the nearest signed minor unit with half ties away from zero. It does not
+   each retained observation before contrasts, identical scenario weights, and
+   cross-jurisdiction aggregation, then rounding the final equal-seed estimate
+   once to the nearest signed minor unit with half ties away from zero. It does not
    reconstruct nominal local currency, and only the separate prospective profile
    receives the converted values and lineage. Legacy root output-v3 remains in
    unchanged simulation cents. Calendar anchoring, empirical uncertainty and
@@ -120,37 +122,38 @@ These tasks block scientific interpretation.
    estimand. Never treat nominal GBP, KRW, JPY, and EUR minor units as directly
    comparable simulation cents.
 
-   Profile schema version 2 implements the typed declaration-only exact-rate contract,
+   Profile schema version 2 implements the legacy typed declaration-only
+   exact-rate contract; version 3 adds required content-addressed execution bindings,
    method-specific source and typed-date validation, explicit aggregation-stage
    rounding, registered-file re-attestation, lossless decimal-string rate
    mirrors, lineage/manifest retention, complete-coverage gate, common-basis
-   check, and exact internal-scale coherence check. No rates are checked in and
-   the present bundle fails with a missing contract for every jurisdiction, so
-   this P0 item remains open pending reviewed calibrated evidence, a declared
-   target estimand, and binding to the preregistered campaign population. The
-   public comparability claim and campaign gate remain false with an explicit
-   `source_rate_binding=missing` blocker even when test-only algebra clears the
-   structural checks. Version 3 now additionally requires stable conversion and
+   check, and exact internal-scale coherence check. The checked-in
+   `ecb-eur-fx-2024-v1` bundle now provides complete official 2024 ECB rate
+   coverage for the declared EUR basis, so the source-rate extraction subgate is
+   satisfied. This P0 item remains open pending an authentic signature,
+   empirically calibrated internal-to-local scale, registered target estimand,
+   and binding to a valid campaign population. Version 3 requires stable conversion and
    rate-binding IDs and verifies an exact rational from content-addressed CSV
    bytes through one canonical declarative recipe. Registered profile-input
    lineage version 4 re-attests the monetary source catalogue, bundle,
    artifact, recipe, and extraction and also carries the independent population
    assessment; lineage versions 1–3 remain readable and exercise the migration
-   boundary. The checked-in
-   source bundle is empty, illustrative, and missing a signature. Even a valid
-   test extraction clears only the source subgate: signature, output/design,
+   boundary. The checked-in source bundle is calibrated for official rate
+   extraction but missing an authentic signature. That extraction clears only
+   the source subgate: signature, output/design,
    population, and external-preregistration blockers remain independent.
 
    **Infrastructure progress only:** an opt-in prospective execution can now bind
    a complete dated target-currency basis and exact jurisdiction-specific
    composites to a money-valued planned estimand. It converts each retained
    simulation-cent observation before the paired contrast and target-population
-   weighting, using exactly one signed half-away-from-zero minor-unit rounding
-   and no intermediate nominal local-currency reconstruction. These outputs are
+   weighting and jurisdiction aggregation, using exactly one signed
+   half-away-from-zero minor-unit rounding at the final equal-seed output and no
+   intermediate nominal local-currency reconstruction. These outputs are
    target-currency-equivalent **model** amounts and remain confined to the
    separate prospective profile; legacy root outputs remain unchanged simulation
-   cents. No supplied plan or checked-in conversion selects this path. Source
-   authentication, calibrated money scales and behavioral spending inputs,
+   cents. The checked-in unregistered plan selects this path for deterministic
+   validation only. Source authentication, calibrated money scales and behavioral spending inputs,
    representative population and independently held-out validation, external
    preregistration, and campaign readiness all remain blocking, so P0.2 remains
    open and no campaign is authorised.

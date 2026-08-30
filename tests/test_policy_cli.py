@@ -312,7 +312,7 @@ class PolicyCliTests(unittest.TestCase):
             )
             self.assertEqual(
                 manifest["source_registry_retrieved_on"],
-                "2026-08-24",
+                "2026-08-30",
             )
             self.assertEqual(
                 manifest["batch"]["profile_input_fingerprint_sha256"],

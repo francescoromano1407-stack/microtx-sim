@@ -23,6 +23,10 @@ from ..causal.batch import PolicyBatchResult, resolve_policy_run_inputs
 from ..causal.scenarios import ScenarioId
 from ..policy_config import PolicyPrototypeConfig
 from .manifest import build_run_manifest
+from .monetary import (
+    PRODUCTION_MONETARY_ARTIFACT_FILENAMES,
+    write_production_monetary_outputs,
+)
 from .population import write_target_population_estimands
 from .prospective import write_primary_aggregate
 from .plots import (
@@ -219,6 +223,17 @@ def export_policy_batch(
                 analysis_artifact_files = (
                     PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES
                 )
+            if analysis_binding.monetary_output_bases:
+                staged_analysis_paths.update(
+                    write_production_monetary_outputs(
+                        analysis_stage,
+                        analysis_binding,
+                    )
+                )
+                analysis_artifact_files = (
+                    analysis_artifact_files
+                    + PRODUCTION_MONETARY_ARTIFACT_FILENAMES
+                )
             analysis_file_identities = {
                 path.name: (path.stat().st_size, _digest(path))
                 for path in staged_analysis_paths.values()
@@ -240,6 +255,9 @@ def export_policy_batch(
                     primary_aggregate.aggregate_sha256
                     if primary_aggregate is not None
                     else None
+                ),
+                "production_monetary_output_present": bool(
+                    analysis_binding.monetary_output_bases
                 ),
                 "campaign_ready": False,
                 "artifacts": {
@@ -380,6 +398,17 @@ def export_policy_batch(
                 )
                 paths["analysis_primary_aggregate_metadata"] = (
                     analysis_destination / "primary_aggregate_metadata.json"
+                )
+            if analysis_binding is not None and (
+                analysis_binding.monetary_output_bases
+            ):
+                paths["analysis_production_monetary_estimates"] = (
+                    analysis_destination
+                    / "production_monetary_estimates.csv"
+                )
+                paths["analysis_production_monetary_metadata"] = (
+                    analysis_destination
+                    / "production_monetary_metadata.json"
                 )
 
         actual = {path.name for path in paths.values()}
@@ -538,6 +567,14 @@ def _verify_staged_analysis_identities(
     allowed_contracts = {
         frozenset(TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES),
         frozenset(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES),
+        frozenset(
+            TARGET_POPULATION_ESTIMAND_ARTIFACT_FILENAMES
+            + PRODUCTION_MONETARY_ARTIFACT_FILENAMES
+        ),
+        frozenset(
+            PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES
+            + PRODUCTION_MONETARY_ARTIFACT_FILENAMES
+        ),
     }
     if frozenset(expected_names) not in allowed_contracts:
         raise RuntimeError(
@@ -625,7 +662,10 @@ def _remove_owned_analysis_directory(
             "refusing prospective-analysis cleanup of a non-directory or link"
         )
 
-    allowed_names = set(PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES)
+    allowed_names = set(
+        PROSPECTIVE_ANALYSIS_ARTIFACT_FILENAMES
+        + PRODUCTION_MONETARY_ARTIFACT_FILENAMES
+    )
     expected_names = (
         set(expected_file_identities)
         if expected_file_identities is not None

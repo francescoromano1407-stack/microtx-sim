@@ -8,7 +8,7 @@ calibrated estimate. The authoritative machine-readable register is
 `data/provenance/sources.toml`. Jurisdiction contracts are declared in
 `configs/jurisdictions.toml`, while run-level assumptions are selected by a
 scenario such as `configs/smoke.toml`. Exact-byte rate and population evidence
-use separate registries in `data/provenance/source_bundle.toml` and
+use separate registries in `inputs/monetary/ecb-eur-fx-2024-v1/bundle.toml` and
 `data/provenance/population_bundle.toml`.
 
 The detailed inventory, current runtime use, units, denominators, and dormant
@@ -231,24 +231,26 @@ neither an exchange rate nor a purchasing-power-parity conversion and removes
 empirical cross-country income-level differences. Simulation cents must not be
 reported as GBP, KRW, JPY, EUR, or comparable real purchasing power.
 
-The profile schema defines a fail-closed `MonetaryConversionContract` for future
-dated FX or PPP evidence. It retains an exact rational target-minor-unit
+The profile schema defines a fail-closed `MonetaryConversionContract` for dated
+FX or PPP evidence. It retains an exact rational target-minor-unit
 rate, typed rate and target-price intervals, estimand, population base, one
 comparison-group identifier, method-specific source lineage, retrieval date,
 and an explicit signed rounding stage and aggregation unit. Campaign
 validation requires complete jurisdiction coverage, calibrated compatible
-sources, a common comparison signature, and exact coherence with the internal
-money scales. No such records or rates are checked in, so this software boundary
-does not make present outputs comparable.
+sources, a common comparison signature, and explicit internal money scales. The
+checked-in `ecb-eur-fx-2024-v1` bundle supplies complete official ECB rate
+records, but the model-unit scales remain illustrative, so this software
+boundary does not make present outputs empirically calibrated money.
 
 The optional prospective money path is an output transformation, not a new
 empirical evidence gate. For each retained player observation it combines the
 jurisdiction-specific simulation-money scale and local-to-target rate into one
-exact rational composite, applies that composite directly to simulation cents,
-and performs one signed nearest-minor-unit rounding with half ties away from
-zero. It does not reconstruct or round an intermediate nominal local-currency
-amount. Conversion precedes the reference/comparison contrast and the
-application of population weights.
+exact rational composite and applies that composite directly to simulation
+cents. It does not reconstruct or round an intermediate nominal local-currency
+amount. Conversion precedes the reference/comparison contrast, identical
+scenario population weights, and cross-jurisdiction aggregation. One signed
+nearest-minor-unit rounding with half ties away from zero occurs only at the
+final equal-seed production output.
 
 The resulting values are **target-currency-equivalent model amounts**, not
 observed or calibrated real-world money. They appear only in the separate
@@ -259,9 +261,10 @@ cents.
 Schema version 3 additionally requires stable conversion and rate-binding IDs.
 The rate binding is verified from a separately versioned source bundle that
 binds the source-catalogue digest, exact artifact bytes, byte length, media type,
-and a canonical declarative extraction recipe. The version-1 interpreter reads
-strict UTF-8 CSV, matches exactly one semantic row, and parses only canonical
-positive reduced decimal integers. It rejects path escape, links/reparse
+and a canonical declarative extraction recipe. The exact-table interpreter
+parses canonical positive reduced decimal integers; the ECB EXR interpreter
+selects one official annual series row and transforms its canonical decimal
+observation and currency exponents exactly. Both reject path escape, links/reparse
 points, file mutation, ambiguous rows, quote-direction or period mismatches,
 floats, scientific notation, and undeclared fields. Hash verification proves
 repeatability of the bytes and transformation; it is not a publisher signature
@@ -278,9 +281,10 @@ These checks validate the declared contract and reproducible extraction, not
 whether a chosen estimand or population is substantively appropriate. The
 typed assessment therefore keeps source extraction, source signature,
 output/design use, target population, and external preregistration independent.
-The checked-in bundle is empty, illustrative, and explicitly missing a
-signature; no supplied configuration can materialize a prospective
-target-currency basis. Identical labels are necessary, never sufficient
+The checked-in rate bundle is complete and calibrated for extraction but
+explicitly missing a signature; the checked-in prospective fixture can
+materialize the declared target-currency basis without becoming campaign-ready.
+Identical labels are necessary, never sufficient
 evidence, and the public comparability flag stays false even when a test fixture
 clears only the extraction or execution-structure subgate.
 
@@ -309,9 +313,9 @@ The current rare-card hazard remains an illustrative sensitivity parameter.
 dependent contract and source, including money-scale sources. Because current
 outcomes pool money across jurisdictions, campaign validation also requires a
 cross-country-comparable monetary contract. The typed dated FX/PPP contract,
-its gate, and an opt-in prospective execution path are implemented, but the
-present bundle supplies no contract instances and the local-currency anchor
-scales remain illustrative. Exact execution cannot authenticate a publisher or
+its gate, and an opt-in prospective execution path are implemented, and the
+present bundle supplies complete official ECB contract instances. The
+local-currency anchor scales remain illustrative. Exact execution cannot authenticate a publisher or
 rate source, calibrate model money, establish a representative target population
 or genuine holdout, or provide external preregistration. A campaign fails if a
 required dependency is synthetic, illustrative, merely anchored, or not

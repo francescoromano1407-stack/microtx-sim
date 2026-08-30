@@ -2,8 +2,8 @@ schema_version = 1
 design_id = "standardized-four-country-person-population-2024-v1"
 provenance_status = "ILLUSTRATIVE"
 notes = "One person/player aged 10-69 in an equal-country standardized UK/KR/JP/BE design. Joint masses follow declared conditional assumptions and exact Hamilton integerization, not independent marginal sampling. Analysis weights target a mean/proportion over 40,000 design-person equivalents; expansion weights target additive totals in those design units only."
-population_evidence_bundle_sha256 = "050734e5a0ef57a6edf16619e0f1e145777bef0dcb0392d3a3526dbb4c4c33ee"
-population_evidence_result_sha256s = ["49286cab6642d113aeaa4ddc1c44301d6f828d1dc6ee72e48db595654416ddd4", "5d7094014c8826128ccd3648bf8c381511d06761f2829b05e71b99acff3f31da", "58dc863c29ac766116c9b09de803f7ff7c3a905b0539fe684c4bb2a39afd5368", "d0d39099ba1029a5d026ca119aaf2829ec105dec0648089b48e8f6e7005df595", "b7b6e4f7985815a2520931c6f649c625542c6391ed104460d83e24b65abab6cb", "dca637bb4f231aa72db8707b1c9b95f4ad526d38ce7efea3472cee5188d7076d", "fc5bb16d52b24cfc126b4deaa6dbe24c21dc37a4ad2c89f18bcdfb276bdcb78c", "4c7f1819eed711318fd422e4ce5331b53f69ace2f94f60249a1d94bd87aeda0e"]
+population_evidence_bundle_sha256 = "5a7bf47018b74756ff05516808f66b72a37db86994069ad7d12990703ba96958"
+population_evidence_result_sha256s = ["41182be7f11d2dbc84b0dc93107fc30ec079eb70d9e9918e5030658931579548", "f47e8077eaa16e024968332db58d0de1f14007951c7b304f59dd824e1da7b332", "0ec80ba1d34c9063cee710a83aee798bb37decf908b963f046c455ff96e02a90", "7978d48790851ac74e0b55a7a07248337bdab7c7443c3d07830c87be5e8440f8", "ca12e9c3b5eabef37e87a973dc6aa0f417cf7b05267d27ae268d919bac1ad3d8", "e5a015868e9e6924ba3a30101e350ea7fe2a945117f34beba610ffb8d562ddd5", "374ff04c8aa592aa95320b5663cf9e69cc9dc59cbb61f7e4b4cf1e4063a5c0d2", "34d09a349a2dfc27e33a67f2ecd742bd61a2d8e2178af7f0bdf1541085fed73a"]
 hamilton_recipe = "exact_rational_hamilton/1"
 
 [domains]
@@ -236,40 +236,40 @@ jurisdiction_code = "BE"
 target_population_count = 10000
 calibration_binding_id = "00.be.calibration"
 calibration_target_population_id = "standardized.person.2024.be.calibration"
-calibration_evidence_sha256 = "49286cab6642d113aeaa4ddc1c44301d6f828d1dc6ee72e48db595654416ddd4"
+calibration_evidence_sha256 = "41182be7f11d2dbc84b0dc93107fc30ec079eb70d9e9918e5030658931579548"
 validation_binding_id = "01.be.validation"
 validation_target_population_id = "standardized.person.2024.be.validation"
-validation_evidence_sha256 = "5d7094014c8826128ccd3648bf8c381511d06761f2829b05e71b99acff3f31da"
+validation_evidence_sha256 = "f47e8077eaa16e024968332db58d0de1f14007951c7b304f59dd824e1da7b332"
 
 [[jurisdictions]]
 jurisdiction_code = "JP"
 target_population_count = 10000
 calibration_binding_id = "02.jp.calibration"
 calibration_target_population_id = "standardized.person.2024.jp.calibration"
-calibration_evidence_sha256 = "58dc863c29ac766116c9b09de803f7ff7c3a905b0539fe684c4bb2a39afd5368"
+calibration_evidence_sha256 = "0ec80ba1d34c9063cee710a83aee798bb37decf908b963f046c455ff96e02a90"
 validation_binding_id = "03.jp.validation"
 validation_target_population_id = "standardized.person.2024.jp.validation"
-validation_evidence_sha256 = "d0d39099ba1029a5d026ca119aaf2829ec105dec0648089b48e8f6e7005df595"
+validation_evidence_sha256 = "7978d48790851ac74e0b55a7a07248337bdab7c7443c3d07830c87be5e8440f8"
 
 [[jurisdictions]]
 jurisdiction_code = "KR"
 target_population_count = 10000
 calibration_binding_id = "04.kr.calibration"
 calibration_target_population_id = "standardized.person.2024.kr.calibration"
-calibration_evidence_sha256 = "b7b6e4f7985815a2520931c6f649c625542c6391ed104460d83e24b65abab6cb"
+calibration_evidence_sha256 = "ca12e9c3b5eabef37e87a973dc6aa0f417cf7b05267d27ae268d919bac1ad3d8"
 validation_binding_id = "05.kr.validation"
 validation_target_population_id = "standardized.person.2024.kr.validation"
-validation_evidence_sha256 = "dca637bb4f231aa72db8707b1c9b95f4ad526d38ce7efea3472cee5188d7076d"
+validation_evidence_sha256 = "e5a015868e9e6924ba3a30101e350ea7fe2a945117f34beba610ffb8d562ddd5"
 
 [[jurisdictions]]
 jurisdiction_code = "UK"
 target_population_count = 10000
 calibration_binding_id = "06.uk.calibration"
 calibration_target_population_id = "standardized.person.2024.uk.calibration"
-calibration_evidence_sha256 = "fc5bb16d52b24cfc126b4deaa6dbe24c21dc37a4ad2c89f18bcdfb276bdcb78c"
+calibration_evidence_sha256 = "374ff04c8aa592aa95320b5663cf9e69cc9dc59cbb61f7e4b4cf1e4063a5c0d2"
 validation_binding_id = "07.uk.validation"
 validation_target_population_id = "standardized.person.2024.uk.validation"
-validation_evidence_sha256 = "4c7f1819eed711318fd422e4ce5331b53f69ace2f94f60249a1d94bd87aeda0e"
+validation_evidence_sha256 = "34d09a349a2dfc27e33a67f2ecd742bd61a2d8e2178af7f0bdf1541085fed73a"
 
 [partition]
 identity_namespace = "microtx-sim.population.standardized-person-2024"

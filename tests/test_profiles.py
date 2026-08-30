@@ -30,6 +30,27 @@ ROOT = Path(__file__).resolve().parents[1]
 JURISDICTIONS = ROOT / "configs" / "jurisdictions.toml"
 SOURCES = ROOT / "data" / "provenance" / "sources.toml"
 FIXTURES = ROOT / "tests" / "fixtures"
+MONETARY_BUNDLE = (
+    ROOT / "inputs" / "monetary" / "ecb-eur-fx-2024-v1" / "bundle.toml"
+)
+
+
+def _legacy_jurisdictions_text() -> str:
+    """Return the pre-schema-3 surface used by migration-only fixtures."""
+
+    return JURISDICTIONS.read_text(encoding="utf-8").split(
+        "\n[[monetary_conversion]]",
+        1,
+    )[0].replace("schema_version = 3", "schema_version = 2", 1)
+
+
+def _schema_v1_jurisdictions_text() -> str:
+    return (
+        _legacy_jurisdictions_text()
+        .replace("schema_version = 2", "schema_version = 1", 1)
+        .replace("simulation_monthly_anchor_cents = 180000\n", "")
+        .replace('currency_scale_status = "ILLUSTRATIVE"\n', "")
+    )
 
 _TEST_ONLY_SOURCE_ID = "TEST_ONLY_MONETARY_CONVERSION"
 _TEST_ONLY_SOURCE_TOML = """
@@ -65,7 +86,7 @@ rounding_scope = "AFTER_AGGREGATION"
 aggregation_unit = "one test-only jurisdiction-seed total"
 status = "ILLUSTRATIVE"
 source_ids = ["TEST_ONLY_MONETARY_CONVERSION"]
-retrieved_on = "2026-08-24"
+retrieved_on = "2026-08-30"
 notes = "Test-only algebraic fixture; not an empirical rate."
 """
 
@@ -80,10 +101,10 @@ class ProfileLoadingTests(unittest.TestCase):
         )
         self.assertEqual(bundle.profile_status, ProvenanceStatus.ILLUSTRATIVE)
         self.assertEqual(len(bundle.state_agents), 4)
-        self.assertEqual(bundle.source_retrieved_on, date(2026, 8, 24))
+        self.assertEqual(bundle.source_retrieved_on, date(2026, 8, 30))
         self.assertEqual(
             {source.retrieved_on for source in bundle.sources.values()},
-            {date(2026, 8, 24)},
+            {date(2026, 8, 30)},
         )
         self.assertEqual(bundle.jurisdictions_path, JURISDICTIONS.resolve())
         self.assertEqual(bundle.source_registry_path, SOURCES.resolve())
@@ -95,9 +116,22 @@ class ProfileLoadingTests(unittest.TestCase):
             bundle.source_registry_sha256,
             sha256(SOURCES.read_bytes()).hexdigest(),
         )
-        self.assertEqual(bundle.monetary_conversions, ())
-        with self.assertRaises(KeyError):
-            bundle.monetary_conversion("UK")
+        self.assertEqual(len(bundle.monetary_conversions), 4)
+        self.assertEqual(
+            {
+                conversion.jurisdiction_code: (
+                    conversion.source_currency,
+                    conversion.target_currency,
+                )
+                for conversion in bundle.monetary_conversions
+            },
+            {
+                "UK": ("GBP", "EUR"),
+                "KR": ("KRW", "EUR"),
+                "JP": ("JPY", "EUR"),
+                "BE": ("EUR", "EUR"),
+            },
+        )
 
         # Prices and player incomes share one internal unit.  Unsupported nominal
         # country rankings are not smuggled into the agent table.
@@ -172,6 +206,8 @@ class ProfileLoadingTests(unittest.TestCase):
                 "nearest_minor_unit_half_away_from_zero",
                 "AFTER_AGGREGATION",
                 "one test-only jurisdiction-seed total",
+                "",
+                "",
             ),
         )
         expected = {
@@ -232,7 +268,7 @@ class ProfileLoadingTests(unittest.TestCase):
 
     def test_schema_v2_parses_an_explicit_test_only_conversion(self) -> None:
         jurisdiction_text = (
-            JURISDICTIONS.read_text(encoding="utf-8")
+            _legacy_jurisdictions_text()
             + _TEST_ONLY_UK_CONVERSION_TOML
         )
         source_text = SOURCES.read_text(encoding="utf-8") + _TEST_ONLY_SOURCE_TOML
@@ -261,7 +297,7 @@ class ProfileLoadingTests(unittest.TestCase):
         self.assertEqual(conversion.target_currency, "TST")
         self.assertIs(conversion.method, MonetaryConversionMethod.FX)
         self.assertEqual(conversion.conversion_ratio, Fraction(180_000, 305_525))
-        self.assertEqual(conversion.retrieved_on, date(2026, 8, 24))
+        self.assertEqual(conversion.retrieved_on, date(2026, 8, 30))
         self.assertIn("not an empirical rate", conversion.notes)
 
     def test_schema_v2_conversion_tables_reject_unknown_fields(self) -> None:
@@ -281,7 +317,7 @@ class ProfileLoadingTests(unittest.TestCase):
                     jurisdictions_path = root / "jurisdictions.toml"
                     sources_path = root / "sources.toml"
                     jurisdictions_path.write_text(
-                        JURISDICTIONS.read_text(encoding="utf-8")
+                        _legacy_jurisdictions_text()
                         + conversion_text,
                         encoding="utf-8",
                     )
@@ -293,11 +329,7 @@ class ProfileLoadingTests(unittest.TestCase):
                         load_profile_bundle(jurisdictions_path, sources_path)
 
     def test_jurisdiction_schema_v1_remains_readable_without_v2_fields(self) -> None:
-        text = JURISDICTIONS.read_text(encoding="utf-8").replace(
-            "schema_version = 2",
-            "schema_version = 1",
-            1,
-        )
+        text = _schema_v1_jurisdictions_text()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "jurisdictions.toml"
             path.write_text(text, encoding="utf-8")
@@ -306,7 +338,7 @@ class ProfileLoadingTests(unittest.TestCase):
         self.assertEqual(bundle.monetary_conversions, ())
 
     def test_jurisdiction_schema_rejects_unknown_or_v2_fields_in_v1(self) -> None:
-        original = JURISDICTIONS.read_text(encoding="utf-8")
+        original = _legacy_jurisdictions_text()
         unsupported = original.replace("schema_version = 2", "schema_version = 4", 1)
         boolean_alias = original.replace(
             "schema_version = 2", "schema_version = true", 1
@@ -317,10 +349,6 @@ class ProfileLoadingTests(unittest.TestCase):
         v1_with_monetary_field = original.replace(
             "schema_version = 2",
             "schema_version = 1",
-            1,
-        ).replace(
-            'income_period = "annual"',
-            'income_period = "annual"\nsimulation_monthly_anchor_cents = 180000',
             1,
         )
         for text, message in (
@@ -341,7 +369,13 @@ class ProfileLoadingTests(unittest.TestCase):
         for replacement in ("schema_version = true", "schema_version = 1.0"):
             with self.subTest(replacement=replacement):
                 with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "sources.toml"
+                    root = Path(directory)
+                    path = root / "sources.toml"
+                    jurisdictions = root / "jurisdictions.toml"
+                    jurisdictions.write_text(
+                        _legacy_jurisdictions_text(),
+                        encoding="utf-8",
+                    )
                     path.write_text(
                         original.replace("schema_version = 1", replacement, 1),
                         encoding="utf-8",
@@ -350,15 +384,20 @@ class ProfileLoadingTests(unittest.TestCase):
                         ProfileValidationError,
                         "unsupported source schema_version",
                     ):
-                        load_profile_bundle(JURISDICTIONS, path)
+                        load_profile_bundle(
+                            jurisdictions,
+                            path,
+                            source_bundle_path=None,
+                            population_bundle_path=None,
+                        )
 
     def test_source_schema_rejects_unknown_catalogue_and_record_fields(self) -> None:
         original = SOURCES.read_text(encoding="utf-8")
         variants = (
             (
                 original.replace(
-                    'retrieved_on = "2026-08-24"',
-                    'retrieved_on = "2026-08-24"\nsnapshot = "unbound"',
+                    'retrieved_on = "2026-08-30"',
+                    'retrieved_on = "2026-08-30"\nsnapshot = "unbound"',
                     1,
                 ),
                 "source catalogue contains unknown fields: snapshot",
@@ -369,16 +408,27 @@ class ProfileLoadingTests(unittest.TestCase):
                     'publisher = "Eurostat"\nartifact_sha256 = "unbound"',
                     1,
                 ),
-                r"source\[0\] contains unknown fields: artifact_sha256",
+                r"source\[1\] contains unknown fields: artifact_sha256",
             ),
         )
         for text, message in variants:
             with self.subTest(message=message):
                 with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "sources.toml"
+                    root = Path(directory)
+                    path = root / "sources.toml"
+                    jurisdictions = root / "jurisdictions.toml"
+                    jurisdictions.write_text(
+                        _legacy_jurisdictions_text(),
+                        encoding="utf-8",
+                    )
                     path.write_text(text, encoding="utf-8")
                     with self.assertRaisesRegex(ProfileValidationError, message):
-                        load_profile_bundle(JURISDICTIONS, path)
+                        load_profile_bundle(
+                            jurisdictions,
+                            path,
+                            source_bundle_path=None,
+                            population_bundle_path=None,
+                        )
 
     def test_profile_numbers_reject_non_finite_values_at_ingestion(self) -> None:
         original = JURISDICTIONS.read_text(encoding="utf-8")
@@ -473,15 +523,26 @@ class ProfileLoadingTests(unittest.TestCase):
 
     def test_source_catalogue_retrieval_date_must_be_canonical_iso_date(self) -> None:
         text = SOURCES.read_text(encoding="utf-8").replace(
-            'retrieved_on = "2026-08-24"',
-            'retrieved_on = "20260824"',
+            'retrieved_on = "2026-08-30"',
+            'retrieved_on = "20260830"',
             1,
         )
         with tempfile.TemporaryDirectory() as directory:
-            bad_path = Path(directory) / "sources.toml"
+            root = Path(directory)
+            bad_path = root / "sources.toml"
+            jurisdictions = root / "jurisdictions.toml"
+            jurisdictions.write_text(
+                _legacy_jurisdictions_text(),
+                encoding="utf-8",
+            )
             bad_path.write_text(text, encoding="utf-8")
             with self.assertRaisesRegex(ProfileValidationError, "ISO date"):
-                load_profile_bundle(JURISDICTIONS, bad_path)
+                load_profile_bundle(
+                    jurisdictions,
+                    bad_path,
+                    source_bundle_path=None,
+                    population_bundle_path=None,
+                )
 
     def test_conversion_source_scope_and_retrieval_date_are_validated(self) -> None:
         bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
@@ -495,11 +556,12 @@ class ProfileLoadingTests(unittest.TestCase):
         conversion = _conversion_for_scale(
             scale,
             source_id=incompatible_source.id,
+            retrieved_on=incompatible_source.retrieved_on,
         )
         with self.assertRaisesRegex(ProfileValidationError, "compatible scope"):
-            replace(
+            _campaign_candidate(
                 bundle,
-                sources=sources,
+                extra_sources=(incompatible_source,),
                 monetary_conversions=(conversion,),
             )
         sources[incompatible_source.id] = replace(
@@ -507,9 +569,9 @@ class ProfileLoadingTests(unittest.TestCase):
             supports=("currency_conversion",),
         )
         with self.assertRaisesRegex(ProfileValidationError, "compatible scope"):
-            replace(
+            _campaign_candidate(
                 bundle,
-                sources=sources,
+                extra_sources=(sources[incompatible_source.id],),
                 monetary_conversions=(conversion,),
             )
 
@@ -526,21 +588,21 @@ class ProfileLoadingTests(unittest.TestCase):
             ProfileValidationError,
             "rate period does not match",
         ):
-            replace(
+            _campaign_candidate(
                 bundle,
-                sources=sources,
+                extra_sources=(sources[compatible_source.id],),
                 monetary_conversions=(conversion,),
             )
 
         sources[compatible_source.id] = compatible_source
-        wrong_date = replace(conversion, retrieved_on=date(2026, 8, 23))
+        wrong_date = replace(conversion, retrieved_on=date(2026, 8, 29))
         with self.assertRaisesRegex(
             ProfileValidationError,
             "retrieval date does not match",
         ):
-            replace(
+            _campaign_candidate(
                 bundle,
-                sources=sources,
+                extra_sources=(compatible_source,),
                 monetary_conversions=(wrong_date,),
             )
 
@@ -549,9 +611,9 @@ class ProfileLoadingTests(unittest.TestCase):
             ProfileValidationError,
             "source currency EUR does not match money-scale currency GBP",
         ):
-            replace(
+            _campaign_candidate(
                 bundle,
-                sources=sources,
+                extra_sources=(compatible_source,),
                 monetary_conversions=(wrong_currency,),
             )
 
@@ -634,9 +696,17 @@ class ProfileLoadingTests(unittest.TestCase):
             root = Path(directory)
             jurisdictions = root / "jurisdictions.toml"
             sources = root / "sources.toml"
-            jurisdictions.write_bytes(JURISDICTIONS.read_bytes())
+            jurisdictions.write_text(
+                _legacy_jurisdictions_text(),
+                encoding="utf-8",
+            )
             sources.write_bytes(SOURCES.read_bytes())
-            bundle = load_profile_bundle(jurisdictions, sources)
+            bundle = load_profile_bundle(
+                jurisdictions,
+                sources,
+                source_bundle_path=None,
+                population_bundle_path=None,
+            )
             lineage = build_profile_input_lineage(
                 bundle.country_profiles,
                 profile_bundle=bundle,
@@ -658,11 +728,7 @@ class ProfileLoadingTests(unittest.TestCase):
             jurisdictions = root / "jurisdictions.toml"
             sources = root / "sources.toml"
             jurisdictions.write_bytes(
-                JURISDICTIONS.read_text(encoding="utf-8").replace(
-                    "schema_version = 2",
-                    "schema_version = 1",
-                    1,
-                ).encode("utf-8")
+                _schema_v1_jurisdictions_text().encode("utf-8")
             )
             sources.write_bytes(SOURCES.read_text(encoding="utf-8").encode("utf-8"))
             bundle = load_profile_bundle(jurisdictions, sources)
@@ -718,7 +784,7 @@ class ProfileLoadingTests(unittest.TestCase):
         self.assertEqual(summary_count, 0)
         self.assertEqual(
             _normalized_registered_snapshot_sha(legacy.snapshot),
-            "faa2d2d297cbf5dc61adb655346d1c7032e994de873ff150dac1361bc496dba1",
+            "efcc40adc6d8b18887bb8c810131f6ceede22c6c336568fa870452c20a708e1c",
         )
 
     def test_frozen_profile_lineage_v1_and_v2_fixtures_remain_readable(self) -> None:
@@ -750,7 +816,7 @@ class ProfileLoadingTests(unittest.TestCase):
             sources = root / "sources.toml"
             jurisdictions.write_bytes(
                 (
-                    JURISDICTIONS.read_text(encoding="utf-8")
+                    _legacy_jurisdictions_text()
                     + _TEST_ONLY_UK_CONVERSION_TOML
                 ).encode("utf-8")
             )
@@ -796,6 +862,10 @@ class ProfileLoadingTests(unittest.TestCase):
                 self.assertIn("rate_binding_id", conversion)
                 conversion.pop("conversion_id")
                 conversion.pop("rate_binding_id")
+                conversion.pop("quote_convention")
+                conversion.pop("scale_convention")
+                conversion.pop("timing_convention")
+                conversion.pop("missing_date_policy")
             snapshot_json = json.dumps(
                 snapshot,
                 ensure_ascii=False,
@@ -824,7 +894,7 @@ class ProfileLoadingTests(unittest.TestCase):
         self.assertEqual(summary_count, 1)
         self.assertEqual(
             _normalized_registered_snapshot_sha(legacy.snapshot),
-            "fd1afb51a97c5f5b8a5917f21a9b0251551d8388574ecc08bbdb45f65644679f",
+            "eddad004609276b91dbe5b228efc3849665459123ee308d8dacb933c68928b02",
         )
 
     def test_profile_lineage_v2_downgrade_cannot_carry_v3_evidence(self) -> None:
@@ -877,7 +947,6 @@ class ProfileLoadingTests(unittest.TestCase):
             jurisdictions_path=None,
             jurisdictions_sha256=None,
             source_registry_path=None,
-            source_registry_sha256=None,
         )
         lineage = build_profile_input_lineage(
             unregistered_bundle.country_profiles,
@@ -920,13 +989,12 @@ class ProfileLoadingTests(unittest.TestCase):
             "monetary_evidence_assessment"
         ]
         assert isinstance(forged_structure_assessment, dict)
-        forged_structure_assessment["structure_coherent"] = True
+        forged_structure_assessment["structure_coherent"] = False
         forged_structure_blockers = forged_structure_assessment["blockers"]
         assert isinstance(forged_structure_blockers, list)
         forged_structure_assessment["blockers"] = [
-            blocker
-            for blocker in forged_structure_blockers
-            if not blocker.endswith(".monetary_conversion=missing")
+            "monetary_conversion.structure=unavailable",
+            *forged_structure_blockers,
         ]
         variants.append(forged_structure)
 
@@ -999,7 +1067,6 @@ class ProfileLoadingTests(unittest.TestCase):
                     jurisdictions_path=None,
                     jurisdictions_sha256=None,
                     source_registry_path=None,
-                    source_registry_sha256=None,
                 ),
             ).snapshot["profile_bundle"]
         )
@@ -1137,7 +1204,7 @@ class ProfileLoadingTests(unittest.TestCase):
                 "population_bases": ["test-only common population"],
                 "rate_period_ends": ["2025-12-31"],
                 "rate_period_starts": ["2025-01-01"],
-                "retrieval_dates": ["2026-08-24"],
+                "retrieval_dates": ["2026-08-30"],
                 "rounding_scopes": ["AFTER_AGGREGATION"],
                 "source_currencies": ["EUR", "GBP", "JPY", "KRW"],
                 "target_currencies": ["TST"],
@@ -1185,7 +1252,6 @@ class ProfileLoadingTests(unittest.TestCase):
             jurisdictions_path=None,
             source_registry_path=None,
             jurisdictions_sha256=None,
-            source_registry_sha256=None,
         )
         incomplete_lineage = build_profile_input_lineage(
             incomplete.country_profiles,
@@ -1227,7 +1293,7 @@ class ProfileLoadingTests(unittest.TestCase):
     def test_campaign_rejects_every_non_calibrated_dependency(self) -> None:
         with self.assertRaisesRegex(
             ProfileValidationError,
-            "monetary comparability: UK.monetary_conversion=missing",
+            "monetary comparability:.*source_bundle_signature=missing",
         ):
             load_profile_bundle(JURISDICTIONS, SOURCES, campaign=True)
         with self.assertRaisesRegex(ProfileValidationError, "CALIBRATED"):
@@ -1304,7 +1370,7 @@ class ProfileLoadingTests(unittest.TestCase):
                 ):
                     inconsistent.validate_monetary_comparability_for_campaign()
 
-    def test_campaign_rejects_incoherent_internal_monetary_scale(self) -> None:
+    def test_structure_allows_jurisdiction_specific_exact_scale_ratios(self) -> None:
         bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
         candidate = _coherent_campaign_candidate(bundle)
         final = candidate.monetary_conversions[-1]
@@ -1314,11 +1380,17 @@ class ProfileLoadingTests(unittest.TestCase):
             monetary_conversions=(*candidate.monetary_conversions[:-1], changed),
         )
 
-        with self.assertRaisesRegex(
-            ProfileValidationError,
-            "monetary_conversion.internal_scale=incoherent",
-        ):
-            incoherent.validate_monetary_comparability_for_campaign()
+        incoherent.validate_monetary_contract_structure()
+        self.assertNotEqual(
+            {
+                scale.currency_scale_to_sim
+                / incoherent.monetary_conversion(
+                    scale.jurisdiction_code
+                ).conversion_ratio
+                for scale in incoherent.money_scales
+            },
+            {Fraction(1, 1)},
+        )
 
     def test_campaign_checks_source_referenced_only_by_money_scale(self) -> None:
         bundle = load_profile_bundle(JURISDICTIONS, SOURCES)
@@ -1408,7 +1480,7 @@ def _conversion_for_scale(
     scale: MoneyScaleContract,
     *,
     source_id: str,
-    retrieved_on: date = date(2026, 8, 24),
+    retrieved_on: date = date(2026, 8, 30),
 ) -> MonetaryConversionContract:
     """Make an algebraically coherent test contract, never an empirical rate."""
 

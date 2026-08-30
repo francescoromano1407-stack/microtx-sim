@@ -379,7 +379,7 @@ class OutputMetricContractTests(unittest.TestCase):
             lineage["profile_input_fingerprint_sha256"],
             self.batch.profile_input_lineage.fingerprint_sha256,
         )
-        self.assertEqual(lineage["profile_source_retrieved_on"], "2026-08-24")
+        self.assertEqual(lineage["profile_source_retrieved_on"], "2026-08-30")
         self.assertFalse(lineage["profile_dependencies_calibrated"])
         self.assertFalse(lineage["monetary_outputs_cross_country_comparable"])
         comparability = manifest["monetary_comparability"]
@@ -390,11 +390,11 @@ class OutputMetricContractTests(unittest.TestCase):
         self.assertFalse(
             comparability["manifest_gate"]["public_output_comparability"]
         )
-        self.assertFalse(
+        self.assertTrue(
             comparability["manifest_gate"]["source_rate_evidence_bound"]
         )
         self.assertIn(
-            "monetary_conversion.source_rate_binding=missing",
+            "monetary_conversion.source_bundle_signature=missing",
             comparability["typed_assessment"]["blockers"],
         )
         self.assertIn(

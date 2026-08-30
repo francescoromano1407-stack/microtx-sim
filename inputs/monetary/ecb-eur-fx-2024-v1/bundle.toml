@@ -1,0 +1,86 @@
+schema_version = 1
+bundle_id = "ecb-eur-fx-2024-v1"
+provenance_status = "CALIBRATED"
+source_registry_sha256 = "2eaf3e2230d7fa50568bafb4be7534da23b1442d708713812146414c25f6f09e"
+artifact_root = "artifacts"
+notes = "Unmodified official ECB Data Portal EXR response bytes, an explicit conversion table, and exact decimal-to-rational transformations for the 2024 annual-average observations. SHA-256 fingerprints attest checked-in bytes only; no authentic publisher or repository signature is available."
+
+[[artifacts]]
+artifact_id = "ecb-eur-fx-2024-conversion-rates"
+relative_path = "conversion_rates.csv"
+media_type = "text/csv"
+sha256 = "e1277dca9c457a0881ae7dc624f0748aa371159d91d7c081decf9ed15e0e528a"
+byte_length = 2847
+
+[[artifacts]]
+artifact_id = "ecb-exr-annual-2024-official-response"
+relative_path = "ecb_exr_annual_2024.csv"
+media_type = "text/csv"
+sha256 = "b0fb474d450be165866f0b0e034681132ebb984da68bf2101bd40682f1099e86"
+byte_length = 967
+
+[[bindings]]
+binding_id = "be-eur-eur-identity-2024"
+artifact_id = "ecb-eur-fx-2024-conversion-rates"
+source_id = "ECB_EXR_A_2024_EUR"
+jurisdiction_code = "BE"
+source_currency = "EUR"
+target_currency = "EUR"
+method = "FX"
+rate_period_start = 2024-01-01
+rate_period_end = 2024-12-31
+retrieved_on = 2026-08-30
+rate_numerator = 1
+rate_denominator = 1
+recipe_json = "{\"denominator_column\":\"rate_denominator\",\"interpreter\":\"exact_csv_positive_rational/1\",\"numerator_column\":\"rate_numerator\",\"row_match\":{\"jurisdiction_code\":\"BE\",\"method\":\"FX\",\"rate_period_end\":\"2024-12-31\",\"rate_period_start\":\"2024-01-01\",\"retrieved_on\":\"2026-08-30\",\"source_currency\":\"EUR\",\"source_id\":\"ECB_EXR_A_2024_EUR\",\"target_currency\":\"EUR\"},\"schema_version\":1}"
+
+[[bindings]]
+binding_id = "jp-jpy-eur-ecb-annual-2024"
+artifact_id = "ecb-exr-annual-2024-official-response"
+source_id = "ECB_EXR_A_2024_EUR"
+jurisdiction_code = "JP"
+source_currency = "JPY"
+target_currency = "EUR"
+method = "FX"
+rate_period_start = 2024-01-01
+rate_period_end = 2024-12-31
+retrieved_on = 2026-08-30
+rate_numerator = 2560000
+rate_denominator = 4194609
+recipe_json = "{\"interpreter\":\"ecb_exr_source_per_eur_to_target_minor_rational/1\",\"observation_column\":\"OBS_VALUE\",\"row_match\":{\"jurisdiction_code\":\"JP\",\"method\":\"FX\",\"rate_period_end\":\"2024-12-31\",\"rate_period_start\":\"2024-01-01\",\"retrieved_on\":\"2026-08-30\",\"source_currency\":\"JPY\",\"source_id\":\"ECB_EXR_A_2024_EUR\",\"target_currency\":\"EUR\"},\"schema_version\":1,\"source_minor_unit_exponent\":0,\"source_row_match\":{\"CURRENCY\":\"JPY\",\"CURRENCY_DENOM\":\"EUR\",\"EXR_SUFFIX\":\"A\",\"EXR_TYPE\":\"SP00\",\"FREQ\":\"A\",\"KEY\":\"EXR.A.JPY.EUR.SP00.A\",\"TIME_PERIOD\":\"2024\"},\"target_minor_unit_exponent\":2}"
+
+[[bindings]]
+binding_id = "kr-krw-eur-ecb-annual-2024"
+artifact_id = "ecb-exr-annual-2024-official-response"
+source_id = "ECB_EXR_A_2024_EUR"
+jurisdiction_code = "KR"
+source_currency = "KRW"
+target_currency = "EUR"
+method = "FX"
+rate_period_start = 2024-01-01
+rate_period_end = 2024-12-31
+retrieved_on = 2026-08-30
+rate_numerator = 500000000000000
+rate_denominator = 7377020507812499
+recipe_json = "{\"interpreter\":\"ecb_exr_source_per_eur_to_target_minor_rational/1\",\"observation_column\":\"OBS_VALUE\",\"row_match\":{\"jurisdiction_code\":\"KR\",\"method\":\"FX\",\"rate_period_end\":\"2024-12-31\",\"rate_period_start\":\"2024-01-01\",\"retrieved_on\":\"2026-08-30\",\"source_currency\":\"KRW\",\"source_id\":\"ECB_EXR_A_2024_EUR\",\"target_currency\":\"EUR\"},\"schema_version\":1,\"source_minor_unit_exponent\":0,\"source_row_match\":{\"CURRENCY\":\"KRW\",\"CURRENCY_DENOM\":\"EUR\",\"EXR_SUFFIX\":\"A\",\"EXR_TYPE\":\"SP00\",\"FREQ\":\"A\",\"KEY\":\"EXR.A.KRW.EUR.SP00.A\",\"TIME_PERIOD\":\"2024\"},\"target_minor_unit_exponent\":2}"
+
+[[bindings]]
+binding_id = "uk-gbp-eur-ecb-annual-2024"
+artifact_id = "ecb-exr-annual-2024-official-response"
+source_id = "ECB_EXR_A_2024_EUR"
+jurisdiction_code = "UK"
+source_currency = "GBP"
+target_currency = "EUR"
+method = "FX"
+rate_period_start = 2024-01-01
+rate_period_end = 2024-12-31
+retrieved_on = 2026-08-30
+rate_numerator = 5120000
+rate_denominator = 4334677
+recipe_json = "{\"interpreter\":\"ecb_exr_source_per_eur_to_target_minor_rational/1\",\"observation_column\":\"OBS_VALUE\",\"row_match\":{\"jurisdiction_code\":\"UK\",\"method\":\"FX\",\"rate_period_end\":\"2024-12-31\",\"rate_period_start\":\"2024-01-01\",\"retrieved_on\":\"2026-08-30\",\"source_currency\":\"GBP\",\"source_id\":\"ECB_EXR_A_2024_EUR\",\"target_currency\":\"EUR\"},\"schema_version\":1,\"source_minor_unit_exponent\":2,\"source_row_match\":{\"CURRENCY\":\"GBP\",\"CURRENCY_DENOM\":\"EUR\",\"EXR_SUFFIX\":\"A\",\"EXR_TYPE\":\"SP00\",\"FREQ\":\"A\",\"KEY\":\"EXR.A.GBP.EUR.SP00.A\",\"TIME_PERIOD\":\"2024\"},\"target_minor_unit_exponent\":2}"
+
+[signature]
+status = "MISSING"
+algorithm = "NONE"
+key_id = ""
+value = ""
