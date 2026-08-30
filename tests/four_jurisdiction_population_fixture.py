@@ -175,7 +175,7 @@ zero_spender_treatment = "retained as never-payer cells"
 estimand_role = "{role.value}"
 status = "CALIBRATED"
 source_ids = ["{_source_id(code, role)}"]
-retrieved_on = 2026-08-29
+retrieved_on = 2026-08-24
 recipe_json = {json.dumps(recipe)}
 
 '''

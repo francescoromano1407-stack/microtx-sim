@@ -78,7 +78,6 @@ _CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
     "analysis_binding.external_registration=unregistered",
     "analysis_binding.schema_v2=campaign_ineligible",
     "analysis_binding.execution_calendar_anchor=unbound",
-    "analysis_binding.cross_seed_aggregation_uncertainty=unresolved",
     "analysis_binding.model_implementation_environment_identity=unbound",
 )
 
@@ -548,7 +547,7 @@ class RunAnalysisBinding:
                 "resolved writer estimand IDs must be unique"
             )
         if self.output_profile_schema_sha256 != (
-            _target_output_profile_sha256()
+            _plan_output_profile_sha256(self.plan)
         ):
             raise AnalysisBindingValidationError(
                 "run binding targets the wrong output-profile schema"
@@ -597,7 +596,7 @@ class RunAnalysisBinding:
                 self.metric_contract_registry_sha256
             ),
             "harm_weights_sha256": self.harm_weights_sha256,
-            "output_profile_id": TARGET_POPULATION_OUTPUT_PROFILE,
+            "output_profile_id": _plan_output_profile_id(self.plan),
             "output_profile_schema_sha256": self.output_profile_schema_sha256,
             "seeds": list(self.seeds),
             "seed_decimal_strings": [str(seed) for seed in self.seeds],
@@ -676,7 +675,7 @@ def validate_analysis_plan_inputs(
                 run_inputs.harm_weights
             ),
             output_profile_sha256=(
-                _target_output_profile_sha256()
+                _plan_output_profile_sha256(plan)
             ),
             seeds=batch_spec.seeds,
         )
@@ -893,7 +892,7 @@ def resolve_run_analysis_binding(
             metric_contract_registry_sha256=metric_registry_sha256,
             harm_weights_sha256=harm_weights_sha256,
             output_profile_schema_sha256=(
-                _target_output_profile_sha256()
+                _plan_output_profile_sha256(plan)
             ),
             seeds=plan.stopping_rule.seeds,
             seed_bindings=tuple(seed_bindings),
@@ -1668,9 +1667,9 @@ def _run_attestation_payload(
         "population_lineage_sha256": population_lineage_sha256,
         "metric_contract_registry_sha256": metric_contract_registry_sha256,
         "harm_weights_sha256": harm_weights_sha256,
-        "output_profile_id": TARGET_POPULATION_OUTPUT_PROFILE,
+        "output_profile_id": _plan_output_profile_id(plan),
         "output_profile_schema_sha256": (
-            _target_output_profile_sha256()
+            _plan_output_profile_sha256(plan)
         ),
         "seeds": list(seeds),
         "seed_decimal_strings": [str(seed) for seed in seeds],
@@ -1721,6 +1720,24 @@ def _target_output_profile_sha256() -> str:
     from ..outputs.schema import TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
 
     return TARGET_POPULATION_ESTIMAND_SCHEMA_SHA256
+
+
+def _plan_output_profile_sha256(plan: ProspectiveAnalysisPlan) -> str:
+    from .analysis_plan import PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+    from ..outputs.schema import PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
+
+    if plan.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+        return PROSPECTIVE_ANALYSIS_SCHEMA_SHA256
+    return _target_output_profile_sha256()
+
+
+def _plan_output_profile_id(plan: ProspectiveAnalysisPlan) -> str:
+    from .analysis_plan import PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+    from ..outputs.schema import PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE
+
+    if plan.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+        return PROSPECTIVE_ANALYSIS_OUTPUT_PROFILE
+    return TARGET_POPULATION_OUTPUT_PROFILE
 
 
 def _canonical_sha256(payload: object) -> str:

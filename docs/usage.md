@@ -39,7 +39,9 @@ write artifacts. The expected mode is `synthetic_policy_prototype`, and
 
 ### Opt into projected-population execution
 
-A custom market or policy configuration may add all four keys below:
+A custom market or policy configuration may add the four projection keys
+below. A self-contained illustrative profile may also bind the optional paired
+`evidence_bundle_path` and `source_registry_path` locators.
 
 ```toml
 [population]
@@ -47,6 +49,9 @@ mode = "projected_v1"
 design_bundle_path = "../data/provenance/population_design.toml"
 runtime_mapping_bundle_path = "../data/provenance/population_runtime_mapping.json"
 adapter_id = "reviewed.population.adapter.v1"
+# Optional, but required together when the run does not use registered defaults:
+evidence_bundle_path = "../inputs/population-bundle.toml"
+source_registry_path = "../inputs/population-sources.toml"
 ```
 
 Paths are relative to the configuration file unless absolute. Validation then
@@ -55,10 +60,12 @@ before any cohort is created. The mapping must explicitly translate every
 static household-income/type key to runtime personal monthly disposable-income
 and modeled-household semantics. The adapter uses the design plan's exact
 counts and weights; it does not make a second allocation. The ordinary supplied
-development configs omit this section, so the commands shown here use the legacy
-marginal initializer by default. `policy_campaign.toml` selects the checked-in
+prototype, smoke, and development configs omit this section and use the legacy
+marginal initializer by default. `configs/policy_prospective.toml` selects the
+checked-in illustrative/test population inputs and the concrete plan; use
+`policy-validate` on that config for non-executing preflight. Its test
+provenance is not campaign-ready. `policy_campaign.toml` selects the checked-in
 mapping but is deliberately blocked before treatment.
-
 ## Run the seven-scenario batch
 
 ```text

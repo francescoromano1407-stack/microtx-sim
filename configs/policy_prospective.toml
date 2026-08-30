@@ -1,0 +1,81 @@
+[meta]
+name = "illustrative_prospective_composite_harm_analysis"
+provenance_status = "synthetic"
+notes = "Opt-in illustrative/test analysis only; unregistered and not campaign-ready."
+
+[policy_run]
+seeds = [101, 202, 303]
+days = 14
+player_count = 16
+
+[decision]
+step_minutes = 60
+temperature = 0.65
+habit_persistence = 0.97
+habit_learning_rate = 0.025
+reinforcement_learning_rate = 0.12
+
+[harm]
+affordable_spending_share = 0.10
+opaque_spending_weight = 0.35
+random_reward_spending_weight = 0.35
+time_pressure_spending_weight = 0.35
+sleep_debt_weight = 0.25
+
+[harm_weights]
+monetary = 1.0
+opportunity_cost = 1.0
+sleep = 1.0
+education_work = 1.0
+family_social = 1.0
+wellbeing = 1.0
+
+[opportunity_valuation]
+adult_sleep_hour_cents = 600
+adult_work_study_hour_cents = 1800
+adult_social_hour_cents = 500
+adult_physical_activity_hour_cents = 450
+youth_sleep_hour_cents = 400
+youth_education_hour_cents = 500
+youth_family_social_hour_cents = 350
+youth_physical_activity_hour_cents = 300
+
+[producer]
+development_cost_cents = 1200000
+maintenance_cost_cents_per_day = 20000
+institutional_license_count = 20
+institutional_license_price_cents = 12000
+non_targeted_sponsorship_revenue_cents = 100000
+accessibility_eligible = true
+multilingual_support_eligible = true
+cultural_value_eligible = true
+safety_certified = true
+
+[epgc]
+access_payment_cents_per_eligible_access = 250
+institutional_license_payment_cents_per_license = 8000
+availability_payment_cents_per_period = 300000
+accessibility_bonus_cents = 120000
+multilingual_bonus_cents = 100000
+cultural_value_bonus_cents = 100000
+safety_certification_bonus_cents = 150000
+prohibited_mechanics_penalty_cents = 100000
+prohibited_mechanics_clawback_basis_points = 10000
+maximum_budget_cents = 3000000
+
+[output]
+output_dir = "artifacts/policy_prospective"
+histogram_bins = 20
+include_player_rows = true
+run_sensitivity = false
+
+[population]
+mode = "projected_v1"
+design_bundle_path = "../inputs/illustrative_population/population_design.toml"
+runtime_mapping_bundle_path = "../inputs/illustrative_population/runtime_mapping.json"
+adapter_id = "test.four-jurisdiction.population-projection"
+evidence_bundle_path = "../inputs/illustrative_population/population_bundle.toml"
+source_registry_path = "../inputs/illustrative_population/population_sources.toml"
+
+[analysis_plan]
+plan_path = "../inputs/prospective-analysis-plan.json"

@@ -1,0 +1,418 @@
+schema_version = 1
+design_id = "test-four-jurisdiction-population-design"
+provenance_status = "CALIBRATED"
+notes = "Test-only exact static design; authenticity remains unverified."
+population_evidence_bundle_sha256 = "5b2606d397c000c73772326e024e6f25290b633732f54e3c89447288329121b7"
+population_evidence_result_sha256s = ["efef5831a42bbf0561f4079bce858a04ec688530c5f1b86e74b9f0da899b5f50", "1b6f67b803147d40462ba4bd988313e01f66725c800ab67c93582d3fe9f6c4ea", "9a19faa1d7edda9e201336643705f75ab3ef048a8321e3c0b9a61df37847f5cc", "db5477305ce2fffd9e2e887a6e9e0f549b87ef8861ffde5c2e8f4a0822d2d4d9", "e32e8e65f4fad131ea1a5f59fd756bbd57fbd2b4867dc94f9691c7ad2bfc56d1", "97c0ce4df69801e0d25921d7b4ea7ad1299557706654fa7a385bf72f98be4f48", "9491cd4ff1cc17394d1c31da36d3dcf92ac2fdd5751a89c3bef37dcf0132090f", "f496566ecb937e95c0bcff9e1c7568acf930a80cc962b52d6707440be262de0a"]
+hamilton_recipe = "exact_rational_hamilton/1"
+
+[domains]
+income_missing_policy = "REJECT"
+household_missing_policy = "REJECT"
+gaming_states = ["GAMER", "NON_GAMER"]
+payer_history_states = ["EVER_PAYER", "NEVER_PAYER"]
+
+[[domains.age_bands]]
+ordinal = 0
+age_band_id = "age.10-69"
+age_min_inclusive = 10
+age_max_exclusive = 70
+
+[[domains.income_bands]]
+ordinal = 0
+jurisdiction_code = "BE"
+income_band_id = "income.all"
+definition = "all harmonized household-income categories"
+currency = "EUR"
+period = "annual"
+lower_unbounded = true
+lower_bound_numerator = 0
+lower_bound_denominator = 1
+upper_unbounded = true
+upper_bound_numerator = 0
+upper_bound_denominator = 1
+
+[[domains.income_bands]]
+ordinal = 0
+jurisdiction_code = "JP"
+income_band_id = "income.all"
+definition = "all harmonized household-income categories"
+currency = "JPY"
+period = "annual"
+lower_unbounded = true
+lower_bound_numerator = 0
+lower_bound_denominator = 1
+upper_unbounded = true
+upper_bound_numerator = 0
+upper_bound_denominator = 1
+
+[[domains.income_bands]]
+ordinal = 0
+jurisdiction_code = "KR"
+income_band_id = "income.all"
+definition = "all harmonized household-income categories"
+currency = "KRW"
+period = "annual"
+lower_unbounded = true
+lower_bound_numerator = 0
+lower_bound_denominator = 1
+upper_unbounded = true
+upper_bound_numerator = 0
+upper_bound_denominator = 1
+
+[[domains.income_bands]]
+ordinal = 0
+jurisdiction_code = "UK"
+income_band_id = "income.all"
+definition = "all harmonized household-income categories"
+currency = "GBP"
+period = "annual"
+lower_unbounded = true
+lower_bound_numerator = 0
+lower_bound_denominator = 1
+upper_unbounded = true
+upper_bound_numerator = 0
+upper_bound_denominator = 1
+
+[[domains.household_types]]
+ordinal = 0
+household_type_id = "household.all"
+definition = "all declared source household types"
+
+[[jurisdictions]]
+jurisdiction_code = "BE"
+target_population_count = 400
+calibration_binding_id = "00.be.calibration"
+calibration_target_population_id = "be.fixture.calibration"
+calibration_evidence_sha256 = "efef5831a42bbf0561f4079bce858a04ec688530c5f1b86e74b9f0da899b5f50"
+validation_binding_id = "01.be.validation"
+validation_target_population_id = "be.fixture.validation"
+validation_evidence_sha256 = "1b6f67b803147d40462ba4bd988313e01f66725c800ab67c93582d3fe9f6c4ea"
+
+[[jurisdictions]]
+jurisdiction_code = "JP"
+target_population_count = 400
+calibration_binding_id = "02.jp.calibration"
+calibration_target_population_id = "jp.fixture.calibration"
+calibration_evidence_sha256 = "9a19faa1d7edda9e201336643705f75ab3ef048a8321e3c0b9a61df37847f5cc"
+validation_binding_id = "03.jp.validation"
+validation_target_population_id = "jp.fixture.validation"
+validation_evidence_sha256 = "db5477305ce2fffd9e2e887a6e9e0f549b87ef8861ffde5c2e8f4a0822d2d4d9"
+
+[[jurisdictions]]
+jurisdiction_code = "KR"
+target_population_count = 400
+calibration_binding_id = "04.kr.calibration"
+calibration_target_population_id = "kr.fixture.calibration"
+calibration_evidence_sha256 = "e32e8e65f4fad131ea1a5f59fd756bbd57fbd2b4867dc94f9691c7ad2bfc56d1"
+validation_binding_id = "05.kr.validation"
+validation_target_population_id = "kr.fixture.validation"
+validation_evidence_sha256 = "97c0ce4df69801e0d25921d7b4ea7ad1299557706654fa7a385bf72f98be4f48"
+
+[[jurisdictions]]
+jurisdiction_code = "UK"
+target_population_count = 400
+calibration_binding_id = "06.uk.calibration"
+calibration_target_population_id = "uk.fixture.calibration"
+calibration_evidence_sha256 = "9491cd4ff1cc17394d1c31da36d3dcf92ac2fdd5751a89c3bef37dcf0132090f"
+validation_binding_id = "07.uk.validation"
+validation_target_population_id = "uk.fixture.validation"
+validation_evidence_sha256 = "f496566ecb937e95c0bcff9e1c7568acf930a80cc962b52d6707440be262de0a"
+
+[partition]
+identity_namespace = "test.four-jurisdiction.population.units"
+record_id_recipe = "canonical_source_record_sha256/1"
+cluster_id_recipe = "canonical_source_cluster_sha256/1"
+role_assignment_recipe = "sha256_cluster_threshold/1"
+assignment_seed_sha256 = "4444444444444444444444444444444444444444444444444444444444444444"
+calibration_threshold_numerator = 1
+calibration_threshold_denominator = 2
+
+[[partition.records]]
+record_identity_sha256 = "00fb1698b644bab265b5757470bcc79c1ed98b04da4657a59eb76e3fd34539ca"
+cluster_identity_sha256 = "9b107628a050ddba1b72624b32d18d1be3cab9cbc8b37b0e3d3fede3c8f2ad3f"
+estimand_role = "VALIDATION"
+binding_id = "03.jp.validation"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "04710b26951d7738297ec19f81c343ca9f3327cbee86caa6faa70aba99935544"
+cluster_identity_sha256 = "7d6d72618fa4170836519bcf9dde0779b1a0e3e38f1d3e508c6f3b102d22c41a"
+estimand_role = "CALIBRATION"
+binding_id = "06.uk.calibration"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "0ba50300031ea97763695e432888c00383f9182d986a9615ac862a078864a277"
+cluster_identity_sha256 = "afd9616b8dac05707838c841d9d10e1ad8c174435ee948adaf2799f0ae9e5dd9"
+estimand_role = "VALIDATION"
+binding_id = "05.kr.validation"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "19d28e63b07e7f80f76e192c1d8e65aca8cc3b163e5be6505fbbaccf77acd7f4"
+cluster_identity_sha256 = "3e18e6209573860a5d5d7759cb7dbcb765af48129614855f7a81bc7001bb4bff"
+estimand_role = "VALIDATION"
+binding_id = "07.uk.validation"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "20ca76e5844afbc1e25c7e07c254637f39ca5c356045acff2db8929ed837204c"
+cluster_identity_sha256 = "27ba9b0b6da8e2ac84271f7ebe8edc6c98afe6d8c9dcefa291395c4eef5d1a4a"
+estimand_role = "CALIBRATION"
+binding_id = "00.be.calibration"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "329bc14dcb49e84553a8d160f8b090b24ccf0a77db6180f6c1bdf368357c376e"
+cluster_identity_sha256 = "25021b2342222d6861a08df184fbf79af6bc70d225228873c9952288ef29d16f"
+estimand_role = "CALIBRATION"
+binding_id = "06.uk.calibration"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "378f0d9b47bdb6d4a0792307e2ebf063f25066a6b0e5687d509450023abf5578"
+cluster_identity_sha256 = "a97938ac2adbcffc7d238a403921be9c32be69316ff83b582ce37538bce2aad0"
+estimand_role = "VALIDATION"
+binding_id = "01.be.validation"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "3d6c4df91f88059d0693fb7ce68bdba14ec9a01d5ef4acfaa0383c8d47be49d4"
+cluster_identity_sha256 = "d910a06037fcf66ab3dbe1d6e48cd51660aa7669cd5bf4a8dc613172b58f21a2"
+estimand_role = "CALIBRATION"
+binding_id = "04.kr.calibration"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "40f5f32cfe0aab3ac0a7508fc393df70f53f815e15184b745864df5a0ddc2f05"
+cluster_identity_sha256 = "1606830b6018d79fab4e1a31202a12cd8b5d3b67b5bfc5ae76da5efdbdf13428"
+estimand_role = "CALIBRATION"
+binding_id = "06.uk.calibration"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "463eaf4c8789756efdc02665efef631166f1ff2e8b793f1901423e29f784ca24"
+cluster_identity_sha256 = "427e39e0355864b2c4a06321bc4bb7d5d723b5ff02b61ad5a69bac257ee98b07"
+estimand_role = "VALIDATION"
+binding_id = "03.jp.validation"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "46a8e37a98d78ba48181af900f801fac32daa9ef6c7dc40006a18c9dba701b91"
+cluster_identity_sha256 = "a30ee19f2c2e19d5062afa8b6df50a089e49a700e368a4568f5a6b0fa16778a4"
+estimand_role = "VALIDATION"
+binding_id = "01.be.validation"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "47c05a66b6c73f193a2452ffdcd0bacc78b92a98931deae8f7ad8956e7e46be9"
+cluster_identity_sha256 = "8ca977af3c473ce7af19a5d7012392774400c73b691913b70a476878d8b3be14"
+estimand_role = "VALIDATION"
+binding_id = "05.kr.validation"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "4c76522f18cfd85f5893322326bc3b84faf9a4420518594591c8d137f367f466"
+cluster_identity_sha256 = "0924b4412dcd08883bb29dd2fdba04a3fc92116ad94a9fe81f09a3c0e1aa60ba"
+estimand_role = "CALIBRATION"
+binding_id = "00.be.calibration"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "4f2afa9f4f7e0f5aaf1dd301d5e049e99a53e6bb462b1bebab08e0845333b116"
+cluster_identity_sha256 = "023a025d5c4dc9fcf038717ca68a4cf2694a357ef13a3bb728a2dc5a3b6aa12f"
+estimand_role = "VALIDATION"
+binding_id = "01.be.validation"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "59d2337e5ab0e6ad27e734cd412fc8e6e336b0ce08003100418c78664052fb33"
+cluster_identity_sha256 = "560f94837f4c5288948da850b6dabce718ff914b0a18d9ac32b93361a2d2a109"
+estimand_role = "VALIDATION"
+binding_id = "07.uk.validation"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "611db29833a51086174f1e15f2a4e46b3a12f918a27acb1130632ca7e940c6b5"
+cluster_identity_sha256 = "6d313dbb64d4cb0b48a77c17ca160179b1cd119ed482f0a925adf3540f0b5c06"
+estimand_role = "VALIDATION"
+binding_id = "05.kr.validation"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "622d1fc95ef745919f6753dfd6113221914b5e121899267a5c4503bc8e801315"
+cluster_identity_sha256 = "4c6d92075779d320d8eaa66193523e0cd6c2e9aa4e2c31a963fc34df84f125b9"
+estimand_role = "CALIBRATION"
+binding_id = "02.jp.calibration"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "67a1818f14adba242560068e917fb1670d58b9f73eb3f2eecc6a08de1ad9b7eb"
+cluster_identity_sha256 = "576c9e4a2010358df54074e1c97f21867e1e072177dfbe0158f17396a2218549"
+estimand_role = "CALIBRATION"
+binding_id = "06.uk.calibration"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "7417327380dec64ff13ceb409b743ab94bc88f5e98a2fa5799698f1aff26b80a"
+cluster_identity_sha256 = "429b20da69d3d2e9c8d68c759bdb80d899817ab737affef358cf7e12c49b34b1"
+estimand_role = "CALIBRATION"
+binding_id = "02.jp.calibration"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "77ea115fe77b04a0f894467fe73ac6ded3ec88919a407f2b422ae304fd8bcefe"
+cluster_identity_sha256 = "db3e55983c368c8d145bb0961eadcd5cff89d2b55e358d1db490c98f8b77f50d"
+estimand_role = "VALIDATION"
+binding_id = "07.uk.validation"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "92c0ae9a08239442585677dc34f1021682e0307d950208008e22a2c1e2efe5d0"
+cluster_identity_sha256 = "6eee6be8e7cc32c73a39c261b20fa07f9391a60f9c12a38ec2b217d821e4db69"
+estimand_role = "CALIBRATION"
+binding_id = "04.kr.calibration"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "ae422a3f187580612ffd068ffcdd87b22a5a490583f0bff5bf570075b053b709"
+cluster_identity_sha256 = "15f46c6bf54caf79b8c6999b3a50655e5bafe8666e6ec6a5dfa36a11668aec85"
+estimand_role = "VALIDATION"
+binding_id = "03.jp.validation"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "b4e6cf17015f4543708c8b8e1b565b308d3527d6afab02206803ba2c542ab1b6"
+cluster_identity_sha256 = "f46960dee929fe1cc4c414571555461c0fcded48b559bb8aab06f5c5d3333847"
+estimand_role = "CALIBRATION"
+binding_id = "04.kr.calibration"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "b50979c06eee8ea90525f10d4c2ff6831872e3f350f5733b4fe3ce818c6df327"
+cluster_identity_sha256 = "a965aaca89540d68bd5e344524e5b5f133ab64cf7f699e59da5f8935be7870a4"
+estimand_role = "CALIBRATION"
+binding_id = "00.be.calibration"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "cbeaeea05d9bf8aee97b6c45000035eb9e3125c7e15e819b170f068741919652"
+cluster_identity_sha256 = "b953fede211e805cad8cc88d0787af2d95d655c50e37cbdb1358f3611c02d05d"
+estimand_role = "VALIDATION"
+binding_id = "07.uk.validation"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "cdf841d303dcad48dcfa7dc075b00eeb6ee2eb4e583efb80c3b9cf95d8243e36"
+cluster_identity_sha256 = "bb19476b3966fc7bb6eaa95343eea5b9f08f77490887b46f95a4057ac212c9a0"
+estimand_role = "CALIBRATION"
+binding_id = "02.jp.calibration"
+cell_id = "cell.02"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "d4985e6391faf9c87a3b389ec2aeaf724b971ff1d2bec5133b011862513983db"
+cluster_identity_sha256 = "5ed88ad01a078f979874dce5709422979a4c41d810fabb2fd73859ffb6583e7c"
+estimand_role = "CALIBRATION"
+binding_id = "00.be.calibration"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "db42a890e5ce64dca9e2d4d82e17f5f188b853740a6ae94463202f4db8063b95"
+cluster_identity_sha256 = "b541cf6baca0bd5e84f48a3b658fe03e1b19d54920d41380f61c57cd53d46da8"
+estimand_role = "CALIBRATION"
+binding_id = "02.jp.calibration"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "f7b820580736effe0c56ac8a58a79b5e46e21baebe9b2ad5ee4ceaf498d1097b"
+cluster_identity_sha256 = "be7a8a77c9231f1cbb18c4a357dc750f0405fe3df1dfd529b72b01bc319069b4"
+estimand_role = "VALIDATION"
+binding_id = "01.be.validation"
+cell_id = "cell.01"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "f8287a8af773031dff3fcd030737e9d99581ea7e4a93e115a3de62f406f21e17"
+cluster_identity_sha256 = "cf026df7dd3e308f577133160032a2a2229f27e6e531c35bf08235a36d95c138"
+estimand_role = "CALIBRATION"
+binding_id = "04.kr.calibration"
+cell_id = "cell.03"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "fc5564b28800901df791d18793b3a622df5a949f3bf5cb75f949537c9fb0eb2e"
+cluster_identity_sha256 = "86ef688fc9637f2a6691f5c898204b7d0e677d0bd97288c8fc4c3dfc4ebd83d0"
+estimand_role = "VALIDATION"
+binding_id = "03.jp.validation"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+
+[[partition.records]]
+record_identity_sha256 = "ff4efc2f97498b9919873d1c3797629897b98fa4686c1e311f90a09d599b838a"
+cluster_identity_sha256 = "ba9894698ee801cae4cf1e45162957ac7f16e219af1ddaf227f9c2b7f81307e8"
+estimand_role = "VALIDATION"
+binding_id = "05.kr.validation"
+cell_id = "cell.00"
+record_weight_numerator = 1
+record_weight_denominator = 4
+

@@ -90,12 +90,14 @@ These tasks block scientific interpretation.
    seeds, harm weights, output/metric identities, and an executable
    pre-treatment population predicate. It validates expected inputs before
    scenario execution and binds exact per-seed realizations afterward to
-   population weights and balance lineage in a separate output profile. It does
-   not define a run-level primary aggregate or Monte Carlo uncertainty summary.
+   population weights and balance lineage in a separate output profile. Schema
+   v2 now defines an outcome-blind equal-seed primary mean, sample SD, Monte
+   Carlo standard error, and normal 95% Monte Carlo interval.
    Declared period dates are not executed calendar anchors; only their inclusive
    duration is checked against the batch horizon, with one declared day for a
-   zero-day structural snapshot. No plan is checked in; schema v1 is necessarily
-   unregistered and remains `campaign_ready=false`. A money-valued planned
+   zero-day structural snapshot. One illustrative schema-v2 plan is checked in
+   and selected only by a dedicated opt-in config; it is unregistered and
+   remains `campaign_ready=false`. A money-valued planned
    estimand must additionally select the opt-in prospective money execution and
    otherwise fails before treatment. That execution creates target-currency-
    equivalent model amounts by applying one jurisdiction-specific composite to
@@ -103,9 +105,9 @@ These tasks block scientific interpretation.
    the nearest signed minor unit with half ties away from zero. It does not
    reconstruct nominal local currency, and only the separate prospective profile
    receives the converted values and lineage. Legacy root output-v3 remains in
-   unchanged simulation cents. Calendar anchoring, cross-seed aggregation and
-   uncertainty, and model implementation/environment identity remain explicit
-   campaign blockers.
+   unchanged simulation cents. Calendar anchoring, empirical uncertainty and
+   convergence justification, and model implementation/environment identity
+   remain explicit campaign blockers.
 
    This P0 item remains open because exact execution does not provide an
    authenticated and calibrated target, an independently verified holdout, a

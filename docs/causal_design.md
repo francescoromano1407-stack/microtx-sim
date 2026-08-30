@@ -167,6 +167,11 @@ preserves legacy marginal initialization. Frozen output-v2-compatible CSVs
 remain equal-player aggregates; weighted target estimands require the separate
 standalone profile.
 
+That legacy fallback is unavailable when `[analysis_plan]` is selected. A
+planned policy configuration must resolve its declared projected adapter and
+population/profile lineage before treatment; omission or mismatch is a
+preflight error.
+
 ## Repeated seeds and uncertainty summaries
 
 `PolicyBatchSpec` requires unique strict Python integer seeds in the unsigned
@@ -192,6 +197,17 @@ Monte Carlo diagnostics for the configured simulator, not confidence intervals
 for a real population. A small seed count, non-normal tails, or unstable model
 parameters can make the normal interval inadequate; convergence and alternative
 interval procedures remain calibration-stage work.
+
+Analysis-plan schema v2 applies the same declared normal convention to the one
+plan-level primary, using the exact paired, population-weighted per-seed
+realizations rather than the legacy scenario summaries. Population weights are
+applied within seed; the fixed independent seeds are equally weighted. The
+checked-in primary is `baseline_f2p - safe_fixed_price_subscription` for
+composite simulated harm, so positive means more harm under the baseline and
+negative means less. No secondary scenario is averaged into this contrast and
+no outcome-dependent seed exclusion is permitted. Its separate metadata calls
+the bounds a Monte Carlo interval for simulator output, never a confidence
+interval for a real-world population.
 
 ## Reported outcomes
 

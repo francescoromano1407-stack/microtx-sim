@@ -53,6 +53,7 @@ from .scenarios import ScenarioId
 
 
 ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "1.0"
+PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION: Final[str] = "2.0"
 MAX_ANALYSIS_PLAN_BYTES: Final[int] = 1024 * 1024
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
@@ -65,6 +66,12 @@ _CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
     "analysis_plan.schema_v1=campaign_ineligible",
     "analysis_plan.execution_calendar_anchor=unbound",
     "analysis_plan.cross_seed_aggregation_uncertainty=unresolved",
+    "analysis_plan.model_implementation_environment_identity=unbound",
+)
+_V2_CAMPAIGN_BLOCKERS: Final[tuple[str, ...]] = (
+    "analysis_plan.external_registration=unregistered",
+    "analysis_plan.schema_v2=campaign_ineligible",
+    "analysis_plan.execution_calendar_anchor=unbound",
     "analysis_plan.model_implementation_environment_identity=unbound",
 )
 _CANONICAL_INCLUSION_FIELDS: Final[tuple[PopulationInclusionField, ...]] = tuple(
@@ -640,6 +647,82 @@ class FixedSeedStoppingRule:
 
 
 @dataclass(frozen=True, slots=True)
+class PrimaryAggregateRule:
+    """Outcome-blind cross-seed rule for the single PRIMARY estimand.
+
+    Schema v2 deliberately permits no result-dependent exclusions.  Every
+    fixed seed must supply one finite, exact, paired primary realization; a
+    missing or invalid realization is an error instead of a reason to retain a
+    more favourable subset.
+    """
+
+    positive_result_interpretation: str
+    negative_result_interpretation: str
+
+    def __post_init__(self) -> None:
+        _nonempty_text(
+            self.positive_result_interpretation,
+            name="positive_result_interpretation",
+        )
+        _nonempty_text(
+            self.negative_result_interpretation,
+            name="negative_result_interpretation",
+        )
+        if (
+            self.positive_result_interpretation
+            == self.negative_result_interpretation
+        ):
+            raise AnalysisPlanValidationError(
+                "positive and negative result interpretations must differ"
+            )
+
+    @property
+    def rule_id(self) -> str:
+        return "COMPLETE_FIXED_SEED_PRIMARY_PAIRS_V1"
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "rule_id": self.rule_id,
+            "analysis_unit": "INDEPENDENT_MONTE_CARLO_SEED",
+            "primary_estimand_selection": "EXACTLY_ONE_DECLARED_PRIMARY",
+            "scenario_aggregation": "SINGLE_DIRECTED_CONTRAST",
+            "scenario_weights": [],
+            "population_weight_application": (
+                "WITHIN_EACH_SEED_BEFORE_CROSS_SEED_AGGREGATION"
+            ),
+            "seed_weighting": "EQUAL",
+            "valid_realization_criteria": [
+                "seed_is_in_fixed_stopping_rule",
+                "paired_reference_and_comparison_observations_are_present",
+                "predeclared_pretreatment_population_predicate_is_applied",
+                "population_weighted_primary_estimand_is_exact_and_finite",
+            ],
+            "exclusion_criteria": [],
+            "invalid_or_missing_realization_handling": "FAIL_CLOSED",
+            "outcome_dependent_exclusion_allowed": False,
+            "point_estimator": "ARITHMETIC_MEAN_OF_RETAINED_SEED_ESTIMANDS",
+            "between_seed_standard_deviation": (
+                "SAMPLE_STANDARD_DEVIATION_DDOF_1_ZERO_IF_ONE_SEED"
+            ),
+            "monte_carlo_standard_error": (
+                "BETWEEN_SEED_SD_DIVIDED_BY_SQRT_RETAINED_SEED_COUNT"
+            ),
+            "interval_method": "NORMAL_95_MONTE_CARLO_MEAN_PLUS_MINUS_1.96_MCSE",
+            "one_seed_interval": "ZERO_WIDTH_AT_POINT_ESTIMATE",
+            "interval_interpretation": (
+                "Monte Carlo variability of the configured simulator mean; "
+                "not a confidence interval for a real-world population"
+            ),
+            "positive_result_interpretation": (
+                self.positive_result_interpretation
+            ),
+            "negative_result_interpretation": (
+                self.negative_result_interpretation
+            ),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PlannedPopulationEstimand:
     """One directed, population-weighted per-player scenario contrast."""
 
@@ -755,6 +838,8 @@ class ProspectiveAnalysisPlan:
     stopping_rule: FixedSeedStoppingRule
     estimands: tuple[PlannedPopulationEstimand, ...]
     plan_sha256: str
+    declared_harm_weights: WelfareHarmWeights | None = None
+    primary_aggregate_rule: PrimaryAggregateRule | None = None
     registration_status: AnalysisPlanRegistrationStatus = field(
         default=AnalysisPlanRegistrationStatus.UNREGISTERED,
         init=False,
@@ -762,15 +847,23 @@ class ProspectiveAnalysisPlan:
     preregistered: bool = field(default=False, init=False)
     campaign_ready: bool = field(default=False, init=False)
     campaign_blockers: tuple[str, ...] = field(
-        default=_CAMPAIGN_BLOCKERS,
+        default=(),
         init=False,
     )
 
     def __post_init__(self) -> None:
-        if self.schema_version != ANALYSIS_PLAN_SCHEMA_VERSION:
+        if self.schema_version not in {
+            ANALYSIS_PLAN_SCHEMA_VERSION,
+            PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+        }:
             raise AnalysisPlanValidationError(
                 "unsupported prospective analysis-plan schema version"
             )
+        object.__setattr__(
+            self,
+            "campaign_blockers",
+            _campaign_blockers(self.schema_version),
+        )
         _identifier(self.plan_id, name="plan_id")
         for name in (
             "expected_causal_design_sha256",
@@ -818,6 +911,34 @@ class ProspectiveAnalysisPlan:
             raise AnalysisPlanValidationError(
                 "analysis plan must declare exactly one PRIMARY estimand"
             )
+        if self.schema_version == ANALYSIS_PLAN_SCHEMA_VERSION:
+            if (
+                self.declared_harm_weights is not None
+                or self.primary_aggregate_rule is not None
+            ):
+                raise AnalysisPlanValidationError(
+                    "schema-v1 plans cannot declare a plan-level aggregate"
+                )
+        else:
+            if type(self.declared_harm_weights) is not WelfareHarmWeights:
+                raise TypeError(
+                    "schema-v2 declared_harm_weights must be WelfareHarmWeights"
+                )
+            WelfareHarmWeights.__post_init__(self.declared_harm_weights)
+            if (
+                analysis_plan_harm_weights_sha256(
+                    self.declared_harm_weights
+                )
+                != self.expected_harm_weights_sha256
+            ):
+                raise AnalysisPlanValidationError(
+                    "declared harm-weight vector differs from its expected digest"
+                )
+            if type(self.primary_aggregate_rule) is not PrimaryAggregateRule:
+                raise TypeError(
+                    "schema-v2 primary_aggregate_rule must be PrimaryAggregateRule"
+                )
+            PrimaryAggregateRule.__post_init__(self.primary_aggregate_rule)
         if self.registration_status is not AnalysisPlanRegistrationStatus.UNREGISTERED:
             raise AnalysisPlanValidationError(
                 "schema-v1 analysis plans must remain UNREGISTERED"
@@ -826,9 +947,9 @@ class ProspectiveAnalysisPlan:
             raise AnalysisPlanValidationError(
                 "schema-v1 analysis plans cannot be preregistered or campaign-ready"
             )
-        if self.campaign_blockers != _CAMPAIGN_BLOCKERS:
+        if self.campaign_blockers != _campaign_blockers(self.schema_version):
             raise AnalysisPlanValidationError(
-                "schema-v1 campaign blockers are fixed"
+                "analysis-plan campaign blockers are fixed by schema version"
             )
         if self.plan_sha256 != _canonical_sha256(self.attestation_payload()):
             raise AnalysisPlanValidationError(
@@ -844,7 +965,7 @@ class ProspectiveAnalysisPlan:
         )
 
     def attestation_payload(self) -> dict[str, object]:
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "plan_id": self.plan_id,
             "expected_causal_design_sha256": (
@@ -872,6 +993,16 @@ class ProspectiveAnalysisPlan:
             "campaign_ready": self.campaign_ready,
             "campaign_blockers": list(self.campaign_blockers),
         }
+        if self.schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+            assert self.declared_harm_weights is not None
+            assert self.primary_aggregate_rule is not None
+            payload["declared_harm_weights"] = _harm_weights_snapshot(
+                self.declared_harm_weights
+            )
+            payload["primary_aggregate_rule"] = (
+                self.primary_aggregate_rule.snapshot()
+            )
+        return payload
 
     def snapshot(self) -> dict[str, object]:
         return {**self.attestation_payload(), "plan_sha256": self.plan_sha256}
@@ -932,7 +1063,7 @@ class LoadedProspectiveAnalysisPlan:
 
     def snapshot(self) -> dict[str, object]:
         return {
-            "schema_version": ANALYSIS_PLAN_SCHEMA_VERSION,
+            "schema_version": self.plan.schema_version,
             "plan_path": str(self.plan_path),
             "byte_length": self.byte_length,
             "file_sha256": self.file_sha256,
@@ -975,8 +1106,15 @@ def build_prospective_analysis_plan(
     expected_output_profile_sha256: str,
     stopping_rule: FixedSeedStoppingRule,
     estimands: Sequence[PlannedPopulationEstimand],
+    declared_harm_weights: WelfareHarmWeights | None = None,
+    primary_aggregate_rule: PrimaryAggregateRule | None = None,
 ) -> ProspectiveAnalysisPlan:
-    """Canonicalize estimand order and build a self-attested draft plan."""
+    """Canonicalize estimands and build a self-attested v1 or v2 plan.
+
+    Supplying both ``declared_harm_weights`` and ``primary_aggregate_rule``
+    selects schema v2.  Omitting both preserves the legacy schema-v1 builder
+    behavior.  Supplying only one is rejected.
+    """
 
     if isinstance(estimands, (str, bytes, bytearray)) or not isinstance(
         estimands,
@@ -987,7 +1125,36 @@ def build_prospective_analysis_plan(
     if any(type(item) is not PlannedPopulationEstimand for item in selected):
         raise TypeError("estimands must contain PlannedPopulationEstimand values")
     selected = tuple(sorted(selected, key=lambda item: item.estimand_id))
+    aggregate_fields = (
+        declared_harm_weights is not None,
+        primary_aggregate_rule is not None,
+    )
+    if aggregate_fields not in {(False, False), (True, True)}:
+        raise AnalysisPlanValidationError(
+            "declared_harm_weights and primary_aggregate_rule must be supplied together"
+        )
+    schema_version = (
+        PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+        if all(aggregate_fields)
+        else ANALYSIS_PLAN_SCHEMA_VERSION
+    )
+    if declared_harm_weights is not None:
+        if type(declared_harm_weights) is not WelfareHarmWeights:
+            raise TypeError("declared_harm_weights must be WelfareHarmWeights")
+        WelfareHarmWeights.__post_init__(declared_harm_weights)
+        if (
+            analysis_plan_harm_weights_sha256(declared_harm_weights)
+            != expected_harm_weights_sha256
+        ):
+            raise AnalysisPlanValidationError(
+                "declared harm-weight vector differs from expected_harm_weights_sha256"
+            )
+    if primary_aggregate_rule is not None:
+        if type(primary_aggregate_rule) is not PrimaryAggregateRule:
+            raise TypeError("primary_aggregate_rule must be PrimaryAggregateRule")
+        PrimaryAggregateRule.__post_init__(primary_aggregate_rule)
     payload = _plan_attestation_payload(
+        schema_version=schema_version,
         plan_id=plan_id,
         expected_causal_design_sha256=expected_causal_design_sha256,
         expected_batch_spec_sha256=expected_batch_spec_sha256,
@@ -999,9 +1166,11 @@ def build_prospective_analysis_plan(
         expected_output_profile_sha256=expected_output_profile_sha256,
         stopping_rule=stopping_rule,
         estimands=selected,
+        declared_harm_weights=declared_harm_weights,
+        primary_aggregate_rule=primary_aggregate_rule,
     )
     return ProspectiveAnalysisPlan(
-        schema_version=ANALYSIS_PLAN_SCHEMA_VERSION,
+        schema_version=schema_version,
         plan_id=plan_id,
         expected_causal_design_sha256=expected_causal_design_sha256,
         expected_batch_spec_sha256=expected_batch_spec_sha256,
@@ -1014,6 +1183,8 @@ def build_prospective_analysis_plan(
         stopping_rule=stopping_rule,
         estimands=selected,
         plan_sha256=_canonical_sha256(payload),
+        declared_harm_weights=declared_harm_weights,
+        primary_aggregate_rule=primary_aggregate_rule,
     )
 
 
@@ -1071,7 +1242,7 @@ def verify_prospective_analysis_plan_bindings(
 def load_prospective_analysis_plan(
     path: str | Path,
 ) -> LoadedProspectiveAnalysisPlan:
-    """Securely load and re-attest one schema-v1 JSON plan file."""
+    """Securely load and re-attest one supported JSON plan file."""
 
     candidate = _absolute_path(path)
     observed = _read_regular_file(candidate)
@@ -1104,6 +1275,7 @@ def verify_loaded_prospective_analysis_plan(
 
 def _plan_attestation_payload(
     *,
+    schema_version: str = ANALYSIS_PLAN_SCHEMA_VERSION,
     plan_id: str,
     expected_causal_design_sha256: str,
     expected_batch_spec_sha256: str,
@@ -1115,11 +1287,13 @@ def _plan_attestation_payload(
     expected_output_profile_sha256: str,
     stopping_rule: FixedSeedStoppingRule,
     estimands: tuple[PlannedPopulationEstimand, ...],
+    declared_harm_weights: WelfareHarmWeights | None = None,
+    primary_aggregate_rule: PrimaryAggregateRule | None = None,
 ) -> dict[str, object]:
     if type(stopping_rule) is not FixedSeedStoppingRule:
         raise TypeError("stopping_rule must be FixedSeedStoppingRule")
-    return {
-        "schema_version": ANALYSIS_PLAN_SCHEMA_VERSION,
+    payload = {
+        "schema_version": schema_version,
         "plan_id": plan_id,
         "expected_causal_design_sha256": expected_causal_design_sha256,
         "expected_batch_spec_sha256": expected_batch_spec_sha256,
@@ -1134,11 +1308,25 @@ def _plan_attestation_payload(
         "registration_status": AnalysisPlanRegistrationStatus.UNREGISTERED.value,
         "preregistered": False,
         "campaign_ready": False,
-        "campaign_blockers": list(_CAMPAIGN_BLOCKERS),
+        "campaign_blockers": list(_campaign_blockers(schema_version)),
     }
+    if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+        if type(declared_harm_weights) is not WelfareHarmWeights:
+            raise TypeError("schema-v2 declared_harm_weights must be WelfareHarmWeights")
+        if type(primary_aggregate_rule) is not PrimaryAggregateRule:
+            raise TypeError("schema-v2 primary_aggregate_rule must be PrimaryAggregateRule")
+        payload["declared_harm_weights"] = _harm_weights_snapshot(
+            declared_harm_weights
+        )
+        payload["primary_aggregate_rule"] = primary_aggregate_rule.snapshot()
+    elif declared_harm_weights is not None or primary_aggregate_rule is not None:
+        raise AnalysisPlanValidationError(
+            "schema-v1 plans cannot contain schema-v2 aggregate declarations"
+        )
+    return payload
 
 
-_PLAN_KEYS = frozenset(
+_PLAN_KEYS_V1 = frozenset(
     {
         "schema_version",
         "plan_id",
@@ -1158,6 +1346,11 @@ _PLAN_KEYS = frozenset(
         "campaign_blockers",
         "plan_sha256",
     }
+)
+_PLAN_KEYS_V2 = frozenset(
+    set(_PLAN_KEYS_V1).union(
+        {"declared_harm_weights", "primary_aggregate_rule"}
+    )
 )
 _STOPPING_KEYS = frozenset(
     {
@@ -1225,14 +1418,59 @@ _CURRENCY_KEYS = frozenset(
         "rounding",
     }
 )
+_HARM_WEIGHT_KEYS = frozenset(
+    {
+        "monetary",
+        "opportunity_cost",
+        "sleep",
+        "education_work",
+        "family_social",
+        "wellbeing",
+    }
+)
+_PRIMARY_AGGREGATE_RULE_KEYS = frozenset(
+    {
+        "rule_id",
+        "analysis_unit",
+        "primary_estimand_selection",
+        "scenario_aggregation",
+        "scenario_weights",
+        "population_weight_application",
+        "seed_weighting",
+        "valid_realization_criteria",
+        "exclusion_criteria",
+        "invalid_or_missing_realization_handling",
+        "outcome_dependent_exclusion_allowed",
+        "point_estimator",
+        "between_seed_standard_deviation",
+        "monte_carlo_standard_error",
+        "interval_method",
+        "one_seed_interval",
+        "interval_interpretation",
+        "positive_result_interpretation",
+        "negative_result_interpretation",
+    }
+)
 
 
 def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
-    _exact_keys(row, _PLAN_KEYS, name="analysis plan")
-    if _required_string(row, "schema_version") != ANALYSIS_PLAN_SCHEMA_VERSION:
+    schema_version = _required_string(row, "schema_version")
+    if schema_version not in {
+        ANALYSIS_PLAN_SCHEMA_VERSION,
+        PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION,
+    }:
         raise AnalysisPlanValidationError(
             "unsupported prospective analysis-plan schema version"
         )
+    _exact_keys(
+        row,
+        (
+            _PLAN_KEYS_V2
+            if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+            else _PLAN_KEYS_V1
+        ),
+        name="analysis plan",
+    )
     stopping = _stopping_from_snapshot(
         _required_mapping(row, "stopping_rule")
     )
@@ -1267,12 +1505,26 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
         _strict_json_string(value, name=f"campaign_blockers[{index}]")
         for index, value in enumerate(_required_list(row, "campaign_blockers"))
     )
-    if blockers != _CAMPAIGN_BLOCKERS:
+    if blockers != _campaign_blockers(schema_version):
         raise AnalysisPlanValidationError(
-            "schema-v1 campaign_blockers differ from the fixed fail-closed set"
+            "campaign_blockers differ from the fixed fail-closed schema set"
         )
+    declared_harm_weights = (
+        _harm_weights_from_snapshot(
+            _required_mapping(row, "declared_harm_weights")
+        )
+        if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+        else None
+    )
+    primary_aggregate_rule = (
+        _primary_aggregate_rule_from_snapshot(
+            _required_mapping(row, "primary_aggregate_rule")
+        )
+        if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION
+        else None
+    )
     plan = ProspectiveAnalysisPlan(
-        schema_version=ANALYSIS_PLAN_SCHEMA_VERSION,
+        schema_version=schema_version,
         plan_id=_required_string(row, "plan_id"),
         expected_causal_design_sha256=_required_string(
             row,
@@ -1309,6 +1561,8 @@ def _plan_from_snapshot(row: Mapping[str, object]) -> ProspectiveAnalysisPlan:
         stopping_rule=stopping,
         estimands=estimands,
         plan_sha256=_required_string(row, "plan_sha256"),
+        declared_harm_weights=declared_harm_weights,
+        primary_aggregate_rule=primary_aggregate_rule,
     )
     if plan.snapshot() != dict(row):
         raise AnalysisPlanValidationError(
@@ -1516,6 +1770,50 @@ def _currency_from_snapshot(
     if currency.snapshot() != dict(row):
         raise AnalysisPlanValidationError("estimand currency is not canonical")
     return currency
+
+
+def _harm_weights_from_snapshot(
+    row: Mapping[str, object],
+) -> WelfareHarmWeights:
+    _exact_keys(row, _HARM_WEIGHT_KEYS, name="declared harm weights")
+    try:
+        weights = WelfareHarmWeights(
+            **{name: row[name] for name in _HARM_WEIGHT_KEYS}
+        )
+    except (TypeError, ValueError) as exc:
+        raise AnalysisPlanValidationError(
+            f"declared harm weights are invalid: {exc}"
+        ) from exc
+    if _harm_weights_snapshot(weights) != dict(row):
+        raise AnalysisPlanValidationError(
+            "declared harm weights are not a canonical snapshot"
+        )
+    return weights
+
+
+def _primary_aggregate_rule_from_snapshot(
+    row: Mapping[str, object],
+) -> PrimaryAggregateRule:
+    _exact_keys(
+        row,
+        _PRIMARY_AGGREGATE_RULE_KEYS,
+        name="primary aggregate rule",
+    )
+    rule = PrimaryAggregateRule(
+        positive_result_interpretation=_required_string(
+            row,
+            "positive_result_interpretation",
+        ),
+        negative_result_interpretation=_required_string(
+            row,
+            "negative_result_interpretation",
+        ),
+    )
+    if rule.snapshot() != dict(row):
+        raise AnalysisPlanValidationError(
+            "primary aggregate rule is not the canonical outcome-blind rule"
+        )
+    return rule
 
 
 def _absolute_path(value: str | Path) -> Path:
@@ -1881,11 +2179,32 @@ def _canonical_sha256(payload: object) -> str:
     return sha256(encoded).hexdigest()
 
 
+def _harm_weights_snapshot(weights: WelfareHarmWeights) -> dict[str, float]:
+    if type(weights) is not WelfareHarmWeights:
+        raise TypeError("weights must be WelfareHarmWeights")
+    WelfareHarmWeights.__post_init__(weights)
+    return {
+        name: getattr(weights, name)
+        for name in weights.__dataclass_fields__
+    }
+
+
+def _campaign_blockers(schema_version: str) -> tuple[str, ...]:
+    if schema_version == ANALYSIS_PLAN_SCHEMA_VERSION:
+        return _CAMPAIGN_BLOCKERS
+    if schema_version == PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION:
+        return _V2_CAMPAIGN_BLOCKERS
+    raise AnalysisPlanValidationError(
+        "unsupported prospective analysis-plan schema version"
+    )
+
+
 _POPULATION_OUTCOME_SEMANTICS = _outcome_semantics_registry()
 
 
 __all__ = [
     "ANALYSIS_PLAN_SCHEMA_VERSION",
+    "PROSPECTIVE_ANALYSIS_PLAN_SCHEMA_VERSION",
     "MAX_ANALYSIS_PLAN_BYTES",
     "AnalysisEstimandRole",
     "AnalysisPlanCampaignError",
@@ -1899,6 +2218,7 @@ __all__ = [
     "PopulationMinorFilter",
     "PopulationOutcomeMetric",
     "PopulationOutcomeMetricSemantics",
+    "PrimaryAggregateRule",
     "ProspectiveAnalysisPlan",
     "analysis_plan_harm_weights_sha256",
     "build_prospective_analysis_plan",

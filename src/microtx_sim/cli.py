@@ -142,7 +142,7 @@ def _policy_validate(config_path: Path) -> dict[str, object]:
     population_adapter = None
     profile_input_lineage = None
     if config.population is not None:
-        profiles = load_profile_bundle(campaign=False)
+        profiles = _load_policy_profiles(config)
         profile_input_lineage = build_profile_input_lineage(
             profiles.country_profiles,
             profile_bundle=profiles,
@@ -213,7 +213,7 @@ def _policy_batch(
         if run_sensitivity is None
         else run_sensitivity
     )
-    profiles = load_profile_bundle(campaign=False)
+    profiles = _load_policy_profiles(config)
     profile_input_lineage = build_profile_input_lineage(
         profiles.country_profiles,
         profile_bundle=profiles,
@@ -319,7 +319,7 @@ def _policy_sensitivity(
 ) -> dict[str, object]:
     config = load_policy_config(config_path)
     campaign = config.run_purpose is PolicyRunPurpose.CAMPAIGN
-    profiles = load_profile_bundle(campaign=False)
+    profiles = _load_policy_profiles(config)
     profile_input_lineage = build_profile_input_lineage(
         profiles.country_profiles,
         profile_bundle=profiles,
@@ -464,6 +464,24 @@ def _validate_policy_campaign_provenance(config) -> None:
             "campaign policy execution requires provenance_status = 'calibrated'; "
             f"got {config.provenance_status!r}"
         )
+
+
+def _load_policy_profiles(config) -> ProfileBundle:
+    """Load the exact profile/evidence selection declared for a policy run."""
+
+    population = config.population
+    if population is None or population.evidence_bundle_path is None:
+        return load_profile_bundle(campaign=False)
+    if population.source_registry_path is None:
+        raise ValueError(
+            "configured population evidence requires a source registry path"
+        )
+    return load_profile_bundle(
+        sources_path=population.source_registry_path,
+        source_bundle_path=None,
+        population_bundle_path=population.evidence_bundle_path,
+        campaign=False,
+    )
 
 
 def _run_configured_sensitivity(

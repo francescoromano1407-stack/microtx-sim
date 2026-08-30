@@ -29,6 +29,10 @@ optimal funding policy.
 - `configs/policy_prototype.toml` runs the seven required policy scenarios over
   identical seeded synthetic cohorts and is the supported reproducible
   prototype workflow.
+- `configs/policy_prospective.toml` is an explicitly opt-in, unregistered
+  16-player algebraic validation fixture binding the checked-in plan and
+  designed population. It is not a campaign configuration in the scientific
+  readiness sense and must not be promoted as one.
 - `configs/base.toml` describes a future 50,000-player, five-company, eight-game
   scale and selects final-step-only history plus a file-backed SQLite ledger,
   but campaign validation deliberately rejects its uncalibrated inputs. That
@@ -104,9 +108,12 @@ optimal funding policy.
   output identities, the exact profile-input-lineage fingerprint, and an
   executable pre-treatment population predicate. It
   is opt-in, requires projected-population execution, and binds exact per-seed
-  results back to population execution and balance lineage. Version 1 is
-  necessarily `UNREGISTERED`, `preregistered=false`, and
-  `campaign_ready=false`; no plan is checked in.
+  results back to population execution and balance lineage. The checked-in
+  schema-v2 illustrative plan adds an outcome-blind equal-seed primary mean,
+  sample SD, Monte Carlo standard error, and normal 95% Monte Carlo interval in
+  a separate prospective profile. It remains `UNREGISTERED`,
+  `preregistered=false`, and `campaign_ready=false` and is selected only by
+  `configs/policy_prospective.toml`.
 
 See [Data sources](docs/data_sources.md) for the distinction between inputs that
 currently affect equations and evidence retained only for future calibration.
@@ -168,6 +175,7 @@ Python 3.11 or later is required.
 ```text
 python -m pip install -e ".[dev]"
 python -m microtx_sim policy-validate configs/policy_prototype.toml
+python -m microtx_sim policy-validate configs/policy_prospective.toml
 python -m microtx_sim policy-batch configs/policy_prototype.toml
 python -m microtx_sim policy-sensitivity configs/policy_prototype.toml
 python -m microtx_sim reproduce configs/policy_prototype.toml
