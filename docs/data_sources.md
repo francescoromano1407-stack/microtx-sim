@@ -13,7 +13,9 @@ is `data/provenance/population_bundle.toml`. The policy prototype reads
 
 At this stage:
 
-- every record in the source register is `ANCHORED`, not `CALIBRATED`;
+- official records in the source register are `ANCHORED`, while the four joint-
+  construction assumption records are explicitly `ILLUSTRATIVE`; none is
+  `CALIBRATED`;
 - the jurisdiction bundle is globally `ILLUSTRATIVE`;
 - the common money scale is `ILLUSTRATIVE`;
 - profile schema version 2 can retain declaration-only dated exact FX/PPP
@@ -21,9 +23,9 @@ At this stage:
 - the checked-in source bundle binds the exact source-catalogue digest but has
   zero artifacts, zero bindings, `ILLUSTRATIVE` status, and signature
   `MISSING`; no fallback rates are invented;
-- population-evidence schema version 1 can verify exact-byte joint population
-  cells, but the checked-in population bundle has zero artifacts and bindings,
-  `ILLUSTRATIVE` status, signature `MISSING`, and `campaign_ready=false`;
+- population-evidence schema version 1 verifies the checked-in artifact, eight
+  bindings, and 1,728 modeled joint rows; it retains `ILLUSTRATIVE` status,
+  signature `MISSING`, and `campaign_ready=false`;
 - population allocation, audit capacity, regulator operating budgets, and many
   agent defaults are `SYNTHETIC` or otherwise uncalibrated;
 - a scientific campaign is therefore rejected by construction.
@@ -127,9 +129,10 @@ Schema version 1 deliberately cannot be campaign-ready. Its own assessment
 supports only a missing signature and leaves sampling/synthesis, runtime
 projection, output-estimand, and structural-balance fields false; optional
 execution artifacts remain separate and cannot promote the evidence bundle.
-The checked-in bundle is empty, `ILLUSTRATIVE`, unsigned, and has
-`campaign_ready=false`, so it does not choose any target population or supply
-calibration or held-out validation cells.
+The checked-in bundle is complete but model-based: it has one exact CSV artifact,
+eight bindings, and 1,728 rows spanning calibration and validation declarations.
+It is `ILLUSTRATIVE`, unsigned, and has `campaign_ready=false`; its validation
+partition is a deterministic sensitivity declaration, not an empirical holdout.
 
 ### Static population design and exact apportionment
 
@@ -156,10 +159,11 @@ verified. A partition declaration therefore does not prove publisher identity,
 sample independence, or genuinely held-out validation. Static design schema v1
 always reports `campaign_ready=false`.
 
-The checked-in `population_design.toml` is empty and `ILLUSTRATIVE`: it has no
-age, income, or household domain rows, jurisdictions, evidence-result hashes, or
-partition records. It is an executable contract example, not a selected target
-population or a completed sampling design.
+The checked-in `population_design.toml` is a complete `ILLUSTRATIVE` design: six
+age bands, three harmonized income bands per jurisdiction, three household types,
+gaming and payer-history states, four equal target counts of 10,000 design-person
+equivalents, exact evidence-result hashes, and deterministic partition records.
+It is a selected development estimand, not an empirically representative design.
 
 ## Monetary units and transformations
 
@@ -562,10 +566,10 @@ addition to the current register.
 
 The population-evidence schema supplies a place to register exact local CSV
 bytes and a deterministic extraction, but the default bundle contains no such
-artifact and no publisher signature. The static design schema supplies exact
-domains, partition declarations, target counts, and Hamilton weights, but its
-default is also empty and illustrative. Even populated files would establish
-declared reproducibility only. The adapter, per-seed structural balance/lineage,
+artifact and no publisher signature. The static design now supplies exact
+domains, partition declarations, target counts, and Hamilton weights, but is
+illustrative. These populated files establish declared reproducibility only.
+The adapter, per-seed structural balance/lineage,
 and standalone writer are implemented, but publisher authentication,
 independently verified held-out source units, reviewed calibration and transport
 assumptions, preregistered estimands, and a campaign-ready output gate remain

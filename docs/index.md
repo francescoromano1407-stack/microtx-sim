@@ -29,6 +29,7 @@ calibration plans and should be read before interpreting any simulation output.
 | Document | Use it for |
 | --- | --- |
 | [Data sources](data_sources.md) | Full source inventory, effective runtime inputs, dormant contracts, units, and lineage. |
+| [Target population and readiness](population_readiness.md) | Selected analytic population, joint cells, official demographic and gaming evidence, weight semantics, income modeling, and unresolved campaign blockers. |
 | [Evidence policy](evidence.md) | Provenance statuses, evidence contracts, campaign gates, and update workflow. |
 | [Limitations](limitations.md) | Empirical, causal, legal, funding, information, market, and technical limits. |
 | [Roadmap](roadmap.md) | Calibration blockers, causal-design work, institutional fidelity, validation, and exact performance improvements. |
@@ -44,8 +45,9 @@ scenario and is deliberately blocked by provenance validation.
 Population evidence/design, an optional exact runtime mapping/adapter, per-seed
 projection and pre-treatment balance lineage, and a separate two-file target-
 population estimand writer are implemented as reproducibility infrastructure.
-The supplied configurations omit projected execution, the checked-in evidence
-and design are empty and illustrative, and no runtime mapping is checked in.
+Ordinary development configurations omit projected execution. The checked-in
+evidence, design, and schema-v2 runtime mapping are complete but illustrative;
+the campaign candidate selects them only to exercise the fail-closed preflight.
 Existing output-v2-compatible CSVs remain unweighted. These contracts do not
 provide calibration, public comparability, or campaign readiness, so comparable
 population profiles remain an open P0 task.

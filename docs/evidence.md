@@ -92,9 +92,9 @@ false. Different labels, files, hashes, source IDs, or URLs cannot promote a
 This attestation answers “which bytes and recipe produced these cells,” not
 “who published them” or “are they calibrated for this estimand.” Schema version
 1 supports only signature status `MISSING` and hard-codes
-`campaign_ready=false`. The checked-in bundle is empty, `ILLUSTRATIVE`, and
-unsigned. It selects no target population and supplies no calibration or
-held-out validation cells.
+`campaign_ready=false`. The checked-in bundle is `ILLUSTRATIVE` and unsigned. It
+contains complete modeled calibration and validation cell declarations for the
+selected standardized target, but neither role is empirical or genuinely held out.
 
 Registered profile-input lineage has advanced to version 4 to retain the
 population bundle, verified results, and typed assessment. Historical lineage
@@ -121,9 +121,10 @@ specific salting unless immutable source-unit keys are signed and independently
 verified. The schema therefore keeps authenticity and held-out readiness false
 and cannot be promoted by declaration completeness alone.
 
-The checked-in `population_design.toml` is empty and `ILLUSTRATIVE`. It declares
-no age, income, or household domain rows, jurisdiction targets, evidence-result
-hashes, or partition records. Its `campaign_ready` property is always false.
+The checked-in `population_design.toml` is complete and `ILLUSTRATIVE`. It binds
+the six-by-three-by-three-by-two-by-two joint domain in each jurisdiction, four
+10,000-unit standardized targets, evidence-result hashes, and partition records.
+Its `campaign_ready` property remains always false.
 
 ## Output transformation registry
 

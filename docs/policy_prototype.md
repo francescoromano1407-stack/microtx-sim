@@ -72,9 +72,10 @@ Programmatic callers may still supply a custom `country_profiles` tuple; its
 exact contents are fingerprinted but its lineage is explicitly labelled
 `unregistered_custom_profiles`, with no default-file provenance claimed.
 
-The default population-evidence bundle and static design are empty,
-`ILLUSTRATIVE`, unsigned, and have `campaign_ready=false`. Schema version 1 can
-verify strict joint cells with exact rational mass, but those hashes prove
+The default population-evidence bundle and static design are complete modeled
+declarations, but remain `ILLUSTRATIVE`, unsigned, and have
+`campaign_ready=false`. Schema version 1 can
+verify their strict joint cells with exact rational mass, but those hashes prove
 reproducibility rather than publisher authenticity or calibration. A custom
 configuration may opt into `[population] mode="projected_v1"`; the CLI then
 re-attests an explicit runtime mapping and the design plan before using the same

@@ -57,9 +57,9 @@ calibrated.
 The repository now has population-evidence bundle schema version 1 for exact
 joint age × household-income-band × household-type × gaming × pre-treatment
 payer-history cells with exact rational mass. This is an input-lineage
-boundary, not a population model. The checked-in bundle is empty,
-`ILLUSTRATIVE`, unsigned, and has `campaign_ready=false`; it chooses no target
-population and contains no calibration or held-out validation cells.
+boundary, not empirical population evidence. The checked-in bundle contains a
+complete modeled joint target, but is `ILLUSTRATIVE`, unsigned, and has
+`campaign_ready=false`; its validation cells are not an independent holdout.
 
 Even a populated schema-v1 bundle could establish only exact source-cell
 extraction. It does not bind complete declared income/household domains,
@@ -69,7 +69,7 @@ calibration-target and held-out-validation gates are hard-coded false.
 A separate static population-design contract can fill those declaration-level
 gaps: it binds complete domains, target counts, evidence-result identities, and
 deterministic calibration/validation cluster assignments, and can create an
-exact-rational Hamilton plan. The checked-in design is nevertheless empty and
+exact-rational Hamilton plan. The checked-in design is complete but remains
 `ILLUSTRATIVE`. Its record and cluster hashes are caller-supplied declarations;
 without signed immutable source-unit keys, they do not prove publisher
 authenticity, prevent aliases or role-specific salting, or establish genuine
@@ -100,8 +100,8 @@ resolver which validates planned inputs before treatment, executes the
 pre-treatment predicate, and binds exact results afterward; only that opt-in
 path invokes the writer automatically. Output-v3 retains the frozen
 v2-compatible CSV tables and unweighted synthetic-player semantics, including
-for projected runs. The checked-in evidence and design remain empty and
-illustrative; no calibrated target, genuine holdout, public comparability, or
+for projected runs. The checked-in evidence, design, and schema-v2 income mapping
+remain illustrative; no calibrated target, genuine holdout, public comparability, or
 campaign readiness has been established. The P0 comparable-populations
 requirement remains open, and no full campaign has been run.
 

@@ -54,9 +54,10 @@ loads and re-attests the design, its bound profile evidence, and the mapping
 before any cohort is created. The mapping must explicitly translate every
 static household-income/type key to runtime personal monthly disposable-income
 and modeled-household semantics. The adapter uses the design plan's exact
-counts and weights; it does not make a second allocation. The supplied configs
-omit this section and the repository contains no runtime mapping bundle, so the
-commands shown here use the legacy marginal population initializer by default.
+counts and weights; it does not make a second allocation. The ordinary supplied
+development configs omit this section, so the commands shown here use the legacy
+marginal initializer by default. `policy_campaign.toml` selects the checked-in
+mapping but is deliberately blocked before treatment.
 
 ## Run the seven-scenario batch
 
@@ -143,9 +144,9 @@ hashes unset.
 Registered profile-input lineage is schema version 4 and includes the
 population-evidence bundle snapshot, verified cell results, and fail-closed
 readiness assessment; historical lineage versions 1–3 remain readable. The
-checked-in population bundle is empty, `ILLUSTRATIVE`, unsigned, and reports
-`campaign_ready=false`. Its hashes attest repeatable bytes and extraction, not
-publisher authenticity or calibration.
+checked-in population bundle contains complete modeled joint cells, is
+`ILLUSTRATIVE` and unsigned, and reports `campaign_ready=false`. Its hashes attest
+repeatable bytes and extraction, not publisher authenticity or calibration.
 
 When `[population]` is selected, the batch and sensitivity analysis use the same
 content-addressed adapter. For each seed, all seven scenarios share the same
