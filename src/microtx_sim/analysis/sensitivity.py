@@ -8,7 +8,7 @@ from hashlib import sha256
 import json
 from math import sqrt
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -48,6 +48,9 @@ from ..metrics.harm import (
 )
 from ..rng import CounterRNG
 from ..simulation.policy_orchestrator import ProducerAssumptions, run_policy_scenario
+
+if TYPE_CHECKING:
+    from ..execution.backends import ResolvedExecutionBackend
 
 
 Direction = Literal["increasing", "decreasing", "none"]
@@ -600,6 +603,7 @@ def run_sensitivity_analysis(
     producer_assumptions: ProducerAssumptions | None = None,
     epgc_policy: EPGCPolicy | None = None,
     population_adapter: PopulationProjectionAdapter | None = None,
+    execution_backend: "ResolvedExecutionBackend | None" = None,
 ) -> SensitivityResult:
     """Evaluate OAT levels with identical cohorts and shocks within each seed.
 
@@ -707,6 +711,7 @@ def run_sensitivity_analysis(
                     opportunity_valuation=run_inputs.opportunity_valuation,
                     producer_assumptions=run_inputs.producer_assumptions,
                     epgc_policy=run_inputs.epgc_policy,
+                    execution_backend=execution_backend,
                 )
                 if population_lineage is not None:
                     expected_ids = np.asarray(

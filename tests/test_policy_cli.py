@@ -29,6 +29,7 @@ from microtx_sim.causal.batch import (  # noqa: E402
     PolicyBatchSpec,
     resolve_policy_run_inputs,
 )
+import microtx_sim.cli as cli
 from microtx_sim.cli import main
 from microtx_sim.config import (  # noqa: E402
     PopulationExecutionMode,
@@ -42,6 +43,7 @@ from microtx_sim.data.monetary_execution import (  # noqa: E402
 from microtx_sim.execution_attestation import (  # noqa: E402
     CampaignExecutionRejectedError,
 )
+from microtx_sim.execution.checkpoints import CheckpointStatus  # noqa: E402
 from microtx_sim.policy_config import (  # noqa: E402
     AnalysisPlanSelection,
     load_policy_config,
@@ -135,18 +137,14 @@ class PolicyCliTests(unittest.TestCase):
         }
         config = load_policy_config(EXPLORATORY_CONFIG)
         profiles_value = SimpleNamespace(country_profiles=())
-        batch_value = SimpleNamespace(spec=config.batch)
         plan_value = SimpleNamespace(
             plan=SimpleNamespace(plan_sha256="a" * 64)
         )
-        binding_value = SimpleNamespace(binding_sha256="b" * 64)
-        recorder = SimpleNamespace(
-            attempt_id="attempt-000001",
-            mark_model_batch_complete=Mock(),
-            mark_complete=Mock(),
-            mark_interrupted=Mock(),
-            mark_failed=Mock(),
-        )
+        expected_payload = {
+            "status": "ok",
+            "mode": "exploratory_policy_batch",
+            "campaign_ready": False,
+        }
         with (
             patch(
                 "microtx_sim.cli._exploratory_validate",
@@ -163,31 +161,11 @@ class PolicyCliTests(unittest.TestCase):
                 return_value=plan_value,
             ),
             patch(
-                "microtx_sim.outputs.exploratory_results."
-                "preflight_exploratory_output"
-            ),
-            patch(
-                "microtx_sim.outputs.checkpoints."
-                "ExploratoryCheckpointRecorder.start",
-                return_value=recorder,
-            ) as start_checkpoint,
-            patch(
-                "microtx_sim.cli.run_policy_batch",
-                return_value=batch_value,
-            ) as run_batch,
-            patch(
-                "microtx_sim.cli.resolve_run_analysis_binding",
-                return_value=binding_value,
-            ),
-            patch(
-                "microtx_sim.cli._run_configured_sensitivity",
-                return_value=None,
-            ),
-            patch(
-                "microtx_sim.outputs.exploratory_results."
-                "export_exploratory_results",
-                return_value={"manifest": Path("manifest.json")},
-            ) as export,
+                "microtx_sim.cli._checkpointed_exploratory_policy_batch",
+                return_value=expected_payload,
+            ) as checkpointed,
+            patch("microtx_sim.cli.run_policy_batch") as legacy_batch,
+            patch("microtx_sim.cli.run_sensitivity_analysis") as legacy_sensitivity,
             redirect_stdout(stdout),
         ):
             code = main(("policy-batch", str(EXPLORATORY_CONFIG)))
@@ -197,13 +175,9 @@ class PolicyCliTests(unittest.TestCase):
         self.assertEqual(payload["mode"], "exploratory_policy_batch")
         self.assertFalse(payload["campaign_ready"])
         preflight.assert_called_once_with(EXPLORATORY_CONFIG)
-        start_checkpoint.assert_called_once()
-        self.assertIs(
-            run_batch.call_args.kwargs["checkpoint_callback"], recorder
-        )
-        export.assert_called_once()
-        recorder.mark_model_batch_complete.assert_called_once_with()
-        recorder.mark_complete.assert_called_once_with()
+        checkpointed.assert_called_once()
+        legacy_batch.assert_not_called()
+        legacy_sensitivity.assert_not_called()
 
     def test_exploratory_batch_preflight_failure_never_dispatches(self) -> None:
         stderr = io.StringIO()
@@ -227,6 +201,75 @@ class PolicyCliTests(unittest.TestCase):
         run_batch.assert_not_called()
         sensitivity.assert_not_called()
         export.assert_not_called()
+
+    def test_checkpointed_exploratory_interrupt_records_resumable_state(
+        self,
+    ) -> None:
+        config = load_policy_config(EXPLORATORY_CONFIG)
+        store = SimpleNamespace(
+            status=CheckpointStatus.RUNNING,
+            mark_interrupted=Mock(),
+            mark_failed=Mock(),
+        )
+        lease = SimpleNamespace(acquire=Mock(), release=Mock())
+        with (
+            patch(
+                "microtx_sim.cli.AttemptCoordinatorLease",
+                return_value=lease,
+            ),
+            patch(
+                "microtx_sim.execution.session.resolve_configured_backend",
+                return_value=object(),
+            ),
+            patch(
+                "microtx_sim.execution.session.build_execution_identity",
+                return_value=object(),
+            ),
+            patch(
+                "microtx_sim.execution.session.build_previous_execution_lineage",
+                return_value=object(),
+            ),
+            patch(
+                "microtx_sim.execution.session.open_configured_checkpoint",
+                return_value=store,
+            ),
+            patch(
+                "microtx_sim.outputs.exploratory_results."
+                "resume_staged_exploratory_finalization",
+                return_value=None,
+            ),
+            patch(
+                "microtx_sim.execution.optimized_runner."
+                "run_checkpointed_policy_batch",
+                side_effect=KeyboardInterrupt,
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                cli._checkpointed_exploratory_policy_batch(
+                    config,
+                    config_path=EXPLORATORY_CONFIG,
+                    command=(
+                        "microtx-sim",
+                        "policy-batch",
+                        "configs/policy_exploratory_synthetic.toml",
+                    ),
+                    destination=ROOT / config.output.output_dir,
+                    repository_root=ROOT,
+                    profiles=SimpleNamespace(),
+                    population_adapter=object(),
+                    analysis_plan=SimpleNamespace(plan=object()),
+                    exploratory_validation_metadata={},
+                    sensitivity_enabled=True,
+                )
+
+        store.mark_interrupted.assert_called_once()
+        self.assertIn(
+            "atomically committed",
+            store.mark_interrupted.call_args.args[0],
+        )
+        store.mark_failed.assert_not_called()
+        lease.acquire.assert_called_once_with()
+        lease.release.assert_called_once_with()
 
     def test_exploratory_command_overrides_and_reproduce_are_rejected(self) -> None:
         invocations = (

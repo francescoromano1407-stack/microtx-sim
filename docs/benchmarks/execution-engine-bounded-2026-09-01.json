@@ -1,0 +1,239 @@
+{
+  "schema_id": "microtx_sim.execution_engine_bounded_benchmark.v1",
+  "report_date": "2026-09-01",
+  "status": "BOUNDED_NON_CAMPAIGN_ONLY",
+  "campaign_execution": {
+    "full_exploratory_campaign_started": false,
+    "full_sensitivity_campaign_started": false,
+    "production_campaign_started": false,
+    "campaign_cli_commands_executed": [],
+    "simulation_artifacts_generated": false
+  },
+  "profiled_cpu_reference": {
+    "git_commit": "cc2cfc755124d2ac036e479c6b4f9b4b8fa9668e",
+    "interpretation": "PRE_OPTIMIZATION_BOUNDED_REFERENCE"
+  },
+  "host": {
+    "operating_system": "Windows",
+    "os_release": "10.0.26200",
+    "architecture": "AMD64",
+    "logical_cpu_count": 24,
+    "processor_identifier": "AMD64 Family 26 Model 68",
+    "python_version": "3.12.13",
+    "numpy_version": "2.5.2",
+    "numpy_native_runtime": "scipy-openblas"
+  },
+  "gpu_probe": {
+    "compatible_gpu_observed": false,
+    "commands_or_tools_not_found": [
+      "nvidia-smi",
+      "nvcc",
+      "rocm-smi",
+      "hipinfo"
+    ],
+    "python_packages_not_installed": [
+      "cupy",
+      "numba",
+      "jax",
+      "jaxlib",
+      "torch"
+    ],
+    "gpu_parity_executed": false,
+    "gpu_benchmark_executed": false,
+    "explicit_gpu_expected_result": "FAIL_CLOSED_BACKEND_UNAVAILABLE"
+  },
+  "profiles": [
+    {
+      "id": "cprofile-all-scenarios-256x1",
+      "kind": "BOUNDED_PROGRAMMATIC_FIXTURE",
+      "player_count": 256,
+      "days": 1,
+      "step_minutes": 120,
+      "seed_count": 1,
+      "scenario_count": 7,
+      "total_seconds": 0.128,
+      "cumulative_seconds": {
+        "run_policy_batch": 0.127,
+        "run_policy_scenario": 0.106,
+        "advance_policy_day": 0.100,
+        "choose_life_action": 0.078,
+        "counter_rng_uniform": 0.074,
+        "counter_rng_words": 0.066,
+        "splitmix64": 0.043
+      },
+      "function_calls": 203720
+    },
+    {
+      "id": "cprofile-baseline-2000x14",
+      "kind": "BOUNDED_PROGRAMMATIC_FIXTURE",
+      "player_count": 2000,
+      "days": 14,
+      "step_minutes": 60,
+      "scenario_id": "baseline_f2p",
+      "total_seconds": 0.617,
+      "cumulative_seconds": {
+        "choose_life_action": 0.452,
+        "counter_rng_uniform": 0.409,
+        "counter_rng_words": 0.353,
+        "splitmix64": 0.247
+      },
+      "cumulative_percent_of_total": {
+        "choose_life_action": 73.0,
+        "counter_rng_uniform": 66.0,
+        "counter_rng_words": 57.0,
+        "splitmix64": 40.0
+      }
+    },
+    {
+      "id": "cprofile-baseline-20000x2",
+      "kind": "BOUNDED_PROGRAMMATIC_FIXTURE",
+      "player_count": 20000,
+      "days": 2,
+      "step_minutes": 60,
+      "scenario_id": "baseline_f2p",
+      "total_seconds": 0.391,
+      "cumulative_percent_of_total": {
+        "choose_life_action": 66.0,
+        "counter_rng": 48.0,
+        "splitmix64": 34.0,
+        "argmax": 3.6,
+        "exact_revenue_summation": 2.3
+      }
+    }
+  ],
+  "one_day_scaling": {
+    "step_minutes": 30,
+    "observations": [
+      {
+        "player_count": 1000,
+        "seconds": 0.0533,
+        "million_player_steps_per_second": 0.90
+      },
+      {
+        "player_count": 5000,
+        "seconds": 0.1233,
+        "million_player_steps_per_second": 1.95
+      },
+      {
+        "player_count": 20000,
+        "seconds": 0.3341,
+        "million_player_steps_per_second": 2.87
+      }
+    ]
+  },
+  "native_thread_control": {
+    "runtime": "scipy-openblas",
+    "library_path": "C:/Users/slend/Downloads/microtx-sim/.venv/Lib/site-packages/numpy.libs/libscipy_openblas64_-327b2e0bcffce2882e0dc04cdeb4eaa6.dll",
+    "library_sha256": "327b2e0bcffce2882e0dc04cdeb4eaa6382ed4dba29871b6176fa157782f484a",
+    "getter_symbol": "scipy_openblas_get_num_threads64_",
+    "setter_symbol": "scipy_openblas_set_num_threads64_",
+    "previous_thread_count": 24,
+    "enforced_thread_count": 1
+  },
+  "explicit_cpu_backend_benchmark": {
+    "kind": "BOUNDED_PROGRAMMATIC_FIXTURE",
+    "fixture": {
+      "player_count": 2000,
+      "days": 2,
+      "step_minutes": 60,
+      "scenario_id": "baseline_f2p",
+      "repetitions": 3
+    },
+    "cpu_reference_seconds": [
+      0.0725970000057714,
+      0.071172399999341,
+      0.07093840000015916
+    ],
+    "explicit_cpu_backend_seconds": [
+      0.07110690000263276,
+      0.07193900000129361,
+      0.07085489999735728
+    ],
+    "cpu_reference_median_seconds": 0.071172399999341,
+    "explicit_cpu_backend_median_seconds": 0.07110690000263276,
+    "backend_identity_sha256": "6d7feecc666d1554182aee317dcfc58f8f1cb7212d0d7e6959b24cd50925193c",
+    "bitwise_parity_all_repetitions": {
+      "composite_harm": true,
+      "high_risk": true,
+      "spending_cents": true,
+      "action_minutes": true
+    },
+    "speed_claim": "NONE_SINGLE_HOST_MICROBENCHMARK"
+  },
+  "spawn_process_pool_benchmark": {
+    "kind": "BOUNDED_PROGRAMMATIC_FIXTURE",
+    "process_start_method": "spawn",
+    "worker_count": 2,
+    "native_threads_per_worker": 1,
+    "fixture": {
+      "seed_count": 4,
+      "seeds": [
+        17,
+        29,
+        41,
+        53
+      ],
+      "scenario_count": 7,
+      "player_count": 10000,
+      "days": 4,
+      "step_minutes": 60,
+      "population_fixture": "SINGLE_UK_SYNTHETIC_NOT_PROJECTED_CAMPAIGN_POPULATION"
+    },
+    "work_included": [
+      "complete common-cohort seed execution",
+      "all scenarios in declared order",
+      "lossless checkpoint-payload encoding",
+      "return of primitive payloads to the coordinator"
+    ],
+    "serial_seconds": 11.899300199998834,
+    "two_process_cold_seconds": 7.869675499998266,
+    "local_speedup": 1.5120445817621648,
+    "bitwise_payload_equal": true,
+    "serial_payload_sha256": "bf043b9367368e1b7134a5a9db68471d534b0b19c43f391885f26169fcdee2c6",
+    "process_payload_sha256": "bf043b9367368e1b7134a5a9db68471d534b0b19c43f391885f26169fcdee2c6",
+    "pickle_probe": {
+      "picklable_static_inputs": [
+        "PolicyBatchSpec",
+        "country profile tuple",
+        "PopulationProjectionAdapter",
+        "PolicyRunInputs",
+        "ExecutionBackendConfig"
+      ],
+      "intentionally_reconstructed_or_excluded": [
+        "ResolvedExecutionBackend",
+        "ProfileBundle"
+      ],
+      "reason": "mapping proxies and the array module are not pickle-safe"
+    },
+    "speed_claim": "LOCAL_BOUNDED_FIXTURE_ONLY_NOT_A_CAMPAIGN_FORECAST"
+  },
+  "memory_extrapolation": {
+    "basis": "BOUNDED_5000_PLAYER_FIXTURE_LINEAR_EXTRAPOLATION",
+    "at_50000_players_mib": {
+      "cohort_players_plus_life": 12.0,
+      "mutable_scenario_state": 11.8,
+      "one_scenario_result": 12.3,
+      "seven_scenario_results_per_seed": 86.0
+    },
+    "all_150_seed_result_arrays_gib_before_python_overhead": 12.6,
+    "all_150_retained_sensitivity_cohorts_gib_before_python_overhead": 1.75
+  },
+  "configured_work_units": {
+    "seed_count": 150,
+    "scenario_count": 7,
+    "sensitivity_parameter_count": 5,
+    "levels_per_sensitivity_parameter": 3,
+    "main_batch_units": 1050,
+    "sensitivity_units": 2250,
+    "overall_units": 3300,
+    "progress_basis": "COMPLETED_DECLARED_WORK_UNITS"
+  },
+  "interpretation_limits": [
+    "No full exploratory or production campaign was run.",
+    "No compatible GPU was available, so GPU parity and speed were not measured.",
+    "The GPU-capable kernel is a post-simulation reporting reduction, not the profiled policy-choice or RNG bottleneck.",
+    "Timing observations are local bounded fixtures and are not campaign runtime forecasts.",
+    "Memory values are linear extrapolations, not full-campaign peak resident-set measurements.",
+    "The benchmark establishes no empirical, causal, population, monetary, calibration, or readiness claim."
+  ]
+}

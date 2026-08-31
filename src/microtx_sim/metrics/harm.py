@@ -13,9 +13,13 @@ from dataclasses import dataclass
 from enum import IntEnum
 from math import isfinite
 from numbers import Integral, Real
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from ..execution.backends import ResolvedExecutionBackend
 
 
 FloatArray = npt.NDArray[np.float64]
@@ -234,11 +238,26 @@ class WelfareHarmResult:
     def composite_harm(
         self,
         weights: WelfareHarmWeights | None = None,
+        *,
+        execution_backend: ResolvedExecutionBackend | None = None,
     ) -> FloatArray:
-        """Return a weighted reporting view without discarding components."""
+        """Return a weighted reporting view without discarding components.
+
+        Omitting ``execution_backend`` retains the exact historical NumPy
+        expression. An explicit backend may accelerate only this post-model
+        reporting reduction; it never handles RNG or state transitions.
+        """
 
         values = (weights or WelfareHarmWeights()).as_array()
-        return self.component_scores @ (values / values.sum())
+        if execution_backend is None:
+            return self.component_scores @ (values / values.sum())
+        from ..execution.kernels import compute_composite_harm
+
+        return compute_composite_harm(
+            self.component_scores,
+            values,
+            backend=execution_backend,
+        )
 
 
 def compute_welfare_harm(

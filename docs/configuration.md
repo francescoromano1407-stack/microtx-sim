@@ -327,6 +327,7 @@ underlying parameters describe any observed game or jurisdiction.
 | `provenance_status` | string | Development runs require `synthetic`; campaign candidates retain an explicit status and execution separately requires `calibrated`. |
 | `run_purpose` | optional `development`, `exploratory`, or `campaign` | Defaults to `development`; `exploratory` requires the complete non-empirical `[exploratory]` contract, while `campaign` activates production-shaped projected-population, plan, retained-player, and no-fallback gates. |
 | `full_exploratory_config` | optional boolean | Must be true for `run_purpose = "exploratory"`; mutually exclusive with `full_campaign_config`. |
+| `notes` | string | Interpretation warning retained in the manifest. |
 
 The strict exploratory schema requires projected population, scientific-parent
 and sidecar-plan identities, uncertainty and convergence rules, monetary and
@@ -336,10 +337,22 @@ ledger. It forbids `[campaign]`, the production `[output_contract]`, and
 
 `[exploratory_checkpoint]` is mandatory for a full exploratory configuration.
 It fixes one-seed checkpoint intervals, atomic writes, preservation of prior
-attempts, a non-monetary diagnostic-only partial profile, and explicit
-`RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT` behavior. It is invalid for
-development or production run purposes.
-| `notes` | string | Interpretation warning retained in the manifest. |
+attempts, an attested internal-state profile that forbids interpreting partial
+contents as monetary or estimand outputs, and explicit
+`RESUME_EXACT_COMPATIBLE_ATTEMPT_ONLY` behavior. It is invalid for development
+or production run purposes.
+
+`[execution_engine]` is mandatory for the full exploratory configuration and
+is forbidden for development and production purposes. It binds a new
+implementation, run and attempt identity; the superseded incomplete attempt;
+an explicit `cpu`, `gpu`, or recorded `auto` backend; bounded GPU batches;
+bounded host workers and in-flight memory; one native numerical thread per
+worker; a pickle-safe bounded `spawn` process pool; complete-seed scheduling;
+payload/checkpoint schemas; and exact progress semantics. Each spawned worker
+reconstructs and verifies its backend and native-thread identity, while only
+the coordinator may write checkpoints. An explicit unavailable GPU fails
+before model work and is never silently replaced by CPU. Resume requires all
+execution and scientific identities to match exactly.
 
 ### `[policy_run]`
 

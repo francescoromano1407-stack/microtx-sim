@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from types import MappingProxyType
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 import numpy as np
 import numpy.typing as npt
@@ -28,6 +28,9 @@ from .policy_day import (
     advance_policy_day,
     create_policy_state,
 )
+
+if TYPE_CHECKING:
+    from ..execution.backends import ResolvedExecutionBackend
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,8 +164,14 @@ def run_policy_scenario(
     opportunity_valuation: OpportunityCostValuation | None = None,
     producer_assumptions: ProducerAssumptions | None = None,
     epgc_policy: EPGCPolicy | None = None,
+    execution_backend: ResolvedExecutionBackend | None = None,
 ) -> PolicyScenarioResult:
-    """Run one branch from an immutable shared pre-treatment cohort."""
+    """Run one branch from an immutable shared pre-treatment cohort.
+
+    ``execution_backend`` affects only the final composite-harm reporting
+    reduction. Random streams, choices, money, and all state transitions remain
+    on the CPU reference implementation.
+    """
 
     seed = validate_seed(seed)
     if isinstance(days, bool) or not isinstance(days, int):
@@ -239,7 +248,10 @@ def run_policy_scenario(
         parameters=harm_parameters,
         valuation=opportunity_valuation,
     )
-    composite = harm.composite_harm(harm_weights)
+    composite = harm.composite_harm(
+        harm_weights,
+        execution_backend=execution_backend,
+    )
     enjoyment = (
         state.cumulative_enjoyment / days
         if days
@@ -249,8 +261,17 @@ def run_policy_scenario(
         harm.harmful_spending_cents.astype(np.float64),
         np.maximum(disposable_budget.astype(np.float64), 1.0),
     )
+    # Classification stays on the CPU reference path even when the continuous
+    # reporting view was produced by a GPU reduction. GPU parity validation
+    # separately requires these classifications to match exactly.
+    categorical_composite = (
+        harm.composite_harm(harm_weights)
+        if execution_backend is not None
+        and execution_backend.mode.value == "gpu"
+        else composite
+    )
     high_risk = (
-        (composite >= 0.35)
+        (categorical_composite >= 0.35)
         | (harmful_share >= 0.10)
         | (harm.component_scores[:, 2] >= 0.50)
     )

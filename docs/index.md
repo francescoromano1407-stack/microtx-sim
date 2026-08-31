@@ -18,6 +18,7 @@ claims and should be read before interpreting any simulation output.
 | [Prospective analysis plan](analysis_plan.md) | Concrete opt-in plan, pre-run validation, exact run binding, plan-level Monte Carlo aggregate, and fail-closed campaign scope. |
 | [Full campaign contract](campaign_contract.md) | Successor-plan binding, uncertainty and convergence, execution attestation, layer boundaries, and fail-closed readiness states. |
 | [Exploratory synthetic campaign](exploratory_synthetic_campaign.md) | Separate non-empirical run purpose, dual plan binding, interpretation limits, and validation-only review gate. |
+| [Optimized exploratory execution engine](execution_engine.md) | Explicit CPU/GPU backend contract, bounded host scheduling, exact checkpoint/resume/progress semantics, parity rules, and bounded benchmark evidence. |
 
 ## Running and extending the project
 
@@ -57,9 +58,11 @@ configuration. It preserves the scientific parent estimand while binding a
 separate non-empirical sidecar plan and isolated output namespace. It does not
 alter the production configuration or inherit production authority. It has
 not been executed and remains `campaign_ready=false`. Its reviewed command is
-technically launchable and writes atomic per-seed diagnostic checkpoints; an
-interrupted attempt is preserved, while a later attempt restarts from the first
-seed in a new attempt directory.
+technically launchable. The optimized v2 executor writes complete main seeds and
+individual sensitivity units to content-addressed atomic checkpoints. A launch
+with the exact same v2 run identity resumes verified committed work and requeues
+only uncommitted in-flight units. The earlier v1 interrupted attempt is
+preserved as lineage and is not treated as a compatible resume point.
 
 Population evidence/design, an optional exact runtime mapping/adapter, per-seed
 projection and pre-treatment balance lineage, and a separate two-file target-

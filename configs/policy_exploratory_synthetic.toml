@@ -118,8 +118,33 @@ interval_seeds = 1
 directory = "../artifacts/policy_exploratory_synthetic/progress"
 atomic_writes = true
 preserve_prior_attempts = true
-resume_mode = "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT"
-partial_result_profile = "NONMONETARY_UNWEIGHTED_SEED_SCENARIO_DIAGNOSTICS_ONLY"
+resume_mode = "RESUME_EXACT_COMPATIBLE_ATTEMPT_ONLY"
+partial_result_profile = "ATTESTED_INTERNAL_MODEL_STATE_NOT_INTERPRETABLE_AS_MONETARY_OR_ESTIMAND_OUTPUT"
+
+[execution_engine]
+implementation_id = "policy-exploratory-resumable-accelerated-v2"
+run_id = "policy-exploratory-synthetic-optimized-v2"
+attempt_id = "attempt-000002"
+supersedes_attempt_id = "attempt-000001"
+previous_attempt_lineage_path = "../inputs/execution-lineage/policy-exploratory-attempt-000001.json"
+backend = "cpu"
+gpu_device_index = 0
+gpu_batch_size = 8192
+gpu_max_batch_bytes = 268435456
+gpu_memory_fraction = 0.5
+precision_mode = "FLOAT64_STRICT_INTEGER_EXACT"
+host_executor = "BOUNDED_PROCESS_POOL_SPAWN"
+host_workers = 2
+max_in_flight_units = 2
+memory_limit_mb = 4096
+estimated_worker_memory_mb = 1024
+native_threads_per_worker = 1
+scheduling_policy = "ONE_SEED_OWNS_COMMON_COHORT_AND_ALL_SCENARIOS"
+resume_enabled = true
+checkpoint_schema_version = "microtx_sim.resumable_checkpoint.v2"
+main_checkpoint_granularity = "COMPLETE_SEED_ALL_SCENARIOS"
+sensitivity_checkpoint_granularity = "PARAMETER_LEVEL_SEED"
+progress_schema_version = "microtx_sim.execution_progress.v2"
 
 [uncertainty]
 seed_design = "FIXED_ASCENDING"

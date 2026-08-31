@@ -91,7 +91,7 @@ def _exploratory_config_text() -> str:
         ),
         1,
     )
-    return selected + """
+    text = selected + """
 [exploratory]
 exploratory_plan_path = "../inputs/exploratory-synthetic-analysis-plan-v1.json"
 exploratory_plan_id = "illustrative.exploratory.synthetic.composite-harm.baseline-vs-safe.v1"
@@ -122,9 +122,13 @@ interval_seeds = 1
 directory = "../artifacts/policy_exploratory_synthetic/progress"
 atomic_writes = true
 preserve_prior_attempts = true
-resume_mode = "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT"
-partial_result_profile = "NONMONETARY_UNWEIGHTED_SEED_SCENARIO_DIAGNOSTICS_ONLY"
+resume_mode = "RESUME_EXACT_COMPATIBLE_ATTEMPT_ONLY"
+partial_result_profile = "ATTESTED_INTERNAL_MODEL_STATE_NOT_INTERPRETABLE_AS_MONETARY_OR_ESTIMAND_OUTPUT"
 """
+    return text + "\n" + _toml_table(
+        EXPLORATORY_CONFIG.read_text("utf-8"),
+        "execution_engine",
+    )
 
 
 class PolicyConfigTests(unittest.TestCase):
@@ -267,8 +271,32 @@ class PolicyConfigTests(unittest.TestCase):
         assert checkpoint is not None
         self.assertTrue(checkpoint.enabled)
         self.assertEqual(checkpoint.interval_seeds, 1)
-        self.assertFalse("resume" == checkpoint.resume_mode)
+        self.assertEqual(
+            checkpoint.resume_mode,
+            "RESUME_EXACT_COMPATIBLE_ATTEMPT_ONLY",
+        )
         self.assertEqual(checkpoint.directory.name, "progress")
+        engine = config.execution_engine
+        assert engine is not None
+        self.assertEqual(
+            engine.implementation_id,
+            "policy-exploratory-resumable-accelerated-v2",
+        )
+        self.assertEqual(engine.attempt_id, "attempt-000002")
+        self.assertEqual(engine.supersedes_attempt_id, "attempt-000001")
+        self.assertEqual(
+            engine.host_executor,
+            "BOUNDED_PROCESS_POOL_SPAWN",
+        )
+        self.assertTrue(engine.resume_enabled)
+        self.assertEqual(
+            engine.checkpoint_schema_version,
+            "microtx_sim.resumable_checkpoint.v2",
+        )
+        self.assertEqual(
+            engine.progress_schema_version,
+            "microtx_sim.execution_progress.v2",
+        )
         assert config.ledger is not None
         self.assertEqual(
             config.ledger.path.parent.name,
@@ -350,6 +378,36 @@ class PolicyConfigTests(unittest.TestCase):
                 'directory = "../artifacts/policy_exploratory_synthetic/progress"',
                 'directory = "../artifacts/policy_campaign_BLOCKED/progress"',
                 "checkpoint directory must be isolated",
+            ),
+            (
+                'resume_mode = "RESUME_EXACT_COMPATIBLE_ATTEMPT_ONLY"',
+                'resume_mode = "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT"',
+                "resume_mode must require exact compatible-attempt resume",
+            ),
+            (
+                'backend = "cpu"',
+                'backend = "cuda"',
+                "backend must be cpu, gpu, or auto",
+            ),
+            (
+                'host_executor = "BOUNDED_PROCESS_POOL_SPAWN"',
+                'host_executor = "BOUNDED_THREAD_POOL_NUMPY_RELEASES_GIL"',
+                "spawn process-pool contract",
+            ),
+            (
+                'attempt_id = "attempt-000002"',
+                'attempt_id = "attempt-000001"',
+                "must not reuse the superseded attempt",
+            ),
+            (
+                "resume_enabled = true",
+                "resume_enabled = false",
+                "resume_enabled must be true",
+            ),
+            (
+                'checkpoint_schema_version = "microtx_sim.resumable_checkpoint.v2"',
+                'checkpoint_schema_version = "legacy.v1"',
+                "checkpoint_schema_version must be",
             ),
             (
                 'expected_plan_sha256 = "1f27f290179cb054da10d97fce877ca9b17582f82f7d18e76788575afb18a023"',

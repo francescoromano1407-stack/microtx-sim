@@ -26,6 +26,7 @@ from .types import LedgerBackend
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _BLOCKED_IDENTITY = re.compile(r"BLOCKED_PENDING_[A-Z0-9_]+\Z")
+_ATTEMPT_ID = re.compile(r"attempt-[0-9]{6}\Z")
 
 EXPLORATORY_ARTIFACT_NAMESPACE = "policy_exploratory_synthetic"
 EXPLORATORY_EXECUTION_KIND = "COMPUTATIONAL_SIMULATION"
@@ -340,7 +341,7 @@ class ExploratoryControlConfig:
 
 @dataclass(frozen=True, slots=True)
 class ExploratoryCheckpointConfig:
-    """Atomic, non-resumable intermediate-output policy for exploration."""
+    """Atomic resumable intermediate-output policy for exploration."""
 
     enabled: bool
     interval_seeds: int
@@ -364,18 +365,19 @@ class ExploratoryCheckpointConfig:
             )
         if not isinstance(self.directory, Path) or not str(self.directory):
             raise TypeError("exploratory_checkpoint directory must be a Path")
-        if self.resume_mode != "RESTART_FROM_ZERO_PRESERVE_PRIOR_ATTEMPT":
+        if self.resume_mode != "RESUME_EXACT_COMPATIBLE_ATTEMPT_ONLY":
             raise ValueError(
-                "exploratory_checkpoint resume_mode must explicitly restart "
-                "from zero while preserving prior attempts"
+                "exploratory_checkpoint resume_mode must require exact "
+                "compatible-attempt resume"
             )
         if (
             self.partial_result_profile
-            != "NONMONETARY_UNWEIGHTED_SEED_SCENARIO_DIAGNOSTICS_ONLY"
+            != "ATTESTED_INTERNAL_MODEL_STATE_NOT_INTERPRETABLE_AS_MONETARY_OR_ESTIMAND_OUTPUT"
         ):
             raise ValueError(
-                "exploratory_checkpoint partial_result_profile must prohibit "
-                "monetary and estimand interpretation"
+                "exploratory_checkpoint partial_result_profile must describe "
+                "attested internal state while prohibiting monetary and "
+                "estimand interpretation"
             )
 
     def snapshot(self) -> dict[str, object]:
@@ -387,6 +389,142 @@ class ExploratoryCheckpointConfig:
             "preserve_prior_attempts": self.preserve_prior_attempts,
             "resume_mode": self.resume_mode,
             "partial_result_profile": self.partial_result_profile,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ExploratoryExecutionEngineConfig:
+    """Explicit optimized execution contract, separate from scientific inputs."""
+
+    implementation_id: str
+    run_id: str
+    attempt_id: str
+    supersedes_attempt_id: str
+    previous_attempt_lineage_path: Path
+    backend: str
+    gpu_device_index: int
+    gpu_batch_size: int
+    gpu_max_batch_bytes: int
+    gpu_memory_fraction: float
+    precision_mode: str
+    host_executor: str
+    host_workers: int
+    max_in_flight_units: int
+    memory_limit_mb: int
+    estimated_worker_memory_mb: int
+    native_threads_per_worker: int
+    scheduling_policy: str
+    resume_enabled: bool
+    checkpoint_schema_version: str
+    main_checkpoint_granularity: str
+    sensitivity_checkpoint_granularity: str
+    progress_schema_version: str
+
+    def __post_init__(self) -> None:
+        for name in ("implementation_id", "run_id"):
+            _nonempty_text(getattr(self, name), name=f"execution_engine {name}")
+        for name in ("attempt_id", "supersedes_attempt_id"):
+            value = getattr(self, name)
+            if type(value) is not str or not _ATTEMPT_ID.fullmatch(value):
+                raise ValueError(
+                    f"execution_engine {name} must use attempt-NNNNNN"
+                )
+        if self.attempt_id == self.supersedes_attempt_id:
+            raise ValueError(
+                "execution_engine attempt_id must not reuse the superseded attempt"
+            )
+        if not isinstance(self.previous_attempt_lineage_path, Path) or not str(
+            self.previous_attempt_lineage_path
+        ):
+            raise TypeError(
+                "execution_engine previous_attempt_lineage_path must be a Path"
+            )
+        if self.backend not in {"cpu", "gpu", "auto"}:
+            raise ValueError("execution_engine backend must be cpu, gpu, or auto")
+        for name, minimum in (
+            ("gpu_device_index", 0),
+            ("gpu_batch_size", 1),
+            ("gpu_max_batch_bytes", 1),
+            ("host_workers", 1),
+            ("max_in_flight_units", 1),
+            ("memory_limit_mb", 1),
+            ("estimated_worker_memory_mb", 1),
+            ("native_threads_per_worker", 1),
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value < minimum:
+                raise ValueError(
+                    f"execution_engine {name} must be an integer >= {minimum}"
+                )
+        if self.host_workers > 32:
+            raise ValueError("execution_engine host_workers must be at most 32")
+        if self.native_threads_per_worker != 1:
+            raise ValueError(
+                "execution_engine native_threads_per_worker must be 1"
+            )
+        if self.max_in_flight_units > self.host_workers:
+            raise ValueError(
+                "execution_engine max_in_flight_units cannot exceed host_workers"
+            )
+        if (
+            self.estimated_worker_memory_mb * self.max_in_flight_units
+            > self.memory_limit_mb
+        ):
+            raise ValueError(
+                "execution_engine declared in-flight work exceeds its memory limit"
+            )
+        if isinstance(self.gpu_memory_fraction, bool) or not isinstance(
+            self.gpu_memory_fraction, (int, float)
+        ):
+            raise TypeError(
+                "execution_engine gpu_memory_fraction must be numeric"
+            )
+        fraction = float(self.gpu_memory_fraction)
+        if not isfinite(fraction) or not 0.0 < fraction <= 1.0:
+            raise ValueError(
+                "execution_engine gpu_memory_fraction must be in (0, 1]"
+            )
+        object.__setattr__(self, "gpu_memory_fraction", fraction)
+        if self.precision_mode != "FLOAT64_STRICT_INTEGER_EXACT":
+            raise ValueError(
+                "execution_engine precision_mode must remain "
+                "FLOAT64_STRICT_INTEGER_EXACT"
+            )
+        if self.host_executor != "BOUNDED_PROCESS_POOL_SPAWN":
+            raise ValueError(
+                "execution_engine host_executor must use the bounded "
+                "spawn process-pool contract"
+            )
+        if (
+            self.scheduling_policy
+            != "ONE_SEED_OWNS_COMMON_COHORT_AND_ALL_SCENARIOS"
+        ):
+            raise ValueError(
+                "execution_engine scheduling_policy must preserve one common "
+                "cohort per seed"
+            )
+        if type(self.resume_enabled) is not bool or not self.resume_enabled:
+            raise ValueError("execution_engine resume_enabled must be true")
+        expected = {
+            "checkpoint_schema_version": "microtx_sim.resumable_checkpoint.v2",
+            "main_checkpoint_granularity": "COMPLETE_SEED_ALL_SCENARIOS",
+            "sensitivity_checkpoint_granularity": "PARAMETER_LEVEL_SEED",
+            "progress_schema_version": "microtx_sim.execution_progress.v2",
+        }
+        for name, value in expected.items():
+            if getattr(self, name) != value:
+                raise ValueError(
+                    f"execution_engine {name} must be {value!r}"
+                )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            name: (
+                str(getattr(self, name))
+                if name == "previous_attempt_lineage_path"
+                else getattr(self, name)
+            )
+            for name in self.__dataclass_fields__
         }
 
 
@@ -844,6 +982,7 @@ class PolicyPrototypeConfig:
     campaign: CampaignControlConfig | None = None
     exploratory: ExploratoryControlConfig | None = None
     exploratory_checkpoint: ExploratoryCheckpointConfig | None = None
+    execution_engine: ExploratoryExecutionEngineConfig | None = None
     uncertainty: CampaignUncertaintyConfig | None = None
     convergence: CampaignConvergenceConfig | None = None
     population_contract: PopulationContractConfig | None = None
@@ -906,10 +1045,18 @@ class PolicyPrototypeConfig:
                 "exploratory_checkpoint must be "
                 "ExploratoryCheckpointConfig or None"
             )
+        if self.execution_engine is not None and type(
+            self.execution_engine
+        ) is not ExploratoryExecutionEngineConfig:
+            raise TypeError(
+                "execution_engine must be "
+                "ExploratoryExecutionEngineConfig or None"
+            )
         if self.run_purpose is PolicyRunPurpose.CAMPAIGN:
             if (
                 self.exploratory is not None
                 or self.exploratory_checkpoint is not None
+                or self.execution_engine is not None
                 or self.full_exploratory_config
             ):
                 raise ValueError(
@@ -950,6 +1097,7 @@ class PolicyPrototypeConfig:
             self.full_exploratory_config
             or self.exploratory is not None
             or self.exploratory_checkpoint is not None
+            or self.execution_engine is not None
         ):
             raise ValueError(
                 "exploratory semantics require run_purpose = 'exploratory'"
@@ -1100,6 +1248,7 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
     required = {
         "exploratory": config.exploratory,
         "exploratory_checkpoint": config.exploratory_checkpoint,
+        "execution_engine": config.execution_engine,
         "population": config.population,
         "analysis_plan": config.analysis_plan,
         "uncertainty": config.uncertainty,
@@ -1116,6 +1265,7 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
         )
     exploratory = config.exploratory
     checkpoint = config.exploratory_checkpoint
+    execution_engine = config.execution_engine
     population = config.population
     analysis = config.analysis_plan
     uncertainty = config.uncertainty
@@ -1125,6 +1275,7 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
     ledger = config.ledger
     assert exploratory is not None
     assert checkpoint is not None
+    assert execution_engine is not None
     assert population is not None
     assert analysis is not None
     assert uncertainty is not None
@@ -1220,6 +1371,21 @@ def _validate_full_exploratory_config(config: PolicyPrototypeConfig) -> None:
             "exploratory checkpoint directory must be isolated at "
             f"{expected_checkpoint.as_posix()!r}"
         )
+    if execution_engine.supersedes_attempt_id != "attempt-000001":
+        raise ValueError(
+            "exploratory optimized execution must preserve attempt-000001 "
+            "as its superseded incomplete lineage"
+        )
+    if execution_engine.attempt_id != "attempt-000002":
+        raise ValueError(
+            "exploratory optimized execution must use the new attempt-000002 identity"
+        )
+    if execution_engine.previous_attempt_lineage_path.name != (
+        "policy-exploratory-attempt-000001.json"
+    ):
+        raise ValueError(
+            "exploratory execution must bind the checked-in previous-attempt lineage"
+        )
     if (
         ledger.path.parent.name != exploratory.artifact_namespace
         or ledger.path.parent.parent.name != "artifacts"
@@ -1276,6 +1442,10 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
         )
         exploratory_checkpoint = _exploratory_checkpoint_control(
             raw.get("exploratory_checkpoint"),
+            config_path=config_path,
+        )
+        execution_engine = _exploratory_execution_engine(
+            raw.get("execution_engine"),
             config_path=config_path,
         )
         uncertainty = _campaign_uncertainty(
@@ -1434,6 +1604,7 @@ def load_policy_config(path: str | Path) -> PolicyPrototypeConfig:
             campaign=campaign,
             exploratory=exploratory,
             exploratory_checkpoint=exploratory_checkpoint,
+            execution_engine=execution_engine,
             uncertainty=uncertainty,
             convergence=convergence,
             population_contract=population_contract,
@@ -1471,6 +1642,7 @@ def _strict_top_level(raw: Mapping[str, object]) -> None:
         "campaign",
         "exploratory",
         "exploratory_checkpoint",
+        "execution_engine",
         "uncertainty",
         "convergence",
         "population_contract",
@@ -1659,6 +1831,52 @@ def _exploratory_checkpoint_control(
                 values["directory"],
                 config_path=config_path,
                 name="exploratory_checkpoint directory",
+            ),
+        }
+    )
+
+
+def _exploratory_execution_engine(
+    value: object,
+    *,
+    config_path: Path,
+) -> ExploratoryExecutionEngineConfig | None:
+    if value is None:
+        return None
+    values = _optional_table(value, name="execution_engine")
+    expected = {
+        "implementation_id",
+        "run_id",
+        "attempt_id",
+        "supersedes_attempt_id",
+        "previous_attempt_lineage_path",
+        "backend",
+        "gpu_device_index",
+        "gpu_batch_size",
+        "gpu_max_batch_bytes",
+        "gpu_memory_fraction",
+        "precision_mode",
+        "host_executor",
+        "host_workers",
+        "max_in_flight_units",
+        "memory_limit_mb",
+        "estimated_worker_memory_mb",
+        "native_threads_per_worker",
+        "scheduling_policy",
+        "resume_enabled",
+        "checkpoint_schema_version",
+        "main_checkpoint_granularity",
+        "sensitivity_checkpoint_granularity",
+        "progress_schema_version",
+    }
+    _exact_keys(values, expected, "execution_engine")
+    return ExploratoryExecutionEngineConfig(
+        **{
+            **values,
+            "previous_attempt_lineage_path": _resolved_config_path(
+                values["previous_attempt_lineage_path"],
+                config_path=config_path,
+                name="execution_engine previous_attempt_lineage_path",
             ),
         }
     )

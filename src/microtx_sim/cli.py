@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 import sys
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .analysis import run_sensitivity_analysis
 from .causal.analysis_binding import (
@@ -31,6 +31,7 @@ from .data.profiles import (
 )
 from .data.population_execution import resolve_population_projection_adapter
 from .execution_attestation import CampaignExecutionRejectedError
+from .execution.lease import AttemptCoordinatorLease, ConcurrentExecutionError
 from .outputs import export_policy_batch
 from .outputs.schema import (
     SENSITIVITY_COLUMNS,
@@ -872,140 +873,90 @@ def _policy_batch(
         output if output is not None else config.output.output_dir,
         repository_root=repository_root,
     )
-    checkpoint_recorder = None
     if exploratory:
-        from .outputs.checkpoints import ExploratoryCheckpointRecorder
-        from .outputs.exploratory_results import preflight_exploratory_output
-
-        if config.exploratory is None or config.exploratory_checkpoint is None:
+        if analysis_plan is None or population_adapter is None:
             raise PolicyConfigurationError(
-                "exploratory execution requires explicit checkpoint policy"
+                "exploratory execution requires an attested analysis plan and "
+                "projected population adapter"
             )
-        preflight_exploratory_output(destination)
-        checkpoint_recorder = ExploratoryCheckpointRecorder.start(
-            config.exploratory_checkpoint.directory,
-            expected_seeds=config.batch.seeds,
-            config_sha256=sha256(config_path.read_bytes()).hexdigest(),
-            exploratory_plan_id=config.exploratory.exploratory_plan_id,
-            exploratory_plan_sha256=(
-                config.exploratory.exploratory_plan_sha256
-            ),
-            launch_command=command,
-        )
-    try:
-        batch = run_policy_batch(
-            config.batch,
-            profile_bundle=profiles,
-            harm_parameters=config.harm_parameters,
-            harm_weights=config.harm_weights,
-            opportunity_valuation=config.opportunity_valuation,
-            producer_assumptions=config.producer_assumptions,
-            epgc_policy=config.epgc_policy,
+        assert exploratory_validation_metadata is not None
+        return _checkpointed_exploratory_policy_batch(
+            config,
+            config_path=config_path,
+            command=command,
+            destination=destination,
+            repository_root=repository_root,
+            profiles=profiles,
             population_adapter=population_adapter,
-            campaign=campaign,
-            campaign_receipt=execution_receipt,
-            campaign_verification=execution_pre_verification,
-            checkpoint_callback=checkpoint_recorder,
+            analysis_plan=analysis_plan,
+            exploratory_validation_metadata=exploratory_validation_metadata,
+            sensitivity_enabled=sensitivity_enabled,
         )
-        if checkpoint_recorder is not None:
-            checkpoint_recorder.mark_model_batch_complete()
-        analysis_binding = (
-            resolve_run_analysis_binding(analysis_plan.plan, batch)
-            if analysis_plan is not None
-            else None
+    batch = run_policy_batch(
+        config.batch,
+        profile_bundle=profiles,
+        harm_parameters=config.harm_parameters,
+        harm_weights=config.harm_weights,
+        opportunity_valuation=config.opportunity_valuation,
+        producer_assumptions=config.producer_assumptions,
+        epgc_policy=config.epgc_policy,
+        population_adapter=population_adapter,
+        campaign=campaign,
+        campaign_receipt=execution_receipt,
+        campaign_verification=execution_pre_verification,
+        checkpoint_callback=None,
+    )
+    analysis_binding = (
+        resolve_run_analysis_binding(analysis_plan.plan, batch)
+        if analysis_plan is not None
+        else None
+    )
+    sensitivity = (
+        _run_configured_sensitivity(
+            config,
+            profile_bundle=profiles,
+            population_adapter=population_adapter,
         )
-        sensitivity = (
-            _run_configured_sensitivity(
-                config,
-                profile_bundle=profiles,
-                population_adapter=population_adapter,
-            )
-            if sensitivity_enabled
-            else None
+        if sensitivity_enabled
+        else None
+    )
+    execution_verification = None
+    if campaign:
+        # Rebuild the same identity after model work and before publication.
+        from .execution_attestation import (
+            ExecutionVerificationPhase,
+            require_campaign_execution,
+            verify_execution_receipt,
+            write_execution_attestation_atomic,
         )
-        execution_verification = None
-        if campaign:
-            # Rebuild the same identity after model work and before publication.
-            from .execution_attestation import (
-                ExecutionVerificationPhase,
-                require_campaign_execution,
-                verify_execution_receipt,
-                write_execution_attestation_atomic,
-            )
 
-            assert execution_receipt_spec is not None
-            assert execution_receipt is not None
-            execution_verification = verify_execution_receipt(
-                execution_receipt,
-                execution_receipt_spec,
-                phase=ExecutionVerificationPhase.POST_EXECUTION,
-            )
-            require_campaign_execution(execution_receipt, execution_verification)
-            assert config.execution_receipt is not None
-            write_execution_attestation_atomic(
-                config.execution_receipt.attestation_path,
-                execution_verification,
-            )
-        if exploratory:
-            from .outputs.exploratory_results import export_exploratory_results
-
-            if analysis_binding is None or checkpoint_recorder is None:
-                raise RuntimeError(
-                    "exploratory execution requires a weighted analysis binding "
-                    "and checkpoint attempt"
-                )
-            assert exploratory_validation_metadata is not None
-            paths = export_exploratory_results(
-                config,
-                batch,
-                sensitivity,
-                analysis_binding,
-                config_path=config_path,
-                output_dir=destination,
-                command=command,
-                exploratory_validation_metadata=(
-                    exploratory_validation_metadata
-                ),
-                checkpoint_attempt_id=checkpoint_recorder.attempt_id,
-            )
-            checkpoint_recorder.mark_complete()
-        else:
-            paths = export_policy_batch(
-                config,
-                batch,
-                sensitivity,
-                config_path=config_path,
-                repository_root=repository_root,
-                output_dir=destination,
-                command=command,
-                analysis_plan=analysis_plan,
-                analysis_binding=analysis_binding,
-                execution_receipt=execution_receipt,
-                execution_verification=execution_verification,
-                exploratory_validation_metadata=(
-                    exploratory_validation_metadata
-                ),
-            )
-    except KeyboardInterrupt as error:
-        if checkpoint_recorder is not None:
-            try:
-                checkpoint_recorder.mark_interrupted()
-            except BaseException as checkpoint_error:
-                error.add_note(
-                    "the interrupted exploratory attempt could not update "
-                    f"progress.json: {checkpoint_error}"
-                )
-        raise
-    except BaseException as error:
-        if checkpoint_recorder is not None:
-            try:
-                checkpoint_recorder.mark_failed(error)
-            except BaseException as checkpoint_error:
-                error.add_note(
-                    "the exploratory failure marker also failed: "
-                    f"{checkpoint_error}"
-                )
-        raise
+        assert execution_receipt_spec is not None
+        assert execution_receipt is not None
+        execution_verification = verify_execution_receipt(
+            execution_receipt,
+            execution_receipt_spec,
+            phase=ExecutionVerificationPhase.POST_EXECUTION,
+        )
+        require_campaign_execution(execution_receipt, execution_verification)
+        assert config.execution_receipt is not None
+        write_execution_attestation_atomic(
+            config.execution_receipt.attestation_path,
+            execution_verification,
+        )
+    paths = export_policy_batch(
+        config,
+        batch,
+        sensitivity,
+        config_path=config_path,
+        repository_root=repository_root,
+        output_dir=destination,
+        command=command,
+        analysis_plan=analysis_plan,
+        analysis_binding=analysis_binding,
+        execution_receipt=execution_receipt,
+        execution_verification=execution_verification,
+        exploratory_validation_metadata=exploratory_validation_metadata,
+    )
     return {
         "status": "ok",
         "mode": (
@@ -1046,6 +997,236 @@ def _policy_batch(
             if analysis_plan is not None and analysis_binding is not None
             else {}
         ),
+    }
+
+
+def _checkpointed_exploratory_policy_batch(
+    config,
+    *,
+    config_path: Path,
+    command: Sequence[str],
+    destination: Path,
+    repository_root: Path,
+    profiles: ProfileBundle,
+    population_adapter,
+    analysis_plan: LoadedProspectiveAnalysisPlan,
+    exploratory_validation_metadata,
+    sensitivity_enabled: bool,
+) -> dict[str, object]:
+    """Run or resume only the content-addressed exploratory execution path."""
+
+    from .execution.checkpoints import CheckpointStatus
+    from .execution.optimized_runner import (
+        expected_execution_work_plan,
+        format_progress,
+        run_checkpointed_policy_batch,
+        run_checkpointed_sensitivity,
+    )
+    from .execution.session import (
+        build_execution_identity,
+        build_previous_execution_lineage,
+        open_configured_checkpoint,
+        resolve_configured_backend,
+    )
+    from .execution.streaming_analysis import (
+        resolve_checkpointed_run_analysis_binding,
+    )
+    from .outputs.exploratory_results import (
+        export_checkpointed_exploratory_results,
+        resume_staged_exploratory_finalization,
+    )
+
+    if config.execution_engine is None or config.exploratory is None:
+        raise PolicyConfigurationError(
+            "exploratory execution requires [execution_engine] and "
+            "[exploratory] contracts"
+        )
+    work_plan = expected_execution_work_plan(
+        config.batch,
+        sensitivity_enabled=sensitivity_enabled,
+    )
+    backend = resolve_configured_backend(config)
+    identity = build_execution_identity(
+        config,
+        config_path=config_path,
+        work_plan=work_plan,
+        backend=backend,
+        repository_root=repository_root,
+    )
+    lineage = build_previous_execution_lineage(
+        config,
+        repository_root=repository_root,
+    )
+    assert config.exploratory_checkpoint is not None
+    lease = AttemptCoordinatorLease(
+        (
+            config.exploratory_checkpoint.directory
+            / f".{config.execution_engine.attempt_id}.lock"
+        ).resolve()
+    )
+    lease.acquire()
+    store = None
+    try:
+        store = open_configured_checkpoint(
+            config,
+            identity=identity,
+            work_plan=work_plan,
+            lineage=lineage,
+        )
+        staged = resume_staged_exploratory_finalization(store, destination)
+        if staged is not None:
+            return _checkpointed_exploratory_cli_payload(
+                config,
+                paths=staged,
+                destination=destination,
+                store=store,
+                sensitivity=None,
+                resumed=True,
+            )
+        if store.status is CheckpointStatus.COMPLETE:
+            raise RuntimeError(
+                "completed exploratory checkpoint has no recoverable final "
+                "artifact staging bundle"
+            )
+
+        def progress(snapshot) -> None:
+            print(format_progress(snapshot), file=sys.stderr, flush=True)
+
+        batch = run_checkpointed_policy_batch(
+            config.batch,
+            store=store,
+            execution_config=config.execution_engine,
+            backend=backend,
+            profile_bundle=profiles,
+            harm_parameters=config.harm_parameters,
+            harm_weights=config.harm_weights,
+            opportunity_valuation=config.opportunity_valuation,
+            producer_assumptions=config.producer_assumptions,
+            epgc_policy=config.epgc_policy,
+            population_adapter=population_adapter,
+            progress_callback=progress,
+        )
+        sensitivity = (
+            run_checkpointed_sensitivity(
+                batch,
+                execution_config=config.execution_engine,
+                backend=backend,
+                progress_callback=progress,
+            )
+            if sensitivity_enabled
+            else None
+        )
+        binding = resolve_checkpointed_run_analysis_binding(
+            analysis_plan.plan,
+            batch,
+        )
+        paths = export_checkpointed_exploratory_results(
+            config,
+            batch,
+            sensitivity,
+            binding,
+            config_path=config_path,
+            output_dir=destination,
+            command=command,
+            exploratory_validation_metadata=exploratory_validation_metadata,
+        )
+        return _checkpointed_exploratory_cli_payload(
+            config,
+            paths=paths,
+            destination=destination,
+            store=store,
+            sensitivity=sensitivity,
+            resumed=store.progress_snapshot["resume_count"] > 0,
+        )
+    except KeyboardInterrupt as error:
+        if store is not None and store.status is not CheckpointStatus.COMPLETE:
+            try:
+                store.mark_interrupted(
+                    "KeyboardInterrupt received; only atomically committed "
+                    "work units will be retained for resume."
+                )
+            except BaseException as checkpoint_error:
+                error.add_note(
+                    "interrupted checkpoint status update failed: "
+                    f"{checkpoint_error}"
+                )
+        raise
+    except BaseException as error:
+        if store is not None and store.status is not CheckpointStatus.COMPLETE:
+            try:
+                store.mark_failed(error)
+            except BaseException as checkpoint_error:
+                error.add_note(
+                    "failed checkpoint status update also failed: "
+                    f"{checkpoint_error}"
+                )
+        raise
+    finally:
+        lease.release()
+
+
+def _checkpointed_exploratory_cli_payload(
+    config,
+    *,
+    paths: Mapping[str, Path],
+    destination: Path,
+    store,
+    sensitivity,
+    resumed: bool,
+) -> dict[str, object]:
+    manifest_path = destination / "manifest.json"
+    manifest = json.loads(manifest_path.read_text("utf-8"))
+    execution = manifest.get("execution")
+    if type(execution) is not dict:
+        raise ValueError("exploratory manifest lacks execution metadata")
+    manifest_unstable = manifest.get("unstable_parameters")
+    if (
+        type(manifest_unstable) is not list
+        or any(type(item) is not str for item in manifest_unstable)
+    ):
+        raise ValueError("exploratory manifest has invalid unstable parameters")
+    progress = store.progress_snapshot
+    return {
+        "status": "ok",
+        "mode": "exploratory_policy_batch",
+        "run_purpose": config.run_purpose.value,
+        "scenario": config.name,
+        "scenario_count": len(config.batch.scenarios),
+        "seeds": list(config.batch.seeds),
+        "seed_decimal_strings": [str(seed) for seed in config.batch.seeds],
+        "seed_count": len(config.batch.seeds),
+        "player_count": config.batch.player_count,
+        "days": config.batch.days,
+        "sensitivity_run": bool(store.work_plan.sensitivity_units),
+        "unstable_parameters": (
+            list(sensitivity.unstable_parameters)
+            if sensitivity is not None
+            else list(manifest_unstable)
+        ),
+        "output_dir": str(destination.resolve()),
+        "artifacts": sorted(path.name for path in paths.values()),
+        "checkpoint_path": store.checkpoint_path.resolve().as_posix(),
+        "progress_path": store.progress_path.resolve().as_posix(),
+        "run_id": store.identity.run_id,
+        "attempt_id": store.identity.attempt_id,
+        "execution_identity_sha256": store.identity.identity_sha256,
+        "backend": store.identity.backend.resolved_backend,
+        "resumed_from_checkpoint": resumed,
+        "overall_progress_percentage": progress["overall"]["percentage"],
+        "main_progress_percentage": progress["main_batch"]["percentage"],
+        "sensitivity_progress_percentage": progress["sensitivity"][
+            "percentage"
+        ],
+        "empirical_validation_claimed": False,
+        "population_mode": config.population.mode.value,
+        "analysis_plan_sha256": manifest["scientific_parent_plan"][
+            "plan_sha256"
+        ],
+        "exploratory_plan_sha256": manifest["exploratory_plan"][
+            "plan_sha256"
+        ],
+        "analysis_binding_sha256": manifest["analysis_binding_sha256"],
+        "campaign_ready": False,
     }
 
 
@@ -1366,6 +1547,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ProfileValidationError,
         LedgerStorageError,
         CampaignExecutionRejectedError,
+        ConcurrentExecutionError,
         sqlite3.DatabaseError,
         OSError,
         ValueError,

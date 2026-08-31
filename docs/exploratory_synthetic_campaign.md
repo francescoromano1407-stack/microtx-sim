@@ -127,27 +127,37 @@ production-shaped policy exporter is not used by this run purpose.
 
 ## Intermediate results and interruption behavior
 
-Before the first cohort is initialized, each launch creates a new monotonically
-numbered directory under
-`artifacts/policy_exploratory_synthetic/progress/`, for example
-`attempt-000001/`. After every complete seed (all seven paired scenarios), the
-executor atomically replaces:
+The optimized execution is fixed to the new `attempt-000002/` identity under
+`artifacts/policy_exploratory_synthetic/progress/`. It preserves the observed
+v1 `attempt-000001/` as interrupted lineage; v1 is not silently upgraded into a
+resumable checkpoint. Before model dispatch, v2 binds the clean Git source,
+configuration, exploratory plan, immutable work plan, backend/device,
+interpreter, dependency set, native numerical runtime, and worker contract.
+Independent CPU units run in a bounded two-worker `spawn` process pool. Static
+pickle-safe model inputs are transferred once per worker; workers return
+losslessly encoded primitive payloads, and only the coordinator writes the
+checkpoint in declared work-plan order.
 
-- `seed_scenario_diagnostics.partial.csv`, containing cumulative non-monetary,
-  unweighted diagnostics only; and
-- `progress.json`, containing the completed seed prefix, hashes, status, and
-  the partial-file hash.
+After every complete main seed, all seven scenario results are installed as one
+content-addressed atomic block. During sensitivity, every complete
+`(parameter, level, seed)` result is one atomic block. The authoritative
+`checkpoint.json` and machine-readable `progress.json` record exact completed,
+remaining, and in-flight units. Raw cent-valued checkpoint fields remain
+labelled internal `simulation_cents`; they are not published as real-money
+results or pooled across countries.
 
-If the process is stopped or fails, the last complete seed prefix remains on
-disk and the attempt is marked `INTERRUPTED` or `FAILED` when the process can
-handle the interruption. These files are not the weighted primary estimand and
-must not be used as a stopping-rule interim analysis.
+If the process is stopped or fails, verified committed blocks remain on disk
+and the attempt is marked `INTERRUPTED` or `FAILED` when possible. A later
+launch of the exact same run identity resumes those blocks and requeues only an
+uncommitted in-flight seed or sensitivity unit. It does not restart from seed
+one. A changed source tree, configuration, plan, seed set, payload schema,
+backend/device, runtime, dependency lock, native-thread contract, or work plan
+is incompatible and requires a new run and attempt identity.
 
-Resume is deliberately not implemented: a later launch starts again from the
-first seed and creates `attempt-000002/` (or the next available number), while
-preserving the earlier attempt. Restarting unchanged inputs does not require a
-new plan hash; changing the configuration, plan, model inputs, or scientific
-design does. A changed configuration always has a new configuration file hash.
+An execution-only restart does not require a new scientific plan hash. The plan
+hash changes only when plan content changes. A configuration change has a new
+configuration file hash, and any deliberately incompatible execution must use
+a new execution identity rather than relabel completed work.
 
 ## Current readiness
 

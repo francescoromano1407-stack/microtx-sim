@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
@@ -14,10 +15,18 @@ from microtx_sim.outputs.exploratory_results import (
     EXPLORATORY_RESULT_ARTIFACTS,
     SENSITIVITY_DIAGNOSTIC_COLUMNS,
     WEIGHTED_PRIMARY_COLUMNS,
+    attest_staged_exploratory_finalization,
     export_exploratory_results,
     preflight_exploratory_output,
+    resume_staged_exploratory_finalization,
 )
 from microtx_sim.policy_config import load_policy_config
+from microtx_sim.execution.checkpoints import (
+    CheckpointStatus,
+    ExecutionWorkPlan,
+    ResumableCheckpointStore,
+)
+from tests.test_execution_checkpoints import _Clock, _identity, _lineage
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +58,102 @@ class ExploratoryExecutionTests(unittest.TestCase):
             with self.assertRaisesRegex(FileExistsError, "will not be overwritten"):
                 preflight_exploratory_output(output)
             self.assertTrue(marker.is_file())
+
+    def test_staged_publication_resumes_without_repeating_work(self) -> None:
+        plan = ExecutionWorkPlan.build(
+            seeds=(101,),
+            scenario_ids=("baseline_f2p",),
+        )
+        identity = _identity(plan)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = ResumableCheckpointStore.create(
+                root / "progress",
+                identity=identity,
+                work_plan=plan,
+                lineage=_lineage(identity),
+                clock=_Clock(),
+            )
+            store.begin_main_seed(101)
+            store.commit_main_seed(
+                101,
+                {"baseline_f2p": {"complete": True}},
+            )
+            stage = store.attempt_dir / "finalization-staging"
+            stage.mkdir()
+            for name in EXPLORATORY_RESULT_ARTIFACTS:
+                (stage / name).write_text(f"staged:{name}\n", "utf-8")
+            (stage / ".summary.md.crash.tmp").write_text(
+                "orphan never published\n", "utf-8"
+            )
+            artifacts = {
+                name: {
+                    "bytes": (stage / name).stat().st_size,
+                    "sha256": sha256((stage / name).read_bytes()).hexdigest(),
+                }
+                for name in EXPLORATORY_RESULT_ARTIFACTS
+                if name != "manifest.json"
+            }
+            (stage / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "execution": {
+                            "execution_identity_sha256": identity.identity_sha256,
+                            "run_id": identity.run_id,
+                            "attempt_id": identity.attempt_id,
+                        },
+                        "configuration": {
+                            "sha256": identity.configuration_sha256
+                        },
+                        "exploratory_plan": {
+                            "plan_sha256": identity.analysis_plan_sha256
+                        },
+                        "checkpoint_attempt_id": identity.attempt_id,
+                        "artifacts": artifacts,
+                        "unstable_parameters": [],
+                        "status": (
+                            "EXPLORATORY_EXECUTION_COMPLETE_"
+                            "SCIENTIFICALLY_INSUFFICIENT"
+                        ),
+                        "campaign_ready": False,
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                "utf-8",
+            )
+            attest_staged_exploratory_finalization(store, stage)
+            output = root / "artifacts"
+            output.mkdir()
+            first = EXPLORATORY_RESULT_ARTIFACTS[0]
+            (output / first).write_bytes((stage / first).read_bytes())
+
+            paths = resume_staged_exploratory_finalization(store, output)
+
+            assert paths is not None
+            self.assertEqual(
+                {path.name for path in paths.values()},
+                set(EXPLORATORY_RESULT_ARTIFACTS),
+            )
+            self.assertEqual(store.status, CheckpointStatus.COMPLETE)
+            self.assertEqual(
+                store.progress_snapshot["overall"]["percentage_display"],
+                "100.000000%",
+            )
+            self.assertEqual(
+                resume_staged_exploratory_finalization(store, output),
+                paths,
+            )
+            self.assertFalse((output / ".summary.md.crash.tmp").exists())
+            (store.attempt_dir / "finalization_attestation.json").unlink()
+            with self.assertRaisesRegex(
+                FileExistsError, "lack a valid finalization attestation"
+            ):
+                resume_staged_exploratory_finalization(store, output)
+            attest_staged_exploratory_finalization(store, stage)
+            (stage / "summary.md").write_text("tampered\n", "utf-8")
+            with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                resume_staged_exploratory_finalization(store, output)
 
     def test_dedicated_export_is_nonempirical_and_fail_closed_without_model_run(
         self,

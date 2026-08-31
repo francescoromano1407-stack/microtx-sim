@@ -7,7 +7,7 @@ from hashlib import sha256
 from json import dumps
 from math import sqrt
 from types import MappingProxyType
-from typing import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 import numpy as np
 
@@ -59,6 +59,9 @@ from ..simulation.policy_orchestrator import (
     run_policy_scenario,
 )
 from .scenarios import ScenarioId, ScenarioSpec, required_scenarios
+
+if TYPE_CHECKING:
+    from ..execution.backends import ResolvedExecutionBackend
 
 
 _POLICY_PRETREATMENT_RESULT_CONTRACTS = (
@@ -410,12 +413,39 @@ class PolicyBatchResult:
     country_profiles: tuple[CountryProfile, ...] = ()
     profile_input_lineage: ProfileInputLineage | None = None
     population_execution_lineage: PopulationExecutionLineage | None = None
+    execution_backend_mode: str = "cpu_reference"
+    continuous_result_tolerance: float = 0.0
 
     def __post_init__(self) -> None:
         if type(self.spec) is not PolicyBatchSpec:
             raise TypeError("spec must be PolicyBatchSpec")
         if type(self.run_inputs) is not PolicyRunInputs:
             raise TypeError("run_inputs must be PolicyRunInputs")
+        if self.execution_backend_mode not in {
+            "cpu_reference",
+            "cpu_explicit",
+            "gpu",
+        }:
+            raise ValueError("unsupported execution_backend_mode")
+        if (
+            isinstance(self.continuous_result_tolerance, bool)
+            or not isinstance(self.continuous_result_tolerance, (int, float))
+            or not np.isfinite(self.continuous_result_tolerance)
+            or self.continuous_result_tolerance < 0.0
+        ):
+            raise ValueError(
+                "continuous_result_tolerance must be finite and non-negative"
+            )
+        if (
+            self.execution_backend_mode != "gpu"
+            and self.continuous_result_tolerance != 0.0
+        ):
+            raise ValueError("CPU policy results require exact equality")
+        if (
+            self.execution_backend_mode == "gpu"
+            and self.continuous_result_tolerance != 5e-13
+        ):
+            raise ValueError("GPU policy results require the declared 5e-13 tolerance")
         profiles = tuple(self.country_profiles)
         if any(not isinstance(profile, CountryProfile) for profile in profiles):
             raise TypeError("country_profiles must contain CountryProfile instances")
@@ -448,6 +478,8 @@ class PolicyBatchResult:
             _validate_policy_result_outcomes(
                 record.result,
                 harm_weights=self.run_inputs.harm_weights,
+                execution_backend_mode=self.execution_backend_mode,
+                continuous_tolerance=float(self.continuous_result_tolerance),
             )
             normalized_records.append(record)
         record_by_key = {
@@ -798,6 +830,18 @@ class PolicyBatchResult:
         return output
 
 
+def _policy_result_backend_mode(
+    execution_backend: ResolvedExecutionBackend | None,
+) -> str:
+    """Map engine selection onto the stable result-backend vocabulary."""
+
+    if execution_backend is None:
+        return "cpu_reference"
+    if execution_backend.mode.value == "gpu":
+        return "gpu"
+    return "cpu_explicit"
+
+
 def run_policy_batch(
     spec: PolicyBatchSpec,
     *,
@@ -813,6 +857,7 @@ def run_policy_batch(
     campaign_receipt: ExecutionReceipt | None = None,
     campaign_verification: ExecutionReceiptVerification | None = None,
     checkpoint_callback: Callable[[PolicyBatchCheckpoint], None] | None = None,
+    execution_backend: "ResolvedExecutionBackend | None" = None,
 ) -> PolicyBatchResult:
     """Run all scenarios on the same seeded cohort within each replication."""
 
@@ -922,6 +967,7 @@ def run_policy_batch(
                 opportunity_valuation=run_inputs.opportunity_valuation,
                 producer_assumptions=run_inputs.producer_assumptions,
                 epgc_policy=run_inputs.epgc_policy,
+                execution_backend=execution_backend,
             )
             if _cohort_digest(players, life) != digest:
                 raise RuntimeError(
@@ -939,6 +985,15 @@ def run_policy_batch(
             _validate_policy_result_outcomes(
                 result,
                 harm_weights=run_inputs.harm_weights,
+                execution_backend_mode=_policy_result_backend_mode(
+                    execution_backend
+                ),
+                continuous_tolerance=(
+                    5e-13
+                    if execution_backend is not None
+                    and execution_backend.mode.value == "gpu"
+                    else 0.0
+                ),
             )
             scenario_results[scenario.scenario_id] = result
         reference = scenario_results[spec.reference_scenario]
@@ -949,6 +1004,28 @@ def run_policy_batch(
                 reference,
             )
             harm_difference = result.composite_harm - reference.composite_harm
+            if (
+                execution_backend is not None
+                and execution_backend.mode.value == "gpu"
+            ):
+                cpu_difference = (
+                    result.harm.composite_harm(run_inputs.harm_weights)
+                    - reference.harm.composite_harm(run_inputs.harm_weights)
+                )
+                accelerated_effect = (
+                    float(harm_difference.mean())
+                    if harm_difference.size
+                    else 0.0
+                )
+                cpu_effect = (
+                    float(cpu_difference.mean())
+                    if cpu_difference.size
+                    else 0.0
+                )
+                if np.sign(accelerated_effect) != np.sign(cpu_effect):
+                    raise ValueError(
+                        "GPU arithmetic changes a paired-estimand direction"
+                    )
             records.append(
                 SeedScenarioRecord(
                     result=result,
@@ -994,6 +1071,13 @@ def run_policy_batch(
         country_profiles=profiles,
         profile_input_lineage=profile_lineage,
         population_execution_lineage=population_lineage,
+        execution_backend_mode=_policy_result_backend_mode(execution_backend),
+        continuous_result_tolerance=(
+            5e-13
+            if execution_backend is not None
+            and execution_backend.mode.value == "gpu"
+            else 0.0
+        ),
     )
 
 
@@ -1280,6 +1364,8 @@ def _validate_policy_result_outcomes(
     result: PolicyScenarioResult,
     *,
     harm_weights: WelfareHarmWeights,
+    execution_backend_mode: str = "cpu_reference",
+    continuous_tolerance: float = 0.0,
 ) -> None:
     if np.any(result.spending_cents < 0):
         raise ValueError("policy result field spending_cents cannot be negative")
@@ -1293,8 +1379,46 @@ def _validate_policy_result_outcomes(
         expected_composite = result.harm.composite_harm(harm_weights)
     if not np.all(np.isfinite(expected_composite)):
         raise ValueError("recomputed composite_harm must be finite")
-    if not np.array_equal(result.composite_harm, expected_composite):
+    if execution_backend_mode == "gpu":
+        if continuous_tolerance != 5e-13 or not np.allclose(
+            result.composite_harm,
+            expected_composite,
+            atol=continuous_tolerance,
+            rtol=continuous_tolerance,
+        ):
+            raise ValueError(
+                "GPU composite_harm exceeds the declared parity tolerance"
+            )
+        if not np.array_equal(
+            result.composite_harm >= 0.35,
+            expected_composite >= 0.35,
+        ):
+            raise ValueError("GPU composite_harm changes a categorical threshold")
+        observed_mean = (
+            float(result.composite_harm.mean())
+            if result.composite_harm.size
+            else 0.0
+        )
+        expected_mean = (
+            float(expected_composite.mean()) if expected_composite.size else 0.0
+        )
+        if np.sign(observed_mean) != np.sign(expected_mean):
+            raise ValueError("GPU composite_harm changes aggregate direction")
+    elif continuous_tolerance != 0.0 or not np.array_equal(
+        result.composite_harm, expected_composite
+    ):
         raise ValueError("composite_harm does not match component scores and weights")
+    harmful_share = np.divide(
+        result.harm.harmful_spending_cents.astype(np.float64),
+        np.maximum(result.disposable_budget_cents.astype(np.float64), 1.0),
+    )
+    expected_high_risk = (
+        (expected_composite >= 0.35)
+        | (harmful_share >= 0.10)
+        | (result.harm.component_scores[:, HarmComponent.S] >= 0.50)
+    )
+    if not np.array_equal(result.high_risk, expected_high_risk):
+        raise ValueError("high_risk differs from the CPU reference classification")
 
 
 def _has_unique_integer_ids(values: np.ndarray) -> bool:

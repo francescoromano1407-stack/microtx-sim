@@ -1,0 +1,50 @@
+{
+  "schema_version": "microtx_sim.previous_execution_lineage.v1",
+  "previous_execution": {
+    "attempt_id": "attempt-000001",
+    "status": "INTERRUPTED",
+    "status_source": "artifacts/policy_exploratory_synthetic/progress/attempt-000001/progress.json",
+    "interruption_reason": "Specific interruption reason was not recorded by checkpoint schema 1.0.",
+    "configuration_path": "configs/policy_exploratory_synthetic.toml",
+    "configuration_sha256": "10f0969f5fb005f3dd83507cc76a3faa46dd33aa6c0c0a9c937445c37f22089d",
+    "analysis_plan_id": "illustrative.exploratory.synthetic.composite-harm.baseline-vs-safe.v1",
+    "analysis_plan_sha256": "5915bc42752dd77b984a67bdab5a79a040d99fc84f381de2d3aeb4c813bc2414",
+    "git_commit": null,
+    "source_tree_sha256": null,
+    "source_identity_status": "NOT_RECORDED_BY_CHECKPOINT_SCHEMA_V1",
+    "completed_main_seeds": 150,
+    "completed_main_seed_scenario_units": 1050,
+    "expected_main_seed_scenario_units": 1050,
+    "sensitivity_completion_status": "NOT_RECORDED",
+    "final_campaign_outputs_available": false,
+    "preserved_artifacts": [
+      {
+        "path": "artifacts/policy_exploratory_synthetic/progress/attempt-000001/progress.json",
+        "role": "OBSERVED_V1_PROGRESS_STATE"
+      },
+      {
+        "path": "artifacts/policy_exploratory_synthetic/progress/attempt-000001/seed_scenario_diagnostics.partial.csv",
+        "role": "UNWEIGHTED_NONMONETARY_DIAGNOSTIC_ONLY",
+        "sha256": "8ff24a7d5d02a9c5ab14a6302b02bfa21bd5bc5d90adbd8feb85f4b139c89875",
+        "row_count": 1050
+      }
+    ]
+  },
+  "revalidated_repository_baseline": {
+    "git_commit": "cc2cfc755124d2ac036e479c6b4f9b4b8fa9668e",
+    "git_tree": "78ff5ed567139e8534b1fe4d7fdb840be3d770cc",
+    "source_tree_identity_algorithm": "microtx_sim.git_tracked_worktree.raw_bytes_and_modes.v1",
+    "source_tree_sha256": "f71ea55c031fc843efaccc727d35f0591ee8c3d0df70224060da22d39cba7b77",
+    "attributed_to_previous_execution": false,
+    "reason": "Checkpoint schema 1.0 did not attest a commit or source-tree identity. This is the revalidated task baseline, not a retroactive claim about attempt-000001."
+  },
+  "superseding_execution": {
+    "relationship": "SUPERSEDES_INCOMPLETE_EXECUTION_ONLY",
+    "scientific_plan_changed": false,
+    "implementation_id": "policy-exploratory-resumable-accelerated-v2",
+    "run_id": "policy-exploratory-synthetic-optimized-v2",
+    "attempt_id": "attempt-000002",
+    "runtime_identity_required": true
+  },
+  "campaign_ready": false
+}

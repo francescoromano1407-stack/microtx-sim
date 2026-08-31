@@ -389,9 +389,12 @@ own exact `O(P*A*T)` action engine and a checked-in 1,000-player, 14-day,
 three-seed configuration. This is a reproducibility batch, not a scientific
 campaign. `base.toml` remains a rejected future-scale market configuration.
 
-The implementation has no checkpoint/restart, distributed execution, campaign
-scheduler, general result database, ledger schema migration, or long-run resource
-benchmark. Final-only step retention removes the dominant `O(T·P)` `WorldStep`
+The strategic-market `World` implementation has no whole-world
+checkpoint/restart, distributed execution, campaign scheduler, general result
+database, ledger schema migration, or long-run resource benchmark. The separate
+exploratory policy executor now checkpoints only logically complete seed and
+sensitivity units; it does not make a partially advanced strategic world
+resumable. Final-only step retention removes the dominant `O(T·P)` `WorldStep`
 history term, and file-backed SQLite removes `O(E)` Python-object retention for
 ledger entries. Both are selected by the blocked future-scale baseline.
 
