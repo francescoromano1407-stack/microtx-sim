@@ -87,10 +87,16 @@ publication year.
 
 These are defensible population margins. They do not identify gaming status,
 payer history, household income, or any joint correlations with those fields.
-Sex is also not currently a `PlayerTable` field. The age margin is structurally
-representable, but no checked-in runtime mapping currently consumes this
-bundle. Exact arithmetic reconciliation does not remove uncertainty from the
-official population estimates.
+The runtime now has an optional source-recorded `PlayerTable.sex` field and a
+point-zero-only binding for these ten cells. It deterministically assigns the
+source categories `FEMALE` and `MALE` to UK residents aged 18--64 and leaves the
+field empty outside that scope. Coupled Hamilton rounding preserves each ONS
+age-band sex total and SHA-256 ranking makes the within-cell synthetic
+allocation reproducible. The assignment is aggregate-informed synthetic data,
+not observed individual sex and not an inference about gender identity. It does
+not change the age sampling margin, and all treatment entry points reject it.
+Exact arithmetic reconciliation does not remove uncertainty from the official
+population estimates.
 
 Source: [ONS, mid-year population estimates, mid-2024 edition](https://www.ons.gov.uk/peoplepopulationandcommunity/populationandmigration/populationestimates/datasets/populationestimatesforukenglandandwalesscotlandandnorthernireland).
 
@@ -261,6 +267,49 @@ means. Population, age groups, platform measures, and denominator must be
 matched explicitly before comparison with Open Play or the simulator.
 
 Source: [Ofcom, Online Nation 2024](https://www.ofcom.org.uk/siteassets/resources/documents/research-and-data/online-research/online-nation/2024/online-nation-2024-report.pdf?v=386238).
+
+### Microtransaction incidence and spending tails remain unidentified
+
+The proposed claim that only 2--5% of active UK players make in-app purchases
+is not supported by the external open-source cross-checks and must not be used
+as a calibration target. These checks postdate the immutable v1 source
+manifest and are not part of its 15 attested source records. Ofcom's 2020 survey
+instead reports that 31% of UK adult
+game players had **ever** bought additional content in a free-to-play game and
+25% had done so in a purchased game. Those overlapping, historical
+ever-purchase measures are neither a 2024 active-payer rate nor a measure of
+monthly microtransaction incidence.
+
+The DCMS response cites an Ipsos MORI survey commissioned by an industry trade
+association: 7% of video-game players reportedly paid for a loot box in the
+preceding 12 months to December 2020, while 45% spent money on video games
+generally. The cited underlying report is unpublished, so those estimates
+cannot be independently audited. Separately, the DCMS call-for-evidence player
+survey was self-selected and explicitly non-representative. Loot boxes are only
+one microtransaction subtype, and the government response states that robust
+market data are lacking. These quantities therefore cannot be combined into a
+2--5% all-microtransaction payer target. Ukie's 2024 valuation provides
+aggregate market-category totals, not a count or sampling frame of individual
+active payers. The local Open Play release contains play telemetry and
+questionnaires but no transaction price, purchase, refund, exposure, or
+choice-set field.
+
+Consequently, both active-payer incidence and the conditional spending
+distribution remain unidentified and unquantified in this review; a successor
+bundle must encode them explicitly as `UNQUANTIFIED`. The immutable v1
+`targets.csv` has no payer-incidence or spending-tail row. A generalized Pareto distribution is not
+identified by a payer fraction and one aggregate ARPU: its threshold, scale,
+and shape require additional independent tail information, and the aggregation
+must first reconcile payer-only spending with population ARPU. Pareto/GPD
+families may be declared in sensitivity analysis with externally chosen ranges;
+they must not be labelled empirically calibrated from the current bundle.
+
+Sources: [Ofcom, Online Nation 2020](https://www.ofcom.org.uk/siteassets/resources/documents/research-and-data/online-research/online-nation/2020/online-nation-2020-report.pdf?v=324898),
+[DCMS, government response on loot boxes](https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence/outcome/government-response-to-the-call-for-evidence-on-loot-boxes-in-video-games),
+[InGAME rapid evidence assessment publication](https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence),
+and [Ukie 2024 consumer-market valuation release](https://ukie.org.uk/publications/time-to-press-start-on-growth).
+These are external cross-check sources only; they are not retroactively added to
+the content-addressed v1 source manifest.
 
 ### Monetary series and normative outcomes
 
@@ -455,10 +504,18 @@ and [APMS phase-one questionnaire](https://digital.nhs.uk/binaries/content/asset
 The evidence cannot change simulation outcomes merely by being present in a
 source folder.
 
-- `PlayerTable` has age but no sex field. The ONS sex margin is therefore
-  evidence-only until the state schema and downstream contracts are extended.
-- Population weights affect execution only through the evidence, design, and
-  projection-adapter path. No checked-in UK 18--64 mapping selects this bundle.
+- `PlayerTable` now has an optional, immutable source-recorded sex field. A
+  schema-v3 projection attestation binds its source, scope, bundle digest,
+  weights digest, derivation-input digest, assignment method, and complete
+  vector for point-zero only. A source-specific verifier recomputes the coupled
+  Hamilton allocation. World, policy-day, player-dynamics, multi-cycle, and
+  campaign entry points all reject it before treatment until that contract is
+  extended.
+- The point-zero bridge consumes only the ten ONS age-by-sex rows. It does not
+  resample the age margin. All 75 separate target rows are heterogeneous
+  calibration, validation, diagnostic, proxy, unquantified, or normative
+  records rather than sampling weights; they are additional to the ten
+  `population_weights.csv` rows.
 - The profile loader currently requires exactly UK, Korea, Japan, and Belgium.
   A UK-only estimand requires an explicit loader/runtime change or a declared UK
   subpopulation within the four-country cohort.
@@ -493,7 +550,7 @@ python tools/validate_uk_adults_2024_calibration.py
 ```
 
 That command verifies the declared source and companion bytes, typed contracts,
-cross-file population/FRS reconciliation, and point-zero diagnostics. It does
+cross-file population/FRS reconciliation, and static compatibility diagnostics. It does
 not rebuild all 75 rows from source worksheets and participant files. The
 aggregate extraction was locally rerun, but a complete checked-in extraction
 recipe is not yet repository-reproducible; this remains a campaign-readiness
@@ -503,22 +560,47 @@ the loader rejects identical records and byte-identical source aliases, but it
 does not prove that two different locators select disjoint rows. A future fitted
 bundle must bind canonical selectors or row-set/partition digests.
 
+The initializer-only runtime audit is separate and intentionally returns a
+non-zero status while any structural gate fails:
+
+```text
+python tools/run_point_zero_audit.py --pretty
+```
+
+It requires the ignored, hash-attested local source cache, initializes only the
+population and player-life tables for seed 101, emits JSON, and returns `0` for
+pass or `1` for fail/error. It never initializes a scenario, executes a policy
+day, or dispatches a campaign.
+
 ## Point-zero runtime audit (no campaign executed)
 
 A read-only seed-101 initializer audit used the existing 50,000-player
 exploratory configuration. It selected 10,024 UK records aged 18--64; no policy
 day, scenario contrast, sensitivity run, or exploratory campaign was executed.
-The figures in this section are a one-off local audit: the bundle validator does
-not initialize the cohort, and a dedicated checked-in point-zero audit command
-is still required for repository-level reproduction.
+The checked-in `tools/run_point_zero_audit.py` command reproduces this bounded
+initialization from the strictly re-attested local cache and exits fail-closed.
+The current report has six passing and six failing gates. The additional
+fail-closed identification gate records that schema v1 does not identify
+`P(gamer | ONS age-by-sex cell)`; successful behavioural wiring alone cannot
+turn the illustrative `baseline_gamer` sidecar into empirical evidence.
 The current weighted age distribution has total-variation distance 3.31% from
 the ONS margin: differences are +1.104, -1.179, +0.162, +2.040, and -2.126
 percentage points for ages 18--24 through 55--64, respectively. The existing
 55--69 source band and uniform within-band age sampling cannot exactly reproduce
 the five new bands.
 
-The initialized means are 480.23 minutes/day for sleep need, 420.00 for
-work/study obligation, 78.60 for social obligation, and 82.82 for intended
+The runtime bridge assigns 5,093 selected records to the source category
+`FEMALE` and 4,931 to `MALE`; all 39,976 out-of-scope rows remain empty. Coupled
+Hamilton remainders preserve the exact rounded ONS sex total within every age
+band while deterministic SHA-256 ranking allocates those totals across existing
+runtime cells. The complete vector, derivation inputs, and calibration-bundle
+identity enter the assignment and execution digests. Because the bridge applies
+ONS conditional sex proportions but does not resample age, the joint
+age-by-sex total-variation distance is also 3.31% and fails the predeclared 2%
+gate. A passing lineage gate therefore proves consumption, not population fit.
+
+The initialized means are 480.22 minutes/day for sleep need, 419.99 for
+work/study obligation, 78.60 for social obligation, and 82.83 for intended
 play. The ONS diagnostic means are 518.5 sleeping, 133.2 working, 30.8
 socialising, and 16.8 realised gaming minutes/day. These are not legitimate
 fit residuals because needs, obligations, and intentions differ from realised
@@ -530,9 +612,9 @@ age gradient in sleep need.
 The most serious structural check is gamer binding. `baseline_gamer` remains
 sidecar metadata, `current_game=-1` for every initialized player, and 99.743% of
 sidecar non-gamers still receive positive intended play. Gamer and non-gamer
-means are nearly identical (83.06 versus 82.54 minutes/day). Sidecar gamers
-average 581.44 intended minutes/week, 39.4% above the Ofcom/Ampere gamer-only
-mean of 417. For ages 18--40, the corresponding simulator mean is 584.65, 41.8%
+means are nearly identical (83.07 versus 82.55 minutes/day). Sidecar gamers
+average 581.48 intended minutes/week, 39.4% above the Ofcom/Ampere gamer-only
+mean of 417. For ages 18--40, the corresponding simulator mean is 584.66, 41.8%
 below the manuscript-aligned selected Open Play mean of 1,004.27; the latter remains diagnostic
 because Open Play is nonrepresentative. A 60-minute decision step also cannot
 be compared directly with 39-minute inferred Steam per-poll records or 27.375-
@@ -544,16 +626,44 @@ excluded. The runtime/data mismatch is, however, large enough to stop the
 workflow before a new campaign. `campaign_ready=false` is therefore a
 scientific fail-closed decision, not merely an implementation status.
 
+## Disposition of the seven proposed runtime changes
+
+| Proposed change | Current disposition | Scientific reason |
+| --- | --- | --- |
+| 1. Two-stage gamer hurdle | **Blocked, measured by the audit** | The bundle does not identify `P(gamer | ONS age-by-sex cell)`. The existing `baseline_gamer` labels are illustrative sidecar metadata, so forcing their non-gamers to zero would turn an unsupported label into behavior. The audit instead fails on 99.743% positive play intention, 100% positive spending limits, and the absent purchase-probability hurdle. |
+| 2. Random-utility/logit choice | **Already present; no rewrite** | The decision layers already use Gumbel/logit utility with play obligations, disposable income, liquidity/credit, player traits, price burden, and an outside/no-purchase option. The unresolved issue is that the projected gamer/payer labels do not enter those equations; global temperature remains sensitivity-only. |
+| 3. Ofcom versus Open Play | **Separated by evidence role** | Ofcom/Ampere gamer means are retained as external diagnostics/possible validation, while Open Play is a non-representative conditional trace diagnostic. Neither is used as the other's scale correction or as an ONS participation probability. |
+| 4. Runtime sex field | **Implemented for point zero** | Optional source-recorded `FEMALE`/`MALE` values, exact scope/vector, derivation inputs, and canonical coupled-Hamilton method now enter assignment and execution lineage. They are synthetic aggregate allocations, not individual observations or gender identity, and every treatment entry point rejects them. |
+| 5. Calibration sidecar consumption | **Partially implemented, fail-closed** | The typed point-zero bridge consumes the ten ONS age-by-sex rows. It does not treat all 75 heterogeneous target rows as weights, does not resample the age distribution, and is rejected before all treatment execution. |
+| 6. Macro-to-micro transaction layer | **Blocked as unidentified** | No attested v1 source or later external cross-check supports the 2--5% payer premise or identifies a GPD/Pareto threshold, scale, and shape. Payer incidence and tail parameters must be typed as `UNQUANTIFIED` in a successor; only labelled sensitivity ranges would be defensible now. |
+| 7. Canonical point-zero/holdout infrastructure | **Point-zero implemented; extraction remains open** | The new CLI is deterministic and binary fail-closed. Existing population-design partitions use canonical SHA-256 thresholding; Python's process-randomized built-in `hash()` must not be used for participant splits. A privacy-reviewed Open Play extractor and row/partition digests are still required before fitting. |
+
+This is intentionally not represented as seven completed calibrations. The
+runtime mismatch and unidentified transaction/gamer parameters trigger the
+requested stop condition: structural diagnostics may be committed, but no new
+exploratory campaign or empirically labelled behavioural fit may proceed.
+
 ## Plan recognition and lineage decision
 
-No analysis-plan binding change is warranted at this checkpoint. The complete
-immutable chain is the exploratory sidecar schema v1
+No immutable analysis-plan content was changed by this checkpoint. The complete
+chain remains the exploratory sidecar schema v1
 (`exploratory-synthetic-analysis-plan-v1.json`) to the prospective amendment
 schema v3 (`prospective-analysis-plan-amendment-v3.json`) to its scientific
 parent schema v2 (`prospective-analysis-plan.json`). The current configuration
-binds each exact identity. This evidence audit neither
-changes the primary estimand nor supplies runtime-consumed calibrated inputs, so
-rewriting those identities would create false lineage.
+binds each exact identity. This evidence audit neither changes the primary
+estimand nor supplies runtime-consumed calibrated inputs, so rewriting those
+identities would create false lineage.
+
+The verifier did require an infrastructure correction: the first portable
+profile fingerprint normalized top-level file-lineage paths but retained
+absolute source- and population-evidence `bundle_path` values. Plans produced
+on Windows consequently failed verification on GitHub's Linux runners even
+when every input byte was identical. New runtime lineage normalizes only the
+declared repository-path fields. Historical raw and portable-v1 fingerprints
+remain readable, and plan binding accepts only two checked-in, directional
+legacy-to-canonical digest pairs reproduced for the illustrative and production
+snapshots. No general digest aliasing is allowed, the plan JSON and hashes are
+unchanged, and an unregistered pair still fails closed.
 
 If the population mapping, behavioural initializer, money basis, target weights,
 or estimand later changes, the existing files must not be overwritten. Create a
@@ -633,6 +743,20 @@ retain their DOI or publisher link.
   attributed to Ampere Games Consumer and have no published uncertainty in the
   report. [Report](https://www.ofcom.org.uk/siteassets/resources/documents/research-and-data/online-research/online-nation/2024/online-nation-2024-report.pdf?v=386238)
   and [Ofcom re-use terms](https://www.ofcom.org.uk/about-ofcom/our-website/copyright).
+- Ofcom. *Online Nation 2020*. The microtransaction cross-check uses the
+  overlapping Q14/Q16 ever-purchase measures among UK game-playing adults
+  aged 18+, base 1,374; it is not an active-payer estimate.
+  [Report](https://www.ofcom.org.uk/siteassets/resources/documents/research-and-data/online-research/online-nation/2020/online-nation-2020-report.pdf?v=324898).
+- Department for Digital, Culture, Media & Sport. *Government response to the
+  call for evidence on loot boxes in video games*, 17 July 2022. The cited 7%
+  and 45% estimates come from an unpublished industry-commissioned Ipsos MORI
+  report; the separate call-for-evidence player survey was self-selected and
+  non-representative. [Response](https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence/outcome/government-response-to-the-call-for-evidence-on-loot-boxes-in-video-games).
+- InGAME. *Loot boxes in video games: rapid evidence assessment*, published by
+  DCMS on 17 July 2022. [Publication page](https://www.gov.uk/government/calls-for-evidence/loot-boxes-in-video-games-call-for-evidence).
+- Ukie. *Time to press start on growth*, consumer-market valuation released in
+  May 2025 for the 2024 market. It reports aggregate categories, not
+  participant-level payer incidence. [Release](https://ukie.org.uk/publications/time-to-press-start-on-growth).
 - Ballou, Vuorre, Földes, Hakman, and Magnusson. *digital-wellbeing/open-play:
   Open Play v1.2.5*, 17 August 2026. Version DOI
   [10.5281/zenodo.21986572](https://doi.org/10.5281/zenodo.21986572) and

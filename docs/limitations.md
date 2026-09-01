@@ -194,6 +194,17 @@ reuse: payer-only spending cannot be treated as population spending, Korean
 zero-spender inclusion remains unresolved, and the Japanese extreme tail is an
 ever-per-title observation rather than a monthly hazard.
 
+The UK adults 2024 evidence review also found no support for treating 2--5% as
+the active in-app-purchase payer rate. Ofcom's 2020 values are overlapping
+ever-purchase measures among game-playing adults, the DCMS 7% value concerns
+paid loot boxes only, and Ukie supplies market totals rather than individual
+payer counts. A payer fraction and aggregate ARPU cannot identify a generalized
+Pareto threshold, scale, and shape. UK payer incidence and the spending tail
+therefore remain unidentified and unquantified in prose; the immutable v1
+target table has no corresponding typed row, so a successor must encode them as
+`UNQUANTIFIED`. Any Pareto/GPD implementation is a sensitivity assumption, not
+an empirical calibration.
+
 ### Rare events are sensitivity assumptions
 
 The unauthorized-card process is driven by an illustrative daily hazard
