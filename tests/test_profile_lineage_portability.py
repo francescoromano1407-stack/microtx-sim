@@ -63,6 +63,34 @@ class ProfileLineagePortabilityTests(unittest.TestCase):
             _profile_lineage_fingerprint_sha256(windows),
             _profile_lineage_fingerprint_sha256(linux),
         )
+        reserved_ancestor = {
+            **linux,
+            "file_lineage": {
+                "population_bundle": {
+                    "path": (
+                        "/srv/data/projects/microtx-sim/inputs/population.toml"
+                    )
+                }
+            },
+            "profile_bundle": {
+                **linux["profile_bundle"],
+                "source_evidence_bundle": {
+                    "bundle_path": (
+                        "/srv/data/projects/microtx-sim/inputs/rates.toml"
+                    )
+                },
+                "population_evidence_bundle": {
+                    **linux["profile_bundle"]["population_evidence_bundle"],
+                    "bundle_path": (
+                        "/srv/data/projects/microtx-sim/inputs/population.toml"
+                    ),
+                },
+            },
+        }
+        self.assertEqual(
+            _profile_lineage_fingerprint_sha256(windows),
+            _profile_lineage_fingerprint_sha256(reserved_ancestor),
+        )
         self.assertNotEqual(
             _profile_lineage_fingerprint_sha256_v1(windows),
             _profile_lineage_fingerprint_sha256_v1(linux),

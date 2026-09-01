@@ -484,11 +484,18 @@ class RunAnalysisBinding:
                 self.output_profile_schema_sha256
             ),
         }
-        mismatches = sorted(
-            name.removeprefix("expected_")
-            for name, expected in expected_plan_bindings.items()
-            if getattr(self.plan, name) != expected
-        )
+        mismatches: list[str] = []
+        for name, expected in expected_plan_bindings.items():
+            if name == "expected_profile_input_sha256":
+                matches = profile_lineage_fingerprint_matches(
+                    getattr(self.plan, name),
+                    expected,
+                )
+            else:
+                matches = getattr(self.plan, name) == expected
+            if not matches:
+                mismatches.append(name.removeprefix("expected_"))
+        mismatches.sort()
         if mismatches:
             raise AnalysisBindingValidationError(
                 "run binding differs from its prospective plan: "

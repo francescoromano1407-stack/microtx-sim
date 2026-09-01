@@ -22,6 +22,7 @@ from typing import Final
 
 import numpy as np
 
+from ..data.lineage import profile_lineage_fingerprint_matches
 from ..data.monetary_execution import ConvertedMonetaryOutcome, MonetaryOutputBasis
 from ..data.population_execution import (
     PopulationExecutionLineage,
@@ -565,11 +566,17 @@ def _attest_policy_only_flow(
             analysis_binding.output_profile_schema_sha256
         ),
     }
-    mismatches = tuple(
-        name
-        for name, observed in expected_hashes.items()
-        if getattr(contract, name) != observed
-    )
+    mismatches: list[str] = []
+    for name, observed in expected_hashes.items():
+        if name == "expected_profile_input_sha256":
+            matches = profile_lineage_fingerprint_matches(
+                getattr(contract, name),
+                observed,
+            )
+        else:
+            matches = getattr(contract, name) == observed
+        if not matches:
+            mismatches.append(name)
     if mismatches:
         raise PolicyFlowContractError(
             "flow contract input identities differ from execution: "

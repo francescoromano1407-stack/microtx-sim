@@ -1326,9 +1326,17 @@ def _portable_lineage_path(value: object) -> object:
         "tests",
         "tools",
     }
-    for index, part in enumerate(parts):
-        if part.casefold() in repository_directories:
-            return "<repository>/" + "/".join(parts[index:])
+    # Use the last declared repository-root component.  A checkout itself may
+    # live below an ancestor named ``data`` or ``src``; taking the first match
+    # would then retain part of the host-specific checkout path.
+    candidate_indices = tuple(
+        index
+        for index, part in enumerate(parts)
+        if part.casefold() in repository_directories
+    )
+    if candidate_indices:
+        index = candidate_indices[-1]
+        return "<repository>/" + "/".join(parts[index:])
     return "<external>"
 
 

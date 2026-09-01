@@ -184,6 +184,43 @@ class PolicyFlowContractTests(unittest.TestCase):
                     seed_binding.metric_contract_sha256,
                 )
 
+    def test_registered_legacy_profile_digest_composes_end_to_end(self) -> None:
+        legacy_profile_sha256 = (
+            "119e5a9cbc919808520c395b4346d50e4a12fe9d5ec095f76816ad7c1fe38658"
+        )
+        canonical_profile_sha256 = (
+            "5abda0b7383ba4051889bf05aa53f3faff729e2a564b5cac9864617b972f42e8"
+        )
+        self.assertEqual(
+            self.profile_lineage.fingerprint_sha256,
+            canonical_profile_sha256,
+        )
+        legacy_plan = _plan(
+            self.spec,
+            self.run_inputs,
+            self.adapter,
+            overrides={
+                "expected_profile_input_sha256": legacy_profile_sha256,
+            },
+        )
+        legacy_path = self.root / "legacy-profile-plan.json"
+        _write_plan(legacy_path, legacy_plan)
+        loaded_legacy = load_prospective_analysis_plan(legacy_path)
+        binding = resolve_run_analysis_binding(legacy_plan, self.batch)
+
+        verification = attest_policy_only_flow(
+            build_policy_flow_contract(legacy_plan),
+            analysis_plan=loaded_legacy,
+            batch=self.batch,
+            analysis_binding=binding,
+        )
+
+        self.assertEqual(
+            verification.analysis_binding_sha256,
+            binding.binding_sha256,
+        )
+        self.assertEqual(binding.profile_input_sha256, canonical_profile_sha256)
+
     def test_strategic_or_combined_execution_is_rejected(self) -> None:
         for layer in (
             PolicyExecutionLayer.STRATEGIC_MARKET,
