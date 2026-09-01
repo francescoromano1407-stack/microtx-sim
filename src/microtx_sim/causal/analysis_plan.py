@@ -36,6 +36,7 @@ from ..data.population_evidence import (
     PopulationGamingState,
     PopulationPayerHistoryState,
 )
+from ..data.lineage import profile_lineage_fingerprint_matches
 from ..metrics.harm import WelfareHarmWeights
 from ..metrics.population_estimands import (
     PopulationCurrencySemantics,
@@ -1502,7 +1503,14 @@ def verify_prospective_analysis_plan_bindings(
     mismatches: list[str] = []
     for field_name, value in observed.items():
         _sha256_digest(value, name=field_name.removeprefix("expected_"))
-        if getattr(plan, field_name) != value:
+        if field_name == "expected_profile_input_sha256":
+            matches = profile_lineage_fingerprint_matches(
+                getattr(plan, field_name),
+                value,
+            )
+        else:
+            matches = getattr(plan, field_name) == value
+        if not matches:
             mismatches.append(field_name.removeprefix("expected_"))
     if type(seeds) is not tuple:
         raise TypeError("runtime seeds must be an exact tuple")

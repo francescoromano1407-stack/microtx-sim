@@ -18,7 +18,10 @@ import numpy as np
 import numpy.typing as npt
 
 from ..agents.players import ProjectedPopulationCellMetadata
-from ..data.lineage import ProfileInputLineage
+from ..data.lineage import (
+    ProfileInputLineage,
+    profile_lineage_fingerprint_matches,
+)
 from ..data.monetary_execution import (
     ConvertedMonetaryOutcome,
     MonetaryOutputBasis,
@@ -809,9 +812,9 @@ def resolve_run_analysis_binding(
             raise AnalysisBindingValidationError(
                 "post-run population input differs from the prospective plan"
             )
-        if (
-            profile_lineage.fingerprint_sha256
-            != plan.expected_profile_input_sha256
+        if not profile_lineage_fingerprint_matches(
+            plan.expected_profile_input_sha256,
+            profile_lineage.fingerprint_sha256,
         ):
             raise AnalysisBindingValidationError(
                 "post-run profile input differs from the prospective plan"

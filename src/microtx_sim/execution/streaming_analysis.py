@@ -38,6 +38,7 @@ from ..data.population_execution import (
     population_execution_input_sha256,
     population_execution_input_snapshot,
 )
+from ..data.lineage import profile_lineage_fingerprint_matches
 from ..metrics.population_estimands import PopulationEstimandResult
 from .optimized_runner import CheckpointedPolicyBatch
 
@@ -108,9 +109,9 @@ def resolve_checkpointed_run_analysis_binding(
     )
     if population_input_sha256 != plan.expected_population_input_sha256:
         raise ValueError("checkpoint population input differs from analysis plan")
-    if (
-        batch.profile_input_lineage.fingerprint_sha256
-        != plan.expected_profile_input_sha256
+    if not profile_lineage_fingerprint_matches(
+        plan.expected_profile_input_sha256,
+        batch.profile_input_lineage.fingerprint_sha256,
     ):
         raise ValueError("checkpoint profile input differs from analysis plan")
 

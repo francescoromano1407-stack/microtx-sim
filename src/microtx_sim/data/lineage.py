@@ -9,7 +9,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import tomllib
-from typing import Mapping, Sequence
+from typing import Final, Mapping, Sequence
 
 import numpy as np
 
@@ -30,6 +30,27 @@ _SUPPORTED_PROFILE_INPUT_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4})
 _REGISTERED_PROFILE_LINEAGE = "registered_profile_bundle"
 _UNREGISTERED_PROFILE_LINEAGE = "unregistered_custom_profiles"
 _UNREGISTERED_BUNDLE_LINEAGE = "unregistered_profile_bundle"
+
+# These are the only historical plan fingerprints known to have been computed
+# with the portable-v1 recipe on a Windows checkout.  The corresponding values
+# are the canonical recipe's digest of the same checked-in profile snapshots.
+# The mapping is directional: an immutable historical plan may name the legacy
+# digest while a newly resolved runtime must emit the canonical digest.  It is
+# deliberately not a general digest-alias mechanism.
+_PROFILE_LINEAGE_FINGERPRINT_MIGRATIONS: Final[
+    frozenset[tuple[str, str]]
+] = frozenset(
+    {
+        (
+            "8458d4c844e4a1e810d76e0a83e41e742d97e595373432b95e9e493322232dd4",
+            "ce1c4592c3968215f6ec9fa9b7d907f42fc25feca4e9c5f795b2e72244c9ff56",
+        ),
+        (
+            "119e5a9cbc919808520c395b4346d50e4a12fe9d5ec095f76816ad7c1fe38658",
+            "5abda0b7383ba4051889bf05aa53f3faff729e2a564b5cac9864617b972f42e8",
+        ),
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,8 +104,13 @@ class ProfileInputLineage:
         if self.snapshot_json != _canonical_snapshot_json(snapshot):
             raise ProfileValidationError("profile snapshot JSON must be canonical")
         expected_legacy = sha256(self.snapshot_json.encode("utf-8")).hexdigest()
+        expected_portable_v1 = _profile_lineage_fingerprint_sha256_v1(snapshot)
         expected_portable = _profile_lineage_fingerprint_sha256(snapshot)
-        if self.fingerprint_sha256 not in {expected_legacy, expected_portable}:
+        if self.fingerprint_sha256 not in {
+            expected_legacy,
+            expected_portable_v1,
+            expected_portable,
+        }:
             raise ProfileValidationError("profile fingerprint does not match its snapshot")
         snapshot_schema_version = snapshot.get("schema_version")
         if (
@@ -1204,7 +1230,25 @@ def _canonical_snapshot_json(snapshot: Mapping[str, object]) -> str:
 def _profile_lineage_fingerprint_sha256(
     snapshot: Mapping[str, object],
 ) -> str:
-    """Hash profile content without binding it to a local worktree path."""
+    """Hash profile content without binding nested evidence to a worktree."""
+
+    portable = json.loads(_canonical_snapshot_json(snapshot))
+    _normalize_portable_lineage_paths(portable)
+    portable_json = _canonical_snapshot_json(portable)
+    return sha256(portable_json.encode("utf-8")).hexdigest()
+
+
+def _profile_lineage_fingerprint_sha256_v1(
+    snapshot: Mapping[str, object],
+) -> str:
+    """Recompute the first portable recipe for backward verification only.
+
+    The first recipe normalized the explicit ``file_lineage`` records but
+    missed ``bundle_path`` fields nested in source- and population-evidence
+    snapshots.  Those absolute paths made otherwise identical fingerprints
+    differ between Windows and Linux.  Existing manifests remain readable,
+    while newly built lineages use the complete recursive normalization above.
+    """
 
     portable = json.loads(_canonical_snapshot_json(snapshot))
     file_lineage = portable.get("file_lineage")
@@ -1216,12 +1260,63 @@ def _profile_lineage_fingerprint_sha256(
     return sha256(portable_json.encode("utf-8")).hexdigest()
 
 
+def profile_lineage_fingerprint_matches(
+    expected_sha256: str,
+    observed_sha256: str,
+) -> bool:
+    """Match a canonical fingerprint or one attested historical migration.
+
+    ``expected_sha256`` is the value frozen in an immutable plan and
+    ``observed_sha256`` is the value emitted by the current runtime.  Legacy
+    migrations are accepted only in that direction and only for the two
+    snapshots whose path-only difference was independently reproduced.
+    """
+
+    if not _is_sha256(expected_sha256) or not _is_sha256(observed_sha256):
+        raise ProfileValidationError(
+            "profile fingerprint comparison requires SHA-256 digests"
+        )
+    return (
+        expected_sha256 == observed_sha256
+        or (expected_sha256, observed_sha256)
+        in _PROFILE_LINEAGE_FINGERPRINT_MIGRATIONS
+    )
+
+
+def _normalize_portable_lineage_paths(value: object) -> None:
+    """Normalize the declared local-path locations in schema v4."""
+
+    if not isinstance(value, dict):
+        return
+    file_lineage = value.get("file_lineage")
+    if isinstance(file_lineage, dict):
+        for record in file_lineage.values():
+            if isinstance(record, dict) and "path" in record:
+                record["path"] = _portable_lineage_path(record["path"])
+    profile_bundle = value.get("profile_bundle")
+    if not isinstance(profile_bundle, dict):
+        return
+    for evidence_key in (
+        "source_evidence_bundle",
+        "population_evidence_bundle",
+    ):
+        evidence = profile_bundle.get(evidence_key)
+        if isinstance(evidence, dict) and "bundle_path" in evidence:
+            evidence["bundle_path"] = _portable_lineage_path(
+                evidence["bundle_path"]
+            )
+
+
 def _portable_lineage_path(value: object) -> object:
     """Represent repository paths consistently across checkout locations."""
 
     if value is None or not isinstance(value, str):
         return value
-    parts = Path(value).parts
+    # Snapshot verification can happen on a different operating system from
+    # the one that produced an older manifest, so accept both path separators.
+    parts = tuple(
+        part for part in value.replace("\\", "/").split("/") if part
+    )
     repository_directories = {
         "configs",
         "data",
@@ -1260,5 +1355,6 @@ def _distinct_text(rows: Sequence[object], field: str) -> list[str]:
 __all__ = [
     "ProfileInputLineage",
     "build_profile_input_lineage",
+    "profile_lineage_fingerprint_matches",
     "resolve_profile_inputs",
 ]
