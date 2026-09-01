@@ -46,27 +46,28 @@ def advance_cycles(world: SteppableWorld, cycles: int) -> OutcomeSnapshot:
     if cycles <= 0:
         raise ValueError("cycles must be positive")
     players = getattr(world, "players", None)
-    if not isinstance(players, PlayerTable):
-        raise TypeError("world.players must be a PlayerTable")
-    require_treatment_eligible_player_table(
-        players,
-        operation="multi-cycle simulation",
-    )
-    projection = getattr(world, "population_projection_execution", None)
-    if projection is not None:
-        if type(projection) is not PopulationProjectionExecution:
-            raise TypeError(
-                "population_projection_execution must be an exact "
-                "PopulationProjectionExecution when present"
-            )
-        observed_projection = require_treatment_eligible_population_projection(
-            projection,
+    if isinstance(players, PlayerTable):
+        require_treatment_eligible_player_table(
+            players,
             operation="multi-cycle simulation",
         )
-        if observed_projection.players is not players:
-            raise ValueError(
-                "population projection execution must bind world.players"
+        projection = getattr(world, "population_projection_execution", None)
+        if projection is not None:
+            if type(projection) is not PopulationProjectionExecution:
+                raise TypeError(
+                    "population_projection_execution must be an exact "
+                    "PopulationProjectionExecution when present"
+                )
+            observed_projection = (
+                require_treatment_eligible_population_projection(
+                    projection,
+                    operation="multi-cycle simulation",
+                )
             )
+            if observed_projection.players is not players:
+                raise ValueError(
+                    "population projection execution must bind world.players"
+                )
     latest: OutcomeSnapshot | None = None
     for _ in range(cycles):
         latest = world.step().outcome

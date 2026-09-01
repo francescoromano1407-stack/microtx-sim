@@ -502,6 +502,17 @@ class UKAdultsRuntimeSexTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "point-zero"):
                 world._require_runnable()
 
+    def test_advance_cycles_preserves_the_minimal_custom_world_protocol(self) -> None:
+        outcome = object()
+
+        class CustomWorld:
+            players = object()
+
+            def step(self):
+                return SimpleNamespace(outcome=outcome)
+
+        self.assertIs(advance_cycles(CustomWorld(), 1), outcome)
+
     def test_exact_dtype_and_binary_source_categories_are_required(self) -> None:
         values = np.asarray(["FEMALE", "MALE"], dtype=SOURCE_RECORDED_SEX_DTYPE)
         self.assertEqual(len(source_recorded_sex_sha256(values)), 64)
