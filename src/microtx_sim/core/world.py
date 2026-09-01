@@ -7,7 +7,7 @@ import numpy as np
 
 from ..agents.companies import FirmAgent
 from ..agents.jurisdictions import StateAgent, SubsidyApplicationView
-from ..agents.players import PlayerTable
+from ..agents.players import PlayerTable, require_treatment_eligible_player_table
 from ..config import (
     ConfigurationError,
     SimulationConfig,
@@ -19,8 +19,8 @@ from ..data.population_projection import (
     PopulationProjectionAdapter,
     PopulationProjectionExecution,
     initialize_population_projection,
+    require_treatment_eligible_population_projection,
     verify_population_projection_adapter,
-    verify_population_projection_execution,
 )
 from ..metrics.population_balance import (
     PopulationBalanceArtifact,
@@ -80,6 +80,10 @@ class World:
         # constructor must still reject malformed execution contracts before
         # any mutable world state is installed.
         config.validate(campaign=False)
+        require_treatment_eligible_player_table(
+            players,
+            operation="World construction",
+        )
         self.config = config
         self.profiles = profiles
         self.rng = rng
@@ -100,8 +104,11 @@ class World:
                     "population_projection_execution must be "
                     "PopulationProjectionExecution or None"
                 )
-            observed_population_execution = verify_population_projection_execution(
-                population_projection_execution
+            observed_population_execution = (
+                require_treatment_eligible_population_projection(
+                    population_projection_execution,
+                    operation="World construction",
+                )
             )
             if observed_population_execution.players is not players:
                 raise ValueError(
@@ -428,6 +435,25 @@ class World:
         return self._owns_ledger
 
     def _require_runnable(self) -> None:
+        require_treatment_eligible_player_table(
+            self.players,
+            operation="World treatment step",
+        )
+        projection = self.population_projection_execution
+        if projection is not None:
+            if type(projection) is not PopulationProjectionExecution:
+                raise TypeError(
+                    "population_projection_execution must remain an exact "
+                    "PopulationProjectionExecution"
+                )
+            require_treatment_eligible_player_table(
+                projection.players,
+                operation="World treatment step",
+            )
+            if projection.players is not self.players:
+                raise ValueError(
+                    "population projection execution no longer binds installed players"
+                )
         if self._closed:
             raise RuntimeError("world is closed")
         if self._poisoned:

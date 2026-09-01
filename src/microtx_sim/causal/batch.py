@@ -1447,6 +1447,10 @@ def _cohort_digest(players: object, life: object) -> str:
             projected_population.metadata,
             players.player_id,
             projected_population.cell_index,
+            age_years=players.age_years,
+            jurisdiction=players.jurisdiction,
+            sex=getattr(players, "sex", None),
+            sex_binding=projected_population.sex_binding,
         )
         if observed_assignment_sha256 != projected_population.assignment_sha256:
             raise RuntimeError(

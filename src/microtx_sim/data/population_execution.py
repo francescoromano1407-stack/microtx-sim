@@ -17,6 +17,7 @@ from typing import Sequence
 import numpy as np
 
 from ..agents.players import (
+    ProjectedPopulationAssignment,
     ProjectedPopulationCellMetadata,
     ProjectedPopulationMetadata,
     projected_population_assignment_sha256,
@@ -526,6 +527,15 @@ def build_population_seed_execution_record(
     if type(execution) is not PopulationProjectionExecution:
         raise TypeError("execution must be PopulationProjectionExecution")
     observed = verify_population_projection_execution(execution)
+    observed_assignment = observed.players.projected_population
+    if (
+        type(observed_assignment) is ProjectedPopulationAssignment
+        and observed_assignment.sex_binding is not None
+    ):
+        raise PopulationExecutionValidationError(
+            "source-recorded sex is bound for point-zero execution only; the "
+            "detached campaign seed-lineage schema has not been extended"
+        )
     selected_seed = validate_seed(seed, name="population execution seed")
     if selected_seed != observed.initialization_seed:
         raise PopulationExecutionValidationError(

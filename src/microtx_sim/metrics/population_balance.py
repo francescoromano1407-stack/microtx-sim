@@ -1037,6 +1037,10 @@ def _revalidate_sidecar(
         metadata,
         players.player_id,
         assignment.cell_index,
+        age_years=players.age_years,
+        jurisdiction=players.jurisdiction,
+        sex=players.sex,
+        sex_binding=assignment.sex_binding,
     )
     if assignment.assignment_sha256 != expected_assignment_sha256:
         raise PopulationBalanceValidationError(

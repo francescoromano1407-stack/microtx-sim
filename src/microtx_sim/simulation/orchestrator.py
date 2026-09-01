@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Protocol
 
+from ..agents.players import PlayerTable, require_treatment_eligible_player_table
 from ..config import ConfigurationError, SimulationConfig
 from ..core.ledger import Ledger
 from ..data.population_execution import validate_population_campaign_preflight
 from ..data.population_projection import (
     PopulationProjectionExecution,
-    verify_population_projection_execution,
+    require_treatment_eligible_population_projection,
 )
 from ..metrics.population_balance import PopulationBalanceArtifact
 from ..metrics.population_estimands import ExactPopulationWeights
@@ -44,6 +45,28 @@ def advance_cycles(world: SteppableWorld, cycles: int) -> OutcomeSnapshot:
 
     if cycles <= 0:
         raise ValueError("cycles must be positive")
+    players = getattr(world, "players", None)
+    if not isinstance(players, PlayerTable):
+        raise TypeError("world.players must be a PlayerTable")
+    require_treatment_eligible_player_table(
+        players,
+        operation="multi-cycle simulation",
+    )
+    projection = getattr(world, "population_projection_execution", None)
+    if projection is not None:
+        if type(projection) is not PopulationProjectionExecution:
+            raise TypeError(
+                "population_projection_execution must be an exact "
+                "PopulationProjectionExecution when present"
+            )
+        observed_projection = require_treatment_eligible_population_projection(
+            projection,
+            operation="multi-cycle simulation",
+        )
+        if observed_projection.players is not players:
+            raise ValueError(
+                "population projection execution must bind world.players"
+            )
     latest: OutcomeSnapshot | None = None
     for _ in range(cycles):
         latest = world.step().outcome
@@ -81,7 +104,10 @@ class SimulationOrchestrator:
                     "Scientific campaigns require an installed projected "
                     "population execution; legacy population fallback is prohibited"
                 )
-            observed_projection = verify_population_projection_execution(projection)
+            observed_projection = require_treatment_eligible_population_projection(
+                projection,
+                operation="scientific campaign",
+            )
             validate_population_campaign_preflight(observed_projection.adapter)
             balance = getattr(world, "population_balance", None)
             weights = getattr(world, "population_weights", None)

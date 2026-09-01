@@ -26,7 +26,11 @@ from typing import Final
 import numpy as np
 import numpy.typing as npt
 
-from ..agents.players import PlayerTable, TRAIT_NAMES
+from ..agents.players import (
+    PlayerTable,
+    TRAIT_NAMES,
+    require_treatment_eligible_player_table,
+)
 from ..core.ledger import Ledger, LedgerEntry
 from ..domain.games import GameTable
 from ..rng import CounterRNG
@@ -345,6 +349,10 @@ def step_player_dynamics(
     tick = _plain_int(tick, name="tick", minimum=0)
     if not isinstance(players, PlayerTable):
         raise TypeError("players must be a PlayerTable")
+    require_treatment_eligible_player_table(
+        players,
+        operation="player dynamics",
+    )
     if not isinstance(games, GameTable):
         raise TypeError("games must be a GameTable")
     if not isinstance(rng, CounterRNG):

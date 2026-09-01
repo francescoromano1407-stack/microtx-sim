@@ -652,6 +652,10 @@ def exact_population_weights_from_projected_players(
         assignment.metadata,
         players.player_id,
         assignment.cell_index,
+        age_years=players.age_years,
+        jurisdiction=players.jurisdiction,
+        sex=players.sex,
+        sex_binding=assignment.sex_binding,
     )
     if observed_assignment_sha256 != assignment.assignment_sha256:
         raise PopulationEstimandValidationError(

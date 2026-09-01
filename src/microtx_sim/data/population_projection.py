@@ -20,7 +20,7 @@ campaign-readiness claim.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from hashlib import sha256
 import json
@@ -37,6 +37,12 @@ from ..agents.players import (
     PlayerTable,
     ProjectedPopulationAssignment,
     ProjectedPopulationCellMetadata,
+    ProjectedPopulationSexBinding,
+    SOURCE_RECORDED_SEX_DTYPE,
+    projected_population_assignment_sha256,
+    require_treatment_eligible_player_table,
+    source_recorded_sex_derivation_input_sha256,
+    source_recorded_sex_sha256,
 )
 from ..consumers.population import (
     CountryProfile,
@@ -72,6 +78,7 @@ POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION = 1
 POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2 = 2
 POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION = 1
 POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2 = 2
+POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V3 = 3
 MAX_POPULATION_RUNTIME_MAPPING_BYTES = 16 * 1024 * 1024
 
 SOURCE_INCOME_CONCEPT = "source_household_income"
@@ -1525,13 +1532,22 @@ def _population_projection_execution_attestation_payload(
     runtime_projection_sha256: str,
     assignment_sha256: str,
     ordered_player_ids_sha256: str,
+    sex_binding: ProjectedPopulationSexBinding | None = None,
 ) -> dict[str, object]:
     plan = adapter.apportionment_plan
-    execution_schema_version = (
-        POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION
-        if adapter.schema_version == POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION
-        else POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2
-    )
+    if sex_binding is not None:
+        if type(sex_binding) is not ProjectedPopulationSexBinding:
+            raise TypeError(
+                "sex_binding must be an exact ProjectedPopulationSexBinding"
+            )
+        ProjectedPopulationSexBinding.__post_init__(sex_binding)
+        execution_schema_version = POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V3
+    else:
+        execution_schema_version = (
+            POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION
+            if adapter.schema_version == POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION
+            else POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2
+        )
     payload: dict[str, object] = {
         "schema_version": execution_schema_version,
         "adapter_sha256": adapter.adapter_sha256,
@@ -1551,9 +1567,15 @@ def _population_projection_execution_attestation_payload(
         "ordered_player_ids_sha256": ordered_player_ids_sha256,
         "campaign_ready": False,
     }
-    if execution_schema_version == POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2:
+    if execution_schema_version in {
+        POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2,
+        POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V3,
+    }:
         payload["adapter_schema_version"] = adapter.schema_version
         payload["mapping_schema_version"] = adapter.mapping_bundle.schema_version
+    if sex_binding is not None:
+        payload["source_recorded_sex"] = sex_binding.snapshot()
+        payload["sex_sha256"] = sex_binding.sex_sha256
     return payload
 
 
@@ -1565,6 +1587,7 @@ def population_projection_execution_sha256(
     runtime_projection_sha256: str,
     assignment_sha256: str,
     ordered_player_ids_sha256: str,
+    sex_binding: ProjectedPopulationSexBinding | None = None,
 ) -> str:
     """Recompute an execution address from its detached exact bindings."""
 
@@ -1591,6 +1614,7 @@ def population_projection_execution_sha256(
         runtime_projection_sha256=runtime_projection_sha256,
         assignment_sha256=assignment_sha256,
         ordered_player_ids_sha256=ordered_player_ids_sha256,
+        sex_binding=sex_binding,
     )
     return sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
@@ -1633,6 +1657,12 @@ class PopulationProjectionExecution:
         return False
 
     def attestation_payload(self) -> dict[str, object]:
+        assignment = self.players.projected_population
+        sex_binding = (
+            assignment.sex_binding
+            if type(assignment) is ProjectedPopulationAssignment
+            else None
+        )
         return _population_projection_execution_attestation_payload(
             self.adapter,
             initialization_seed=self.initialization_seed,
@@ -1641,6 +1671,7 @@ class PopulationProjectionExecution:
             runtime_projection_sha256=self.runtime_projection_sha256,
             assignment_sha256=self.assignment_sha256,
             ordered_player_ids_sha256=self.ordered_player_ids_sha256,
+            sex_binding=sex_binding,
         )
 
     def snapshot(self) -> dict[str, object]:
@@ -1767,6 +1798,40 @@ def _validate_execution(execution: PopulationProjectionExecution) -> None:
         raise PopulationProjectionVerificationError(
             "assignment digest differs from PlayerTable metadata"
         )
+    try:
+        expected_assignment_sha256 = projected_population_assignment_sha256(
+            assignment.metadata,
+            execution.players.player_id,
+            assignment.cell_index,
+            age_years=execution.players.age_years,
+            jurisdiction=execution.players.jurisdiction,
+            sex=execution.players.sex,
+            sex_binding=assignment.sex_binding,
+        )
+    except (TypeError, ValueError) as exc:
+        raise PopulationProjectionVerificationError(
+            "runtime assignment values do not verify against their binding"
+        ) from exc
+    if assignment.assignment_sha256 != expected_assignment_sha256:
+        raise PopulationProjectionVerificationError(
+            "runtime assignment values differ from their content address"
+        )
+    if assignment.sex_binding is not None:
+        observed_derivation_sha256 = (
+            source_recorded_sex_derivation_input_sha256(
+                execution.players.player_id,
+                execution.players.age_years,
+                execution.players.jurisdiction,
+                assignment.cell_index,
+            )
+        )
+        if (
+            observed_derivation_sha256
+            != assignment.sex_binding.derivation_input_sha256
+        ):
+            raise PopulationProjectionVerificationError(
+                "source-recorded sex derivation inputs differ from their binding"
+            )
     expected_ids_sha256 = population_projection_ordered_player_ids_sha256(
         execution.players.player_id
     )
@@ -1876,6 +1941,86 @@ def initialize_population_projection(
     )
 
 
+def bind_population_projection_source_recorded_sex(
+    execution: PopulationProjectionExecution,
+    sex: NDArray[np.str_],
+    binding: ProjectedPopulationSexBinding,
+) -> PopulationProjectionExecution:
+    """Return a new execution with one immutable, content-addressed sex field.
+
+    This is a pre-treatment projection binding, not a behavioural update. The
+    supplied vector must use an empty string outside the binding's declared
+    jurisdiction/age scope. Existing unbound executions remain byte-for-byte
+    compatible with the historical digest recipe.
+    """
+
+    observed = verify_population_projection_execution(execution)
+    assignment = observed.players.projected_population
+    if type(assignment) is not ProjectedPopulationAssignment:
+        raise PopulationProjectionVerificationError(
+            "source-recorded sex requires a projected-population assignment"
+        )
+    if observed.players.sex is not None or assignment.sex_binding is not None:
+        raise PopulationProjectionValidationError(
+            "projected execution already has a source-recorded sex binding"
+        )
+    if type(binding) is not ProjectedPopulationSexBinding:
+        raise TypeError("binding must be an exact ProjectedPopulationSexBinding")
+    ProjectedPopulationSexBinding.__post_init__(binding)
+    observed_sex_sha256 = source_recorded_sex_sha256(sex)
+    if observed_sex_sha256 != binding.sex_sha256:
+        raise PopulationProjectionValidationError(
+            "source-recorded sex vector differs from its typed binding"
+        )
+    if sex.shape != observed.players.player_id.shape:
+        raise PopulationProjectionValidationError(
+            "source-recorded sex must have one value per projected player"
+        )
+
+    selected_sex = np.array(sex, dtype=SOURCE_RECORDED_SEX_DTYPE, copy=True)
+    assignment_sha256 = projected_population_assignment_sha256(
+        assignment.metadata,
+        observed.players.player_id,
+        assignment.cell_index,
+        age_years=observed.players.age_years,
+        jurisdiction=observed.players.jurisdiction,
+        sex=selected_sex,
+        sex_binding=binding,
+    )
+    bound_assignment = ProjectedPopulationAssignment(
+        metadata=assignment.metadata,
+        cell_index=assignment.cell_index,
+        assignment_sha256=assignment_sha256,
+        sex_binding=binding,
+    )
+    bound_players = replace(
+        observed.players,
+        sex=selected_sex,
+        projected_population=bound_assignment,
+    )
+    payload = _population_projection_execution_attestation_payload(
+        observed.adapter,
+        initialization_seed=observed.initialization_seed,
+        initialization_tick=observed.initialization_tick,
+        runtime_projection_id=observed.runtime_projection_id,
+        runtime_projection_sha256=observed.runtime_projection_sha256,
+        assignment_sha256=assignment_sha256,
+        ordered_player_ids_sha256=observed.ordered_player_ids_sha256,
+        sex_binding=binding,
+    )
+    return PopulationProjectionExecution(
+        adapter=observed.adapter,
+        players=bound_players,
+        initialization_seed=observed.initialization_seed,
+        initialization_tick=observed.initialization_tick,
+        runtime_projection_id=observed.runtime_projection_id,
+        runtime_projection_sha256=observed.runtime_projection_sha256,
+        assignment_sha256=assignment_sha256,
+        ordered_player_ids_sha256=observed.ordered_player_ids_sha256,
+        execution_sha256=sha256(_canonical_json(payload).encode("utf-8")).hexdigest(),
+    )
+
+
 def verify_population_projection_execution(
     execution: PopulationProjectionExecution,
 ) -> PopulationProjectionExecution:
@@ -1887,12 +2032,28 @@ def verify_population_projection_execution(
     return execution
 
 
+def require_treatment_eligible_population_projection(
+    execution: PopulationProjectionExecution,
+    *,
+    operation: str,
+) -> PopulationProjectionExecution:
+    """Verify an execution and reject point-zero-only structural bindings."""
+
+    observed = verify_population_projection_execution(execution)
+    require_treatment_eligible_player_table(
+        observed.players,
+        operation=operation,
+    )
+    return observed
+
+
 __all__ = [
     "MAX_POPULATION_RUNTIME_MAPPING_BYTES",
     "POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION",
     "POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION_V2",
     "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION",
     "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V2",
+    "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V3",
     "POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION",
     "POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION_V2",
     "RUNTIME_INCOME_CONCEPT",
@@ -1905,10 +2066,12 @@ __all__ = [
     "PopulationRuntimeMappingBundle",
     "PopulationRuntimeMappingEntry",
     "build_population_projection_adapter",
+    "bind_population_projection_source_recorded_sex",
     "initialize_population_projection",
     "load_population_runtime_mapping_bundle",
     "population_projection_execution_sha256",
     "population_projection_ordered_player_ids_sha256",
+    "require_treatment_eligible_population_projection",
     "verify_population_projection_adapter",
     "verify_population_projection_execution",
 ]

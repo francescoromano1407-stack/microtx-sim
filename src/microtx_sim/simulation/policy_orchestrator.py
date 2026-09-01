@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Mapping
 import numpy as np
 import numpy.typing as npt
 
-from ..agents.players import PlayerTable
+from ..agents.players import PlayerTable, require_treatment_eligible_player_table
 from ..causal.scenarios import ScenarioSpec
 from ..consumers.decision import DecisionParameters, LifeAction
 from ..consumers.welfare import PlayerLifeTable
@@ -173,6 +173,10 @@ def run_policy_scenario(
     on the CPU reference implementation.
     """
 
+    require_treatment_eligible_player_table(
+        players,
+        operation="policy scenario",
+    )
     seed = validate_seed(seed)
     if isinstance(days, bool) or not isinstance(days, int):
         raise TypeError("days must be an integer")

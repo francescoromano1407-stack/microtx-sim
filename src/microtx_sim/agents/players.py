@@ -32,6 +32,15 @@ _MONEY_COLUMNS: Final[tuple[str, ...]] = (
 
 _SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{64}")
 
+SOURCE_RECORDED_SEX_FEMALE: Final[str] = "FEMALE"
+SOURCE_RECORDED_SEX_MALE: Final[str] = "MALE"
+SOURCE_RECORDED_SEX_UNAVAILABLE: Final[str] = ""
+SOURCE_RECORDED_SEX_DTYPE: Final[np.dtype[np.str_]] = np.dtype("<U6")
+_SOURCE_RECORDED_SEX_VALUES: Final[tuple[str, str]] = (
+    SOURCE_RECORDED_SEX_FEMALE,
+    SOURCE_RECORDED_SEX_MALE,
+)
+
 
 def _validate_identifier(value: object, *, name: str) -> str:
     if not isinstance(value, str):
@@ -66,6 +75,144 @@ def _validate_exact_rational(
     if (reduced.numerator, reduced.denominator) != value:
         raise ValueError(f"{name} must be in lowest terms")
     return value
+
+
+def source_recorded_sex_sha256(values: NDArray[np.str_]) -> str:
+    """Hash one exact synthetic-player allocation of source-recorded sex.
+
+    Empty strings mean that the cited source does not cover that runtime row;
+    they must never be interpreted as a third sex or as gender identity.
+    """
+
+    if type(values) is not np.ndarray:
+        raise TypeError("source-recorded sex values must be an exact NumPy array")
+    if values.ndim != 1 or values.dtype != SOURCE_RECORDED_SEX_DTYPE:
+        raise TypeError(
+            "source-recorded sex values must be a one-dimensional <U6 array"
+        )
+    allowed = (*_SOURCE_RECORDED_SEX_VALUES, SOURCE_RECORDED_SEX_UNAVAILABLE)
+    if not np.all(np.isin(values, allowed)):
+        raise ValueError(
+            "source-recorded sex values must be FEMALE, MALE, or empty outside "
+            "the declared source scope"
+        )
+    digest = sha256(b"microtx-sim.source-recorded-sex.v1\0")
+    digest.update(values.size.to_bytes(8, "little", signed=False))
+    for raw_value in values:
+        encoded = str(raw_value).encode("ascii")
+        digest.update(len(encoded).to_bytes(8, "little", signed=False))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def source_recorded_sex_derivation_input_sha256(
+    player_id: NDArray[np.int64],
+    age_years: NDArray[np.int16],
+    jurisdiction: NDArray[np.int16],
+    cell_index: NDArray[np.int32],
+) -> str:
+    """Hash every ordered runtime column used to derive a sex allocation.
+
+    The projection metadata and evidence bundle have their own content
+    addresses. This digest closes the remaining provenance gap by binding the
+    per-player inputs that can change age-band membership or deterministic
+    ranking without changing the legacy projection-cell assignment.
+    """
+
+    arrays = (
+        (player_id, np.dtype(np.int64), "player_id"),
+        (age_years, np.dtype(np.int16), "age_years"),
+        (jurisdiction, np.dtype(np.int16), "jurisdiction"),
+        (cell_index, np.dtype(np.int32), "cell_index"),
+    )
+    expected_shape: tuple[int, ...] | None = None
+    for values, dtype, name in arrays:
+        if type(values) is not np.ndarray:
+            raise TypeError(f"{name} must be an exact NumPy array")
+        if values.ndim != 1 or values.dtype != dtype:
+            raise TypeError(f"{name} must be a one-dimensional {dtype} array")
+        if expected_shape is None:
+            expected_shape = values.shape
+        elif values.shape != expected_shape:
+            raise ValueError("source-recorded sex derivation inputs must align")
+
+    digest = sha256(b"microtx-sim.source-recorded-sex-derivation-input.v1\0")
+    assert expected_shape is not None
+    digest.update(expected_shape[0].to_bytes(8, "little", signed=False))
+    digest.update(np.asarray(player_id, dtype="<i8").tobytes(order="C"))
+    digest.update(np.asarray(age_years, dtype="<i2").tobytes(order="C"))
+    digest.update(np.asarray(jurisdiction, dtype="<i2").tobytes(order="C"))
+    digest.update(np.asarray(cell_index, dtype="<i4").tobytes(order="C"))
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectedPopulationSexBinding:
+    """Typed source and scope for an aggregate-informed synthetic sex field.
+
+    The field records the source's binary ``FEMALE``/``MALE`` categories. It
+    is deliberately named *sex*, not gender, and makes no gender-identity
+    inference. Values outside the declared jurisdiction and age interval are
+    absent rather than imputed from an unrelated population.
+    """
+
+    source_id: str
+    evidence_bundle_id: str
+    evidence_bundle_sha256: str
+    population_weights_sha256: str
+    jurisdiction_code: str
+    age_min_inclusive: int
+    age_max_inclusive: int
+    assignment_method: str
+    derivation_input_sha256: str
+    sex_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "source_id",
+            "evidence_bundle_id",
+            "jurisdiction_code",
+            "assignment_method",
+        ):
+            _validate_identifier(getattr(self, name), name=name)
+        for name in (
+            "evidence_bundle_sha256",
+            "population_weights_sha256",
+            "derivation_input_sha256",
+            "sex_sha256",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str):
+                raise TypeError(f"{name} must be a string")
+            if _SHA256_PATTERN.fullmatch(value) is None:
+                raise ValueError(f"{name} must be a lowercase hexadecimal SHA-256")
+        for name in ("age_min_inclusive", "age_max_inclusive"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be a Python integer")
+        if not 0 <= self.age_min_inclusive <= self.age_max_inclusive < 32_768:
+            raise ValueError(
+                "source-recorded sex age interval must be non-empty and fit int16"
+            )
+
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "field": "sex",
+            "source_categories": list(_SOURCE_RECORDED_SEX_VALUES),
+            "source_id": self.source_id,
+            "evidence_bundle_id": self.evidence_bundle_id,
+            "evidence_bundle_sha256": self.evidence_bundle_sha256,
+            "population_weights_sha256": self.population_weights_sha256,
+            "jurisdiction_code": self.jurisdiction_code,
+            "age_min_inclusive": self.age_min_inclusive,
+            "age_max_inclusive": self.age_max_inclusive,
+            "assignment_method": self.assignment_method,
+            "derivation_input_sha256": self.derivation_input_sha256,
+            "sex_sha256": self.sex_sha256,
+            "interpretation": "source-recorded sex; not inferred gender identity",
+            "out_of_scope_value": SOURCE_RECORDED_SEX_UNAVAILABLE,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,8 +414,18 @@ def projected_population_assignment_sha256(
     metadata: ProjectedPopulationMetadata,
     player_id: NDArray[np.int64],
     cell_index: NDArray[np.int32],
+    *,
+    age_years: NDArray[np.int16] | None = None,
+    jurisdiction: NDArray[np.int16] | None = None,
+    sex: NDArray[np.str_] | None = None,
+    sex_binding: ProjectedPopulationSexBinding | None = None,
 ) -> str:
-    """Hash runtime projection metadata, ordered player IDs, and assignments."""
+    """Hash runtime projection metadata, ordered IDs, and bound assignments.
+
+    The legacy digest recipe is retained byte-for-byte when no sex binding is
+    present. A source-recorded sex vector selects a separate v2 domain and is
+    accepted only together with its exact typed source binding.
+    """
 
     if type(metadata) is not ProjectedPopulationMetadata:
         raise TypeError("metadata must be ProjectedPopulationMetadata")
@@ -280,6 +437,36 @@ def projected_population_assignment_sha256(
         raise TypeError("cell_index must be a one-dimensional int32 array")
     if ids.shape != indices.shape:
         raise ValueError("player_id and cell_index must have the same shape")
+    if (sex is None) != (sex_binding is None):
+        raise ValueError("sex and sex_binding must either both be present or both absent")
+    if sex_binding is not None:
+        if type(sex_binding) is not ProjectedPopulationSexBinding:
+            raise TypeError(
+                "sex_binding must be an exact ProjectedPopulationSexBinding"
+            )
+        ProjectedPopulationSexBinding.__post_init__(sex_binding)
+        assert sex is not None
+        observed_sex_sha256 = source_recorded_sex_sha256(sex)
+        if sex.shape != ids.shape:
+            raise ValueError("source-recorded sex must have one value per player")
+        if observed_sex_sha256 != sex_binding.sex_sha256:
+            raise ValueError("sex_sha256 does not match source-recorded sex values")
+        if age_years is None or jurisdiction is None:
+            raise ValueError(
+                "age_years and jurisdiction are required with source-recorded sex"
+            )
+        observed_derivation_sha256 = (
+            source_recorded_sex_derivation_input_sha256(
+                ids,
+                age_years,
+                jurisdiction,
+                indices,
+            )
+        )
+        if observed_derivation_sha256 != sex_binding.derivation_input_sha256:
+            raise ValueError(
+                "source-recorded sex derivation inputs differ from their binding"
+            )
 
     encoded_metadata = json.dumps(
         metadata.snapshot(),
@@ -288,12 +475,28 @@ def projected_population_assignment_sha256(
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
-    digest = sha256(b"microtx-sim.projected-population-assignment.v1\0")
+    digest = sha256(
+        b"microtx-sim.projected-population-assignment.v1\0"
+        if sex_binding is None
+        else b"microtx-sim.projected-population-assignment.v2\0"
+    )
     digest.update(len(encoded_metadata).to_bytes(8, "little"))
     digest.update(encoded_metadata)
     digest.update(ids.size.to_bytes(8, "little"))
     digest.update(np.asarray(ids, dtype="<i8").tobytes(order="C"))
     digest.update(np.asarray(indices, dtype="<i4").tobytes(order="C"))
+    if sex_binding is not None:
+        encoded_binding = json.dumps(
+            sex_binding.snapshot(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        digest.update(len(encoded_binding).to_bytes(8, "little"))
+        digest.update(encoded_binding)
+        assert sex is not None
+        digest.update(np.asarray(sex, dtype=SOURCE_RECORDED_SEX_DTYPE).tobytes())
     return digest.hexdigest()
 
 
@@ -304,6 +507,7 @@ class ProjectedPopulationAssignment:
     metadata: ProjectedPopulationMetadata
     cell_index: NDArray[np.int32]
     assignment_sha256: str
+    sex_binding: ProjectedPopulationSexBinding | None = None
 
     def __post_init__(self) -> None:
         if type(self.metadata) is not ProjectedPopulationMetadata:
@@ -323,6 +527,12 @@ class ProjectedPopulationAssignment:
             raise ValueError(
                 "assignment_sha256 must be a lowercase hexadecimal SHA-256"
             )
+        if self.sex_binding is not None:
+            if type(self.sex_binding) is not ProjectedPopulationSexBinding:
+                raise TypeError(
+                    "sex_binding must be an exact ProjectedPopulationSexBinding"
+                )
+            ProjectedPopulationSexBinding.__post_init__(self.sex_binding)
         immutable_index = np.array(self.cell_index, dtype=np.int32, copy=True)
         immutable_index.flags.writeable = False
         object.__setattr__(self, "cell_index", immutable_index)
@@ -377,6 +587,7 @@ class PlayerTable:
     jurisdiction_codes: tuple[str, ...]
     adult_age_by_jurisdiction: tuple[int, ...]
     projected_population: ProjectedPopulationAssignment | None = None
+    sex: NDArray[np.str_] | None = None
 
     def __post_init__(self) -> None:
         if self.player_id.ndim != 1:
@@ -421,6 +632,15 @@ class PlayerTable:
         for name, dtype in expected_dtypes.items():
             if getattr(self, name).dtype != dtype:
                 raise TypeError(f"{name} must use dtype {dtype}")
+
+        if self.sex is not None:
+            if type(self.sex) is not np.ndarray:
+                raise TypeError("sex must be an exact NumPy array when present")
+            if self.sex.ndim != 1 or self.sex.shape != (n_players,):
+                raise ValueError(f"sex must have shape ({n_players},)")
+            if self.sex.dtype != SOURCE_RECORDED_SEX_DTYPE:
+                raise TypeError("sex must use dtype <U6")
+            source_recorded_sex_sha256(self.sex)
 
         if self.traits.shape != (n_players, len(TRAIT_NAMES)):
             raise ValueError(
@@ -490,12 +710,24 @@ class PlayerTable:
 
         if self.projected_population is not None:
             _validate_player_projection(self, self.projected_population)
+        elif self.sex is not None:
+            raise ValueError(
+                "source-recorded sex requires projected-population lineage"
+            )
 
         immutable_baseline = np.array(
             self.baseline_vulnerability, dtype=np.float32, copy=True
         )
         immutable_baseline.flags.writeable = False
         object.__setattr__(self, "baseline_vulnerability", immutable_baseline)
+        if self.sex is not None:
+            immutable_sex = np.array(
+                self.sex,
+                dtype=SOURCE_RECORDED_SEX_DTYPE,
+                copy=True,
+            )
+            immutable_sex.flags.writeable = False
+            object.__setattr__(self, "sex", immutable_sex)
 
     def __len__(self) -> int:
         return int(self.player_id.size)
@@ -554,6 +786,31 @@ class PlayerTable:
         return total
 
 
+def require_treatment_eligible_player_table(
+    players: PlayerTable,
+    *,
+    operation: str,
+) -> PlayerTable:
+    """Reject structural point-zero fields before any behavioural mutation."""
+
+    if not isinstance(players, PlayerTable):
+        raise TypeError("players must be a PlayerTable")
+    if not isinstance(operation, str) or not operation or operation.strip() != operation:
+        raise ValueError("operation must be non-empty text without surrounding spaces")
+    assignment = players.projected_population
+    binding = (
+        assignment.sex_binding
+        if type(assignment) is ProjectedPopulationAssignment
+        else None
+    )
+    if players.sex is not None or binding is not None:
+        raise ValueError(
+            f"{operation} rejects source-recorded sex: the current binding is "
+            "structural point-zero evidence only and is not treatment-eligible"
+        )
+    return players
+
+
 def _validate_player_projection(
     players: PlayerTable,
     assignment: ProjectedPopulationAssignment,
@@ -566,9 +823,56 @@ def _validate_player_projection(
         assignment.metadata,
         players.player_id,
         assignment.cell_index,
+        age_years=players.age_years,
+        jurisdiction=players.jurisdiction,
+        sex=players.sex,
+        sex_binding=assignment.sex_binding,
     )
     if assignment.assignment_sha256 != expected_sha256:
         raise ValueError("projected population assignment hash does not match PlayerTable")
+
+    binding = assignment.sex_binding
+    if (players.sex is None) != (binding is None):
+        raise ValueError(
+            "PlayerTable sex and projected-population sex binding differ"
+        )
+    if binding is not None:
+        assert players.sex is not None
+        observed_derivation_sha256 = (
+            source_recorded_sex_derivation_input_sha256(
+                players.player_id,
+                players.age_years,
+                players.jurisdiction,
+                assignment.cell_index,
+            )
+        )
+        if observed_derivation_sha256 != binding.derivation_input_sha256:
+            raise ValueError(
+                "source-recorded sex derivation inputs differ from their binding"
+            )
+        try:
+            jurisdiction_index = players.jurisdiction_codes.index(
+                binding.jurisdiction_code
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "source-recorded sex binding has an unknown jurisdiction"
+            ) from exc
+        in_scope = (
+            (players.jurisdiction == jurisdiction_index)
+            & (players.age_years >= binding.age_min_inclusive)
+            & (players.age_years <= binding.age_max_inclusive)
+        )
+        if np.any(
+            ~np.isin(players.sex[in_scope], _SOURCE_RECORDED_SEX_VALUES)
+        ):
+            raise ValueError(
+                "every player in the source-recorded sex scope must be FEMALE or MALE"
+            )
+        if np.any(players.sex[~in_scope] != SOURCE_RECORDED_SEX_UNAVAILABLE):
+            raise ValueError(
+                "source-recorded sex must be empty outside its declared source scope"
+            )
 
     cells = assignment.metadata.cells
     counts = np.bincount(

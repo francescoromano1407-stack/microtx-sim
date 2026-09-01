@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
-from ..agents.players import PlayerTable
+from ..agents.players import PlayerTable, require_treatment_eligible_player_table
 from ..consumers.decision import (
     DecisionParameters,
     LifeAction,
@@ -154,6 +154,10 @@ def advance_policy_day(
     sampled away.
     """
 
+    require_treatment_eligible_player_table(
+        players,
+        operation="policy day",
+    )
     params = parameters or DecisionParameters()
     if day != state.completed_days:
         raise ValueError("days must be advanced consecutively from zero")

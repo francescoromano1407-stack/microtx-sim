@@ -98,6 +98,7 @@ from .population_projection import (
     MAX_POPULATION_RUNTIME_MAPPING_BYTES,
     POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION,
     POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION,
+    POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V3,
     POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION,
     RUNTIME_INCOME_CONCEPT,
     SOURCE_INCOME_CONCEPT,
@@ -109,10 +110,12 @@ from .population_projection import (
     PopulationRuntimeMappingBundle,
     PopulationRuntimeMappingEntry,
     build_population_projection_adapter,
+    bind_population_projection_source_recorded_sex,
     initialize_population_projection,
     load_population_runtime_mapping_bundle,
     population_projection_execution_sha256,
     population_projection_ordered_player_ids_sha256,
+    require_treatment_eligible_population_projection,
     verify_population_projection_adapter,
     verify_population_projection_execution,
 )
@@ -134,6 +137,12 @@ from .rate_evidence import (
     load_rate_evidence_bundle,
     validate_rate_evidence_snapshot,
     verify_rate_evidence_bundle,
+)
+from .uk_adults_runtime import (
+    UK_ADULTS_2024_SEX_ASSIGNMENT_METHOD,
+    bind_uk_adults_2024_source_recorded_sex,
+    uk_adults_2024_population_weights_sha256,
+    verify_uk_adults_2024_source_recorded_sex,
 )
 
 __all__ = [
@@ -168,9 +177,11 @@ __all__ = [
     "POPULATION_DESIGN_SCHEMA_VERSION",
     "POPULATION_PROJECTION_ADAPTER_SCHEMA_VERSION",
     "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION",
+    "POPULATION_PROJECTION_EXECUTION_SCHEMA_VERSION_V3",
     "POPULATION_RUNTIME_MAPPING_SCHEMA_VERSION",
     "RUNTIME_INCOME_CONCEPT",
     "SOURCE_INCOME_CONCEPT",
+    "UK_ADULTS_2024_SEX_ASSIGNMENT_METHOD",
     "SHA256_CLUSTER_THRESHOLD_V1",
     "PopulationAgeBand",
     "PopulationApportionmentCell",
@@ -227,6 +238,8 @@ __all__ = [
     "build_profile_input_lineage",
     "build_monetary_output_currency_semantics",
     "build_population_projection_adapter",
+    "bind_population_projection_source_recorded_sex",
+    "bind_uk_adults_2024_source_recorded_sex",
     "apportion_population_hamilton",
     "assigned_population_partition_role",
     "build_population_calibration_target",
@@ -254,7 +267,10 @@ __all__ = [
     "verify_population_design_bundle",
     "verify_population_projection_adapter",
     "verify_population_projection_execution",
+    "verify_uk_adults_2024_source_recorded_sex",
     "initialize_population_projection",
     "population_projection_execution_sha256",
     "population_projection_ordered_player_ids_sha256",
+    "require_treatment_eligible_population_projection",
+    "uk_adults_2024_population_weights_sha256",
 ]
