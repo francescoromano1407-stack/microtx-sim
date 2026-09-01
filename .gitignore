@@ -16,3 +16,6 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+
+# User-supplied UK calibration cache (large and includes participant-level data).
+data/public_calibration_sources_uk_adults_2024/
