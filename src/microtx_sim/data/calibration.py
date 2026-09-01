@@ -129,6 +129,11 @@ _MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 _MAX_TARGET_BYTES = 16 * 1024 * 1024
 _MAX_POPULATION_WEIGHT_BYTES = 1024 * 1024
 _MAX_SOURCE_BYTES = 1024 * 1024 * 1024
+_MAX_SOURCE_COUNT = 128
+_MAX_TOTAL_SOURCE_BYTES = 2 * 1024 * 1024 * 1024
+_FILE_READ_CHUNK_BYTES = 1024 * 1024
+_MAX_DECIMAL_CHARACTERS = 64
+_MAX_DECIMAL_FRACTION_DIGITS = 24
 _POPULATION_WEIGHT_TOLERANCE = Decimal("5e-15")
 
 _EXPECTED_POPULATION_COUNTS = MappingProxyType(
@@ -146,6 +151,58 @@ _EXPECTED_POPULATION_COUNTS = MappingProxyType(
     }
 )
 UK_ADULTS_2024_POPULATION_COUNT = sum(_EXPECTED_POPULATION_COUNTS.values())
+
+_POPULATION_TARGET_COUNTS = MappingProxyType(
+    {
+        "population_18_64_total": UK_ADULTS_2024_POPULATION_COUNT,
+        "population_18_64_female": sum(
+            count
+            for key, count in _EXPECTED_POPULATION_COUNTS.items()
+            if key[3] == "FEMALE"
+        ),
+        "population_18_64_male": sum(
+            count
+            for key, count in _EXPECTED_POPULATION_COUNTS.items()
+            if key[3] == "MALE"
+        ),
+    }
+)
+_FRS_COMPONENT_VALUES = MappingProxyType(
+    {
+        "frs_income_under_200": Decimal("5"),
+        "frs_income_200_399": Decimal("14"),
+        "frs_income_400_599": Decimal("18"),
+        "frs_income_600_799": Decimal("14"),
+        "frs_income_800_999": Decimal("11"),
+        "frs_income_1000_1199": Decimal("9"),
+        "frs_income_1200_1399": Decimal("7"),
+        "frs_income_1400_1599": Decimal("5"),
+        "frs_income_1600_1799": Decimal("4"),
+        "frs_income_1800_1999": Decimal("3"),
+        "frs_income_2000_plus": Decimal("11"),
+    }
+)
+_TARGET_UNIT_MAXIMA = MappingProxyType(
+    {
+        "gbp_per_week": Decimal("1000000"),
+        "persons": Decimal("1000000000"),
+        "percent": Decimal("100"),
+        "index_2015_100": Decimal("10000"),
+        "thousand_jobs": Decimal("1000000000"),
+        "score_4_to_20": Decimal("20"),
+        "minutes_per_day": Decimal("1440"),
+        "gbp_per_international_dollar": Decimal("100"),
+        "gbp_per_hour": Decimal("100000"),
+        "published_percent": Decimal("101"),
+        "gbp_per_eur": Decimal("100"),
+        "gbp_per_usd": Decimal("100"),
+        "minutes": Decimal("10080"),
+        "minutes_per_week": Decimal("10080"),
+        "households": Decimal("1000000000"),
+        "rows": Decimal("1000000000"),
+    }
+)
+_INTEGER_TARGET_UNITS = frozenset({"persons", "households", "rows"})
 
 UNSUPPORTED_CONCEPT_STATUSES = MappingProxyType(
     {
@@ -276,6 +333,12 @@ class UKAdults2024CalibrationBundle:
         """Return an immutable source lookup."""
 
         return MappingProxyType({source.source_id: source for source in self.sources})
+
+    @property
+    def target_by_id(self) -> Mapping[str, CalibrationTarget]:
+        """Return an immutable target lookup."""
+
+        return MappingProxyType({target.target_id: target for target in self.targets})
 
     def validate_for_campaign(self) -> None:
         """Reject execution because schema v1 intentionally preserves blockers."""
@@ -471,6 +534,10 @@ def _parse_and_verify_source_manifest(
         raise CalibrationBundleValidationError(
             "source manifest sources must be a non-empty array"
         )
+    if len(raw_sources) > _MAX_SOURCE_COUNT:
+        raise CalibrationBundleValidationError(
+            f"source manifest cannot declare more than {_MAX_SOURCE_COUNT} sources"
+        )
     sources: list[CalibrationSource] = []
     for index, item in enumerate(raw_sources):
         if not isinstance(item, Mapping):
@@ -565,17 +632,6 @@ def _parse_and_verify_source_manifest(
             retrieved_at=retrieved_at,
             evidence_role=evidence_role,
         )
-        source_path = raw_cache_root.joinpath(
-            *PurePosixPath(source.relative_path).parts
-        )
-        _secure_read_regular_file(
-            source_path,
-            expected_byte_length=source.byte_length,
-            expected_sha256=source.sha256,
-            maximum_bytes=_MAX_SOURCE_BYTES,
-            description=f"source {source.source_id}",
-            containing_root=raw_cache_root,
-        )
         sources.append(source)
     source_ids = tuple(source.source_id for source in sources)
     if len(set(source_ids)) != len(source_ids):
@@ -588,6 +644,30 @@ def _parse_and_verify_source_manifest(
     if len(set(relative_paths)) != len(relative_paths):
         raise CalibrationBundleValidationError(
             "source manifest repeats a relative_path"
+        )
+    content_fingerprints = tuple(
+        (source.sha256, source.byte_length) for source in sources
+    )
+    if len(set(content_fingerprints)) != len(content_fingerprints):
+        raise CalibrationBundleValidationError(
+            "source manifest repeats a source content fingerprint under aliases"
+        )
+    if sum(source.byte_length for source in sources) > _MAX_TOTAL_SOURCE_BYTES:
+        raise CalibrationBundleValidationError(
+            "source manifest total declared bytes exceed the verification limit"
+        )
+    for source in sources:
+        source_path = raw_cache_root.joinpath(
+            *PurePosixPath(source.relative_path).parts
+        )
+        _secure_read_regular_file(
+            source_path,
+            expected_byte_length=source.byte_length,
+            expected_sha256=source.sha256,
+            maximum_bytes=_MAX_SOURCE_BYTES,
+            description=f"source {source.source_id}",
+            containing_root=raw_cache_root,
+            return_content=False,
         )
     return tuple(sources), raw_cache_root
 
@@ -639,6 +719,16 @@ def _parse_targets_csv(
             lower_ci=lower_ci,
             upper_ci=upper_ci,
         )
+        unit = _csv_text(row, "unit", line_number=line_number)
+        _validate_target_plausibility(
+            target_id=target_id,
+            concept=concept,
+            status=status,
+            unit=unit,
+            value=value,
+            lower_ci=lower_ci,
+            upper_ci=upper_ci,
+        )
         geography = _csv_text(row, "geography", line_number=line_number)
         source_id = _csv_identifier(row, "source_id", line_number=line_number)
         try:
@@ -668,7 +758,7 @@ def _parse_targets_csv(
                 ),
                 subgroup=_csv_text(row, "subgroup", line_number=line_number),
                 value=value,
-                unit=_csv_text(row, "unit", line_number=line_number),
+                unit=unit,
                 lower_ci=lower_ci,
                 upper_ci=upper_ci,
                 source_id=source_id,
@@ -788,7 +878,7 @@ def _parse_population_weights_csv(
                 estimand_role=role,
             )
         )
-    _validate_exact_population_weights(weights)
+    _validate_canonical_population_weights(weights)
     return tuple(weights)
 
 
@@ -800,7 +890,12 @@ def _validate_cross_file_contracts(
     sources: Sequence[CalibrationSource],
     raw_cache_root: Path,
 ) -> None:
-    del population_weights, sources, raw_cache_root
+    del sources, raw_cache_root
+    target_by_id = {target.target_id: target for target in targets}
+    _validate_population_target_reconciliation(
+        target_by_id=target_by_id,
+        population_weights=population_weights,
+    )
     unsupported = raw_bundle.get("unsupported_concepts")
     if type(unsupported) is not list or tuple(unsupported) != UNSUPPORTED_CONCEPTS:
         raise CalibrationBundleValidationError(
@@ -809,7 +904,7 @@ def _validate_cross_file_contracts(
     margin = _required_mapping(raw_bundle, "frs_rounded_margin")
     _exact_keys(margin, _FRS_MARGIN_KEYS, name="frs_rounded_margin")
     target_id = _required_identifier(margin, "target_id")
-    if target_id not in {target.target_id for target in targets}:
+    if target_id not in target_by_id:
         raise CalibrationBundleValidationError(
             "frs_rounded_margin target_id does not identify a target row"
         )
@@ -825,6 +920,116 @@ def _validate_cross_file_contracts(
     if margin.get("normalization_applied") is not False:
         raise CalibrationBundleValidationError(
             "FRS rounded margins must not be silently normalized"
+        )
+    _validate_frs_target_reconciliation(
+        target_by_id=target_by_id,
+        sum_target_id=target_id,
+        published_sum=Decimal(published_sum),
+    )
+
+
+def _validate_population_target_reconciliation(
+    *,
+    target_by_id: Mapping[str, CalibrationTarget],
+    population_weights: Sequence[PopulationWeight],
+) -> None:
+    weight_source_ids = {weight.source_id for weight in population_weights}
+    if len(weight_source_ids) != 1:
+        raise CalibrationBundleValidationError(
+            "population weight cells must use one common source"
+        )
+    weight_source_id = next(iter(weight_source_ids))
+    for target_id, expected_count in _POPULATION_TARGET_COUNTS.items():
+        try:
+            target = target_by_id[target_id]
+        except KeyError as exc:
+            raise CalibrationBundleValidationError(
+                f"targets.csv is missing required population target {target_id}"
+            ) from exc
+        if target.value != Decimal(expected_count):
+            raise CalibrationBundleValidationError(
+                f"population target {target_id} does not reconcile to "
+                "population_weights.csv"
+            )
+        expected_runtime_mapping = (
+            "not_connected:population_projection"
+            if target_id == "population_18_64_total"
+            else "not_connected:sex_unsupported_in_PlayerTable"
+        )
+        if (
+            target.concept != "population_count"
+            or target.estimand_role is not EstimandRole.CALIBRATION
+            or target.evidence_status is not EvidenceStatus.QUANTIFIED
+            or target.unit != "persons"
+            or target.runtime_mapping != expected_runtime_mapping
+        ):
+            raise CalibrationBundleValidationError(
+                f"population target {target_id} has an invalid typed contract"
+            )
+        if target.source_id != weight_source_id:
+            raise CalibrationBundleValidationError(
+                f"population target {target_id} and population_weights.csv "
+                "must use the same source"
+            )
+
+
+def _validate_frs_target_reconciliation(
+    *,
+    target_by_id: Mapping[str, CalibrationTarget],
+    sum_target_id: str,
+    published_sum: Decimal,
+) -> None:
+    try:
+        sum_target = target_by_id[sum_target_id]
+    except KeyError as exc:  # Defensive: checked by the caller.
+        raise CalibrationBundleValidationError(
+            "FRS published-sum target is missing"
+        ) from exc
+    if sum_target.value != published_sum:
+        raise CalibrationBundleValidationError(
+            "FRS published-sum target disagrees with its bundle descriptor"
+        )
+    if (
+        sum_target.concept != "gross_weekly_household_income_share_sum"
+        or sum_target.estimand_role is not EstimandRole.DIAGNOSTIC
+        or sum_target.evidence_status is not EvidenceStatus.QUANTIFIED
+        or sum_target.unit != "published_percent"
+        or sum_target.runtime_mapping != "audit_only"
+    ):
+        raise CalibrationBundleValidationError(
+            "FRS published-sum target has an invalid typed contract"
+        )
+    component_total = Decimal(0)
+    for target_id, expected_value in _FRS_COMPONENT_VALUES.items():
+        try:
+            target = target_by_id[target_id]
+        except KeyError as exc:
+            raise CalibrationBundleValidationError(
+                f"targets.csv is missing required FRS target {target_id}"
+            ) from exc
+        if target.value != expected_value:
+            raise CalibrationBundleValidationError(
+                f"FRS target {target_id} differs from the published rounded margin"
+            )
+        if (
+            target.concept != "gross_weekly_household_income_share"
+            or target.estimand_role is not EstimandRole.CALIBRATION
+            or target.evidence_status is not EvidenceStatus.QUANTIFIED
+            or target.unit != "published_percent"
+            or target.runtime_mapping
+            != "not_connected:household_to_personal_income_bridge"
+        ):
+            raise CalibrationBundleValidationError(
+                f"FRS target {target_id} has an invalid typed contract"
+            )
+        if target.source_id != sum_target.source_id:
+            raise CalibrationBundleValidationError(
+                "FRS component and published-sum targets must use the same source"
+            )
+        component_total += target.value
+    if component_total != published_sum:
+        raise CalibrationBundleValidationError(
+            "FRS target rows do not sum to the published 101 percent margin"
         )
 
 
@@ -866,6 +1071,45 @@ def _validate_numeric_target_fields(
         if not lower_ci <= value <= upper_ci:
             raise CalibrationBundleValidationError(
                 f"target {target_id} value lies outside its confidence interval"
+            )
+
+
+def _validate_target_plausibility(
+    *,
+    target_id: str,
+    concept: str,
+    status: EvidenceStatus,
+    unit: str,
+    value: Decimal | None,
+    lower_ci: Decimal | None,
+    upper_ci: Decimal | None,
+) -> None:
+    if status not in {EvidenceStatus.QUANTIFIED, EvidenceStatus.PROXY}:
+        return
+    try:
+        maximum = _TARGET_UNIT_MAXIMA[unit]
+    except KeyError as exc:
+        raise CalibrationBundleValidationError(
+            f"target {target_id} uses an unsupported quantified unit {unit}"
+        ) from exc
+    observed = tuple(
+        number for number in (value, lower_ci, upper_ci) if number is not None
+    )
+    minimum = Decimal("-100") if concept == "cpih_price_change" else Decimal(0)
+    if concept == "cpih_price_change":
+        maximum = Decimal("1000")
+    for number in observed:
+        if number < minimum or number > maximum:
+            raise CalibrationBundleValidationError(
+                f"target {target_id} is outside the plausible range for {unit}"
+            )
+        if unit in _INTEGER_TARGET_UNITS and number != number.to_integral_value():
+            raise CalibrationBundleValidationError(
+                f"target {target_id} must use integer-valued {unit}"
+            )
+        if unit == "score_4_to_20" and number < 4:
+            raise CalibrationBundleValidationError(
+                f"target {target_id} is outside the declared score range"
             )
 
 
@@ -919,26 +1163,6 @@ def _validate_disjoint_target_records(
             "CALIBRATION and VALIDATION targets reuse source records: "
             + repr(overlap)
         )
-    calibration_source_ids = {
-        target.source_id
-        for target in targets
-        if target.estimand_role is EstimandRole.CALIBRATION
-    }
-    validation_source_ids = {
-        target.source_id
-        for target in targets
-        if target.estimand_role is EstimandRole.VALIDATION
-    }
-    overlapping_sources = sorted(
-        calibration_source_ids.intersection(validation_source_ids)
-    )
-    if overlapping_sources:
-        raise CalibrationBundleValidationError(
-            "CALIBRATION and VALIDATION targets must use disjoint source_id values: "
-            + ", ".join(overlapping_sources)
-        )
-
-
 def _validate_unsupported_targets(
     targets: Sequence[CalibrationTarget],
 ) -> None:
@@ -959,7 +1183,7 @@ def _validate_unsupported_targets(
             )
 
 
-def _validate_exact_population_weights(
+def _validate_canonical_population_weights(
     weights: Sequence[PopulationWeight],
 ) -> None:
     observed_keys = tuple(
@@ -1017,12 +1241,16 @@ def _validate_exact_population_weights(
 
 
 def _validate_blockers(blockers: tuple[str, ...]) -> None:
-    joined = "\n".join(blockers)
-    missing = [concept for concept in UNSUPPORTED_CONCEPTS if concept not in joined]
-    if missing:
+    invalid = [
+        concept
+        for concept in UNSUPPORTED_CONCEPTS
+        if sum(blocker.startswith(f"{concept}:") for blocker in blockers) != 1
+    ]
+    if invalid:
         raise CalibrationBundleValidationError(
-            "campaign blockers must name every unsupported concept: "
-            + ", ".join(missing)
+            "campaign blockers must use one exact concept prefix for every "
+            "unsupported concept: "
+            + ", ".join(invalid)
         )
 
 
@@ -1156,6 +1384,7 @@ def _secure_read_regular_file(
     expected_byte_length: int | None = None,
     expected_sha256: str | None = None,
     containing_root: Path | None = None,
+    return_content: bool = True,
 ) -> bytes:
     try:
         metadata = path.lstat()
@@ -1194,20 +1423,32 @@ def _secure_read_regular_file(
             )
     try:
         with path.open("rb") as stream:
-            content = stream.read(maximum_bytes + 1)
+            digest = sha256()
+            chunks: list[bytes] | None = [] if return_content else None
+            bytes_read = 0
+            while bytes_read < metadata.st_size:
+                remaining = metadata.st_size - bytes_read
+                content_chunk = stream.read(min(_FILE_READ_CHUNK_BYTES, remaining))
+                if not content_chunk:
+                    break
+                bytes_read += len(content_chunk)
+                digest.update(content_chunk)
+                if chunks is not None:
+                    chunks.append(content_chunk)
+            grew_while_reading = bool(stream.read(1))
     except OSError as exc:
         raise CalibrationBundleVerificationError(
             f"{description} cannot be read"
         ) from exc
-    if len(content) > maximum_bytes or len(content) != metadata.st_size:
+    if grew_while_reading or bytes_read != metadata.st_size:
         raise CalibrationBundleVerificationError(
             f"{description} changed or exceeded its size limit while reading"
         )
-    if expected_sha256 is not None and sha256(content).hexdigest() != expected_sha256:
+    if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
         raise CalibrationBundleVerificationError(
             f"{description} SHA-256 differs from its declaration"
         )
-    return content
+    return b"" if chunks is None else b"".join(chunks)
 
 
 def _resolve_repository_root(
@@ -1480,6 +1721,15 @@ def _csv_required_decimal(
 
 
 def _parse_canonical_decimal(value: str, *, name: str) -> Decimal:
+    if len(value) > _MAX_DECIMAL_CHARACTERS:
+        raise CalibrationBundleValidationError(
+            f"{name} exceeds the decimal character limit"
+        )
+    fractional_digits = len(value.partition(".")[2])
+    if fractional_digits > _MAX_DECIMAL_FRACTION_DIGITS:
+        raise CalibrationBundleValidationError(
+            f"{name} exceeds the decimal precision limit"
+        )
     if _CANONICAL_DECIMAL_PATTERN.fullmatch(value) is None:
         raise CalibrationBundleValidationError(
             f"{name} must be a canonical finite decimal without exponent notation"

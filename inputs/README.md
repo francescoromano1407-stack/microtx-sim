@@ -1,5 +1,11 @@
 # Prospective-analysis inputs
 
+`calibration/uk-adults-2024-v1/` is a content-addressed, partial UK-adult
+calibration evidence bundle. It contains only compact English derivatives and
+remains `campaign_ready=false`; the large user-supplied source cache is ignored
+by Git. See `docs/uk_adults_2024_calibration.md` for evidence roles, limitations,
+and the no-go decision for a new exploratory campaign.
+
 `prospective-analysis-plan.json` is the concrete, content-addressed schema-v2
 prospective plan selected only by `configs/policy_prospective.toml`.
 

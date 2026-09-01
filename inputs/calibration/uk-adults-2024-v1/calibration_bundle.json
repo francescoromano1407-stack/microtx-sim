@@ -4,16 +4,16 @@
   "status": "PARTIAL",
   "files": {
     "targets.csv": {
-      "sha256": "f1b82c33a617de3f54de27c06d7909fa12967fc41f816b389cc05eec703ec69b",
-      "byte_length": 36725
+      "sha256": "0747d049e8fcb392a8306a856baebebfc1e240f17371c50486740f1aa9b23c7f",
+      "byte_length": 37187
     },
     "population_weights.csv": {
       "sha256": "127627d70f56e2f056b449aa317474c103946a95c997e252f170e1553e79be23",
       "byte_length": 914
     },
     "source_manifest.json": {
-      "sha256": "e261178d54c9400d1d444d9da8e426faca40bca6eeeb76381cddc7fdbf282b28",
-      "byte_length": 12891
+      "sha256": "a732dec2093e3ab97c7f7f3ee50c6ad454fd36c5156f3e59c4f82ecb06d8a63d",
+      "byte_length": 13599
     }
   },
   "frs_rounded_margin": {
@@ -34,6 +34,7 @@
     "decision.temperature: no observed matched choice sets identify the global eight-action scale.",
     "open_play_timeuse_provenance: UK-linked diary rows conflict with the published US-only diary design and are excluded.",
     "planned_unplanned_spending: no prospective intention data identify the split.",
+    "reproducibility: no checked-in extractor rebuilds all target rows and no dedicated point-zero command reproduces the initializer audit.",
     "runtime_integration: age-sex and life/session targets are not yet consumed by the simulator.",
     "simulation_cent_monetary_bridge: no transaction evidence maps internal cents to GBP.",
     "uk_adult_high_risk_prevalence: no representative same-person spend and impairment source is available."
