@@ -8,6 +8,7 @@ version = "0.2.0"
 description = "Synthetic causal simulation of mobile-game monetisation harm, regulation, and public-value funding"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = ["numpy>=2.0"]
 
 [project.optional-dependencies]

@@ -8,6 +8,15 @@ the question:
 > which combination of regulation and public funding can sustain an
 > economically viable game without depending on compulsive spending?
 
+## Licence
+
+The repository's original software code is available under the
+[MIT License](LICENSE). The licence is deliberately limited to original code,
+tests, and software packaging or runtime-configuration files. It does not
+apply to data, data derivatives, third-party materials, or the preprint and
+other written documentation; those materials retain their own terms and
+restrictions.
+
 The project does not implement a playable game. It models a competitive market
 containing heterogeneous consumers and households, abstract games, strategic
 mobile-game companies, public rankings, governments, audits, sanctions, and

@@ -1,0 +1,35 @@
+Microtx-sim code licensing notice
+
+Copyright (c) 2026 Francesco Romano
+
+Scope
+
+This license applies only to the original software source code, test code,
+and software packaging or runtime-configuration files authored for this
+repository, including the contents of `src/`, `tests/`, and `tools/`, unless a
+file states different terms. It does not apply to data, data derivatives,
+external-source material, third-party assets, material in `inputs/`, written
+documentation in `docs/`, or material in `preprint/`. Those materials remain
+subject to their own terms, licences, or reserved rights. In particular, this
+notice does not grant any right to redistribute participant-level material or
+to override source-specific privacy, licence, or attribution conditions.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the in-scope software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the
+rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+sell copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
