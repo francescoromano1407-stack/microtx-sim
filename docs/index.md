@@ -35,6 +35,7 @@ claims and should be read before interpreting any simulation output.
 | [Data sources](data_sources.md) | Full source inventory, effective runtime inputs, dormant contracts, units, and lineage. |
 | [Target population and readiness](population_readiness.md) | Selected analytic population, joint cells, official demographic and gaming evidence, weight semantics, income modeling, and unresolved campaign blockers. |
 | [UK adults 2024 calibration](uk_adults_2024_calibration.md) | Partial public-evidence calibration, exact UK targets and weights, method cross-checks, runtime gaps, and the fail-closed campaign decision. |
+| [Point-zero audit preprint](point_zero_preprint.md) | Final preprint PDF, its bounded scope, audited code state, and public-reproducibility boundary. |
 | [Evidence policy](evidence.md) | Provenance statuses, evidence contracts, campaign gates, and update workflow. |
 | [Limitations](limitations.md) | Empirical, causal, legal, funding, information, market, and technical limits. |
 | [Roadmap](roadmap.md) | Calibration blockers, causal-design work, institutional fidelity, validation, and exact performance improvements. |
